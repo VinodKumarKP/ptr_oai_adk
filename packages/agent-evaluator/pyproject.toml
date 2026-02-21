@@ -1,0 +1,70 @@
+# pyproject.toml
+[build-system]
+requires = ["setuptools>=61.0", "wheel", "ruamel.yaml", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oai_agent_evaluator"
+description = "OAI Agent Evaluator"
+authors = [{name = "Vinod Kumar KP", email = "vinod.kunnum-purath@capgemini.com"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["agent", "oai_agent_evaluator"]
+dynamic = ["version"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "pyyaml",
+    "markdown",
+    "litellm",
+    "boto3"
+]
+
+[project.optional-dependencies]
+faker = ["faker"]
+pdf = ["pypdf"]
+docx = ["python-docx"]
+ppt = ["python-pptx"]
+excel = ["pandas", "openpyxl"]
+ocr = ["pillow", "pytesseract"]
+macros = ["faker", "pypdf", "python-docx", "python-pptx", "pandas", "openpyxl", "pillow", "pytesseract"]
+
+[project.scripts]
+oai-agent-evaluator = "oai_agent_evaluator.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Capgemini-Innersource/ptr_oai_langgraph_agent_core"
+Repository = "https://github.com/Capgemini-Innersource/ptr_oai_langgraph_agent_core.git"
+Issues = "https://github.com/Capgemini-Innersource/ptr_oai_langgraph_agent_core/issues"
+
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["oai_agent_evaluator*"]
+exclude = [".venv", "build", "oai_agent_evaluator.egg_info", "dist", "examples", "tests"]
+
+[tool.setuptools.package-data]
+"oai_agent_evaluator" = ["**/*"]
+
+# Configuration for setuptools_scm (git-based versioning)
+[tool.setuptools_scm]
+write_to = "oai_agent_evaluator/_version.py"
+version_scheme = "post-release"
+local_scheme = "no-local-version"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --cov=oai_agent_evaluator --cov-report=term-missing"
+testpaths = [
+    "tests",
+]
+asyncio_mode = "strict"
+
+[tool.coverage.run]
+source=["oai_agent_evaluator"]
