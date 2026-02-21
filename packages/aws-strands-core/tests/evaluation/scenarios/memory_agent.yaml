@@ -1,0 +1,18 @@
+agent_config: ../../../examples/agents_config/memory_agent.yaml
+
+scenarios:
+  - name: Environment Lookup
+    description: Test if the agent can lookup environment variables using MCP.
+    input_message: What is the value of PATH environment variable?
+    expected_output: The agent should return the value of the PATH environment variable.
+    metrics:
+      - correctness
+      - tool_usage
+
+  - name: Memory lookup
+    description: Test if the agent can lookup previous conversation
+    input_message: What was my previous question?
+    expected_output: The agent should return the previous question, if available else display appropriate message.
+    metrics:
+      - correctness
+      - tool_usage

@@ -1,0 +1,26 @@
+agent_config: ../../../examples/agents_config/multi_agent_swarm.yaml
+
+scenarios:
+  - name: Delegated Hotel Search
+    description: Test if the supervisor delegates the hotel search task to the hotel assistant.
+    input_message: Find a hotel in downtown Chicago.
+    expected_output: The agent should provide a list of hotels in downtown Chicago.
+    metrics:
+      - correctness
+      - tool_usage
+
+  - name: Delegated Flight Search
+    description: Test if the supervisor delegates the flight search task to the flight assistant.
+    input_message: Book flights from BOS to JFK for 2026-02-02 and book a hotel in New York. Do not ask for my confirmation.
+    expected_output: The agent should provide book flights from BOS to JFK and book hotel in New York. If flight is not found, it should display appropriate message
+    metrics:
+      - correctness
+      - tool_usage
+
+  - name: Delegated Search - Unknown Location
+    description: Test supervisor handling of unknown locations.
+    input_message: Find a hotel in Mumbai.
+    expected_output: The agent should inform the user that no hotels were found on Mumbai in their booking system.
+    metrics:
+      - correctness
+      - relevance
