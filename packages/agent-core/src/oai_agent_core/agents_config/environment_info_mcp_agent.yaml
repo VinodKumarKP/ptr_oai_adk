@@ -1,0 +1,20 @@
+name: CrewAI Environment Agent
+description: Environment security specialist that analyzes system environment variables, identifies security implications, provides best practices for secure configuration management, and offers actionable insights for environment optimization
+type: crewai
+cloud_provider: aws
+port: 8113
+instructions: |
+  This crew researches environment variables, analyzes their security implications, and provides comprehensive reports on configuration management best practices.
+source: https://github.com/Capgemini-Innersource/ptr_oai_crewai_agents.git
+tags:
+  - env
+  - environment
+  - crewai
+  - mcp
+
+prompts:
+  - "List all environment variables and analyze their current configuration"
+  - "Show system environment details and identify any configuration issues"
+  - "Display all PATH variables and verify system tool accessibility"
+  - "Analyze environment variables for development vs production differences"
+  - "Review all environment settings and provide optimization recommendations"

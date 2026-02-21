@@ -1,0 +1,19 @@
+active: false
+name: Jira Operation agent
+description: Comprehensive Jira project management assistant that streamlines issue tracking, automates ticket operations, provides project insights, and enhances team collaboration through intelligent issue management and workflow optimization
+type: mcp
+cloud_provider: aws
+port: 8106
+instructions: |
+  This agent allows you to perform Jira operations such as creating issues, updating issues, and retrieving issue details.
+  
+  Please specify the operation (e.g., create issue, update issue, get issue details) and provide necessary information like project key, issue type, summary, description, or issue key.
+source: https://github.com/Capgemini-Innersource/ptr_agents_devops.git
+tags:
+  - jira
+prompts:
+  - "Create a new bug issue in project SCRUM with high priority"
+  - "Update issue SCRUM-123 status to In Progress and add comments"
+  - "Get details for issue SCRUM-456 including status and assignee"
+  - "Create a story in project SCRUM for new feature development"
+  - "Search for all open issues assigned to current user in project SCRUM"

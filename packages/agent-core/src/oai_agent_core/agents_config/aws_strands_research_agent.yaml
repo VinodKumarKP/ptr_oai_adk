@@ -1,0 +1,25 @@
+name: AWS Strands Research Agent
+description: Advanced research assistant powered by AWS Strands LLMs that conducts comprehensive topic analysis, gathers information from multiple sources, synthesizes complex data, and delivers detailed research insights with expert-level analysis capabilities
+type: aws-strands
+cloud_provider: aws
+port: 8116
+instructions: |
+  This agent leverages AWS Strands LLMs to assist with researching various topics. The agent can perform tasks such as:
+
+    - Gathering information from multiple sources
+    - Analyzing and synthesizing data
+    - Creating connections between related concepts
+    - Generating comprehensive reports based on the research findings
+
+  Users can input their research topics, and the agent will explore the subject matter in depth using its capabilities.
+source: https://github.com/Capgemini-Innersource/ptr_aws_strands_agents.git
+tags:
+  - aws-strands
+  - research
+
+prompts:
+  - "Research the latest trends in artificial intelligence and machine learning"
+  - "Investigate the impact of renewable energy on global markets"
+  - "Study the evolution of remote work technologies post-pandemic"
+  - "Analyze the current state of cybersecurity in financial services"
+  - "Explore emerging technologies in autonomous vehicle development"

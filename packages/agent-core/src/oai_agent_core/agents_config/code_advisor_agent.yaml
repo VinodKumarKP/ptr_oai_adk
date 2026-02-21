@@ -1,0 +1,25 @@
+active: true
+name: Vulnerability Insights
+description: Comprehensive security vulnerability scanner that analyzes Git repositories to identify potential security risks, code quality issues, and provides actionable remediation recommendations with detailed reports stored in S3
+type: mcp
+cloud_provider: aws
+port: 8104
+instructions: |
+  Please provide the Git repository URL and branch of the repository to be scanned. 
+  This agent will analyze the repository and provide the recommendations.
+  
+  User can select from following level of report:
+    - Summary Report
+    - Detailed Report
+source: https://github.com/Capgemini-Innersource/ptr_agents_devops.git
+tags:
+  - code remediation
+  - security vulnerabilities
+  - code issues
+  - git
+prompts:
+  - "Analyze https://github.com/VinodKumarKP/python_project.git main branch for security vulnerabilities"
+  - "Scan https://github.com/VinodKumarKP/python_project.git develop branch and provide remediation recommendations"
+  - "Review https://github.com/VinodKumarKP/python_project.git feature/auth branch for code quality issues"
+  - "Examine https://github.com/VinodKumarKP/python_project.git release/v2.0 branch for potential security risks"
+  - "Assess https://github.com/VinodKumarKP/python_project.git master branch and generate detailed vulnerability report"

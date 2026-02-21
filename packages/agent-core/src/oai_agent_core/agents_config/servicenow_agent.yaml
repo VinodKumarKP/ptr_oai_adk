@@ -1,0 +1,19 @@
+active: false
+name: ServiceNow Operation agent
+description: Enterprise ServiceNow automation platform that streamlines incident management, automates service requests, provides real-time status tracking, and enhances IT service delivery through intelligent workflow orchestration
+type: mcp
+cloud_provider: aws
+port: 8107
+instructions: |
+  This agent provides ServiceNow operations such as incident creation, status lookup, and record retrieval.
+  
+  Please specify the operation you want to perform (e.g., create incident, get incident status, lookup record) and provide any required details such as incident number, short description, or table name.
+source: https://github.com/Capgemini-Innersource/ptr_agents_devops.git
+tags:
+  - servicenow
+prompts:
+  - "Create a high priority incident for system outage with detailed description"
+  - "Get status of incident INC0012345 and provide update summary"
+  - "Create new incident for application performance issues"
+  - "Lookup all open incidents assigned to IT support team"
+  - "Update incident INC0067890 with resolution details and close"

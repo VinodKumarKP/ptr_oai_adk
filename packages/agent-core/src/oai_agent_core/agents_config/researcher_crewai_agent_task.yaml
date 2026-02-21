@@ -1,0 +1,22 @@
+name: CrewAI Research Agent
+description: Comprehensive research and content generation platform powered by CrewAI that conducts in-depth topic analysis, synthesizes findings from multiple sources, and produces structured reports with executive summaries and detailed insights
+type: crewai
+cloud_provider: aws
+port: 8112
+instructions: |
+  This crew researches a topic, summarizes the findings, and writes a comprehensive report.
+  Demonstrates agent-level task definition for better organization.
+source: https://github.com/Capgemini-Innersource/ptr_oai_crewai_agents.git
+tags:
+  - research
+  - summary
+  - writing
+  - article
+  - crewai
+
+prompts:
+  - "Research artificial intelligence trends and write a comprehensive article"
+  - "Investigate sustainable energy technologies and create detailed report"
+  - "Study cybersecurity landscape and produce executive summary with recommendations"
+  - "Research cloud computing adoption patterns and write technical analysis"
+  - "Analyze emerging fintech innovations and create structured research report"

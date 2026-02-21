@@ -1,0 +1,26 @@
+name: Source Code Insights
+description: Advanced Git repository intelligence platform that provides deep code analysis including repository structure mapping, programming language detection, commit history insights, contributor statistics, and comprehensive development metrics
+type: mcp
+cloud_provider: aws
+port: 8101
+instructions: |
+  Please provide the Git repository URL, and the agent will clone the repository to generate comprehensive analytical statistics. 
+  The agent will provide the following statistics:
+    - repository structure
+    - programming language used
+    - file list
+    - commit history
+    - contributors stats
+  
+  User may select the list of statistics from the advanced options. By default, all the statistics are provided.
+source: https://github.com/Capgemini-Innersource/ptr_agents_devops.git
+tags:
+  - git
+  - insight
+  - analyze
+prompts:
+  - "Analyze repository structure and languages for https://github.com/VinodKumarKP/python_project.git"
+  - "Get comprehensive code insights for https://github.com/VinodKumarKP/python_project.git"
+  - "Examine commit history and contributor stats for https://github.com/VinodKumarKP/python_project.git"
+  - "Analyze file structure and programming languages in https://github.com/VinodKumarKP/python_project.git"
+  - "Generate complete repository analysis for https://github.com/VinodKumarKP/python_project.git"

@@ -1,0 +1,20 @@
+name: Environment Lookup
+description: Environment security specialist that analyzes system environment variables, identifies security implications, provides best practices for secure configuration management, and offers actionable insights for environment optimization
+type: mcp
+cloud_provider: aws
+port: 8110
+instructions: |
+  Please provide the required environment variable names or patterns. The agent will analyze the environment variables and provide insights including:
+    - usage context
+    - security implications
+    - best practices for management
+source: https://github.com/Capgemini-Innersource/ptr_agents_devops.git
+tags:
+  - env
+  - environment
+prompts:
+  - "Analyze all database-related environment variables and their security implications"
+  - "Review API key environment variables and provide security best practices"
+  - "Examine PATH and system environment variables for potential issues"
+  - "Analyze application configuration environment variables for optimization"
+  - "Review all environment variables containing sensitive data and recommend secure handling"

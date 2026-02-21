@@ -1,0 +1,26 @@
+name: AWS Strands MCP Tool Agent
+description: Intelligent multi-tool automation platform powered by AWS Strands LLMs that performs mathematical calculations, generates random data, provides time services, and executes sequential tool operations with seamless MCP integration
+type: aws-strands
+cloud_provider: aws
+port: 8115
+instructions: |
+  This agent leverages AWS Strands LLMs to perform various tasks using multiple tools in a sequential crew pattern. The agent can handle requests such as:
+
+    - Calculating mathematical operations (e.g., square roots, multiplication)
+    - Generating random numbers within a specified range
+    - Providing the current time and timestamp
+    - Generating random strings
+
+  Users can input their requests, and the agent will utilize the appropriate tools to fulfill them in sequence.
+source: https://github.com/Capgemini-Innersource/ptr_aws_strands_agents.git
+tags:
+  - aws-strands
+  - mcp
+  - tools
+
+prompts:
+  - "Calculate the square root of 144 and tell me the current time"
+  - "Generate 3 random numbers between 1 and 100"
+  - "What's the current time and calculate 25 * 4?"
+  - "Generate a random string and perform basic arithmetic operations"
+  - "Show me the current timestamp and generate random data"

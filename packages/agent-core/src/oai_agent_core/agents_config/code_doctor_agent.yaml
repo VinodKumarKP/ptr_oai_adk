@@ -1,0 +1,24 @@
+active: true
+name: Vulnerability Remediator
+description: Advanced code remediation specialist that automatically fixes security vulnerabilities and code quality issues in Git repositories, providing clean, secure code with comprehensive remediation reports and S3 storage integration
+type: mcp
+cloud_provider: aws
+port: 8105
+instructions: |
+  Please provide the Git repository URL and branch of the repository to be scanned. 
+  
+  This agent will analyze the repository and provide the remediated code.
+  
+  Remediated code will be available in S3 bucket.
+source: https://github.com/Capgemini-Innersource/ptr_agents_devops.git
+tags:
+  - code remediation
+  - security vulnerabilities
+  - code issues
+  - git
+prompts:
+  - "Remediate security vulnerabilities in https://github.com/VinodKumarKP/python_project.git main branch"
+  - "Fix code issues in https://github.com/VinodKumarKP/python_project.git develop branch and provide remediated code"
+  - "Resolve security flaws in https://github.com/VinodKumarKP/python_project.git feature/security branch"
+  - "Patch vulnerabilities in https://github.com/VinodKumarKP/python_project.git release/v1.5 branch"
+  - "Remediate all security issues in https://github.com/VinodKumarKP/python_project.git master branch"

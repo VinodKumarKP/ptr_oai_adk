@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "oai-langgraph-core"
+description = "OAI Langgraph core"
+authors = [{ name = "Vinod Kumar KP", email = "vinod.kunnum-purath@capgemini.com" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.11"
+dynamic = ["version"]
+keywords = ["agent", "langgraph-core", "oai-langgraph-core"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "oai-agent-core",
+    "boto3>=1.40.74",
+    "langchain>=1.0.7",
+    "langchain-aws>=1.0.0",
+    "langgraph-supervisor>=0.0.30",
+    "langchain-mcp-adapters>=0.1.13",
+    "langchain-litellm>=0.3.2"
+]
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "../.." }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oai_agent_core"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

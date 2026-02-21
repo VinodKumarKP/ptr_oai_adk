@@ -1,0 +1,27 @@
+name: AWS Strands Graph Research Agent
+description: Multi-agent research intelligence platform that leverages AWS Strands LLMs in graph orchestration patterns to conduct comprehensive topic analysis, synthesize information from multiple sources, and generate detailed research reports with interconnected insights
+type: aws-strands
+cloud_provider: aws
+port: 8114
+instructions: |
+  This agent utilizes AWS Strands LLMs to conduct research on various topics using a graph pattern. The agent can perform tasks such as:
+
+    - Gathering information from multiple sources
+    - Analyzing and synthesizing data
+    - Creating connections between related concepts
+    - Generating comprehensive reports based on the research findings
+
+  Users can input their research topics, and the agent will explore the subject matter in depth using its multi-agent capabilities.
+source: https://github.com/Capgemini-Innersource/ptr_aws_strands_agents.git
+tags:
+  - aws-strands
+  - graph
+  - research
+  - multi-agent
+
+prompts:
+  - "Research the latest developments in quantum computing and provide a comprehensive analysis"
+  - "Analyze the impact of artificial intelligence on healthcare industry trends"
+  - "Investigate emerging cybersecurity threats and recommend mitigation strategies"
+  - "Study the adoption of cloud computing in financial services and identify key benefits"
+  - "Examine the role of blockchain technology in supply chain management"

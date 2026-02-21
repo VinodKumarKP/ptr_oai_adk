@@ -1,0 +1,13 @@
+[project]
+name = "ptr-oai-agent-core-workspace"
+version = "0.1.0"
+description = "Monorepo workspace for OAI Agent Core and related packages"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+oai-agent-core = { workspace = true }
+oai-langgraph-core = { workspace = true }

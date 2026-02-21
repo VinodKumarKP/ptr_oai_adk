@@ -1,0 +1,15 @@
+name: outlook_processor_agent
+source: https://github.com/Capgemini-Innersource/Email_Agent.git
+description: An agent that processes Outlook emails and summarizes their content and attachments.
+tags:
+  - outlook
+  - email
+  - strands
+  - parser
+type: aws-strands
+cloud_provider: aws
+prompts:
+  - Summarize my last 5 emails
+  - Extract key points from the attachments in my latest email
+instructions: ''
+port: 8119

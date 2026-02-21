@@ -1,0 +1,22 @@
+active: false
+name: Test insights
+description: Intelligent test analysis platform that evaluates unit test results, performance metrics, code coverage reports, and provides deployment readiness assessments with actionable quality improvement recommendations
+type: mcp
+cloud_provider: aws
+port: 8108
+instructions: |
+  This agent will analyze the test result of the provided project and summarize the results. Based on that analysis, provide a list of recommended actions 
+  and also indicate whether the project is ready for deployment or not.
+  
+  User can select from following level of report:
+    - Summary Report
+    - Detailed Report
+source: https://github.com/Capgemini-Innersource/ptr_agents_devops.git
+tags:
+  - test insight
+prompts:
+  - "Analyze unit test results and provide deployment readiness assessment"
+  - "Review JMeter performance test results and recommend optimizations"
+  - "Examine test coverage reports and identify areas needing improvement"
+  - "Analyze comprehensive test suite results and determine production readiness"
+  - "Review all test metrics and provide detailed quality assessment report"
