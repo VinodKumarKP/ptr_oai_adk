@@ -1,0 +1,9 @@
+agent_config: ../../../examples/agents_config/researcher_crewai_agent.yml
+
+
+scenarios:
+  - name: Simple Greeting
+    description: Test if the agent can greet the user.
+    input_message: Research on India in 50 words
+    expected_output: It should generate an article on India
+

@@ -1,0 +1,9 @@
+agent_config: ../../../examples/agents_config/random_generator_agent.yml
+
+
+scenarios:
+  - name: Simple Greeting
+    description: Test if the agent can greet the user.
+    input_message: Generate a random number and name
+    expected_output: It should generate random number and name
+

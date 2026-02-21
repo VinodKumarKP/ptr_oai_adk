@@ -1,0 +1,13 @@
+agent_config: ../../../examples/agents_config/crewai_rag_agent.yaml
+
+
+scenarios:
+  - name: Simple Greeting
+    description: Test if the agent can greet the user.
+    input_message: |
+      Load the doc /Users/vinodkumarkp/PycharmProjects/ptr_oai_openai_agent_core/examples/docs/leave_policy.pdf into the knowledge base 
+      Call the load function by passing the doc path as list
+      and query - What is employee leave policy?
+      also, confirm if the record was loaded before querying by displaying which tool was called.
+    expected_output: Agent should provide proper answer to the question
+
