@@ -1,0 +1,33 @@
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+knowledge_base:
+  - name: insurance_policies
+    description: "Search insurance policy documents"
+    vector_store:
+      type: chroma
+      settings:
+        collection_name: "insurance_policies"
+        persist_directory: "./rag_db2"
+    embedding:
+      model_id: "bedrock/amazon.titan-embed-text-v1"
+      region_name: "us-west-2"
+    data_sources:
+      - path: "docs/sample_policy.pdf"
+        filter: "*.pdf"
+    text_splitter:
+      type: "recursive_character"
+      chunk_size: 1000
+      chunk_overlap: 200
+    retrieval_settings:
+      top_k: 5
+      score_threshold: 0.7
+
+agent_list:
+  - rag_assistant:
+      system_prompt: |
+        You are a helpful assistant who can answer questions using knowledge base
+
+crew_config:
+  pattern: single

@@ -1,0 +1,28 @@
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+tools:
+  utils:
+    module: demo_tools
+    base_path: "./utils"
+
+mcps:
+  environment_lookup:
+    command: uv
+    args:
+      - run
+      - --with
+      - "git+https://github.com/Capgemini-Innersource/ptr-cloud-mcp-servers.git"
+      - env_lookup_server
+
+
+agent_list:
+  - env_lookup_assistant:
+      system_prompt: |
+        You are a environment lookup assistant
+      mcps:
+        - environment_lookup
+
+crew_config:
+  pattern: single

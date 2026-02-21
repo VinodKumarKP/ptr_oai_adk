@@ -1,0 +1,37 @@
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+tools:
+  utils:
+    module: demo_tools
+    base_path: "./utils"
+
+
+agent_list:
+  - env_lookup_assistant:
+      system_prompt: |
+        You are a guardrails_agent which validates if the guardrails are successfully applied.
+
+crew_config:
+  pattern: single
+
+guardrails:
+  enable_agent_validation: false
+  custom_validators_dir: "custom_guardrails"
+  validators:
+    - name: competitor_check
+      full_name: guardrails/competitor_check
+      parameters:
+        competitors: [ "Apple", "Samsung" ]
+      on_fail: "fix"
+
+#    - name: json_validator
+#      full_name: ValidJson
+#      module: valid_json
+#      on_fail: "noop"
+#      instruction: Response should be a valid json # Optional instruction
+  output:
+    validators:
+      - ref: competitor_check
+      - ref: json_validator
