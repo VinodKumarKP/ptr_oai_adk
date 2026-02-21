@@ -1,0 +1,19 @@
+agent_config: ../../../examples/agents_config/multi_agent_handoff.yaml
+
+scenarios:
+  - name: Flight to Hotel Handoff
+    description: Test if the agent can handoff from flight assistant to hotel assistant.
+    input_message: Find flights to JFK for Feb 2nd 2026 from BOS and also find hotels in New York. Do not book anything.
+    expected_output: The agent should find flights to JFK from Boston and then provide hotel options in New York.
+    metrics:
+      - correctness
+      - relevance
+      - tool_usage
+
+  - name: Hotel Search - Not Found
+    description: Test agent behavior when no hotels are found in a location.
+    input_message: Find a hotel in Antarctica.
+    expected_output: The agent should inform the user that no hotels were found in Antarctica.
+    metrics:
+      - correctness
+      - relevance

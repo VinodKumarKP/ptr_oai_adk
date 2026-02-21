@@ -1,0 +1,10 @@
+agent_config: ../../../examples/agents_config/mcp_agent.yaml
+
+scenarios:
+  - name: Environment Lookup
+    description: Test if the agent can lookup environment variables using MCP.
+    input_message: What is the value of PATH environment variable?
+    expected_output: The agent should return the value of the PATH environment variable.
+    metrics:
+      - correctness
+      - tool_usage
