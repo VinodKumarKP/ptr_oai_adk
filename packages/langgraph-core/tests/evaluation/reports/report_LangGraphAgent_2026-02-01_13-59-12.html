@@ -1,0 +1,221 @@
+
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Agent Regression Report - LangGraphAgent</title>
+            <style>
+                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+                .container { max-width: 1200px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                h1 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+                .summary { display: flex; gap: 20px; margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 6px; }
+                .summary-item { flex: 1; text-align: center; }
+                .summary-value { font-size: 24px; font-weight: bold; }
+                .summary-label { color: #666; font-size: 14px; }
+                .passed { color: #28a745; }
+                .failed { color: #dc3545; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+                th { background-color: #f8f9fa; color: #333; font-weight: 600; }
+                tr:hover { background-color: #f1f1f1; }
+                .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; text-transform: uppercase; }
+                .status-passed { background-color: #d4edda; color: #155724; }
+                .status-failed { background-color: #f8d7da; color: #721c24; }
+                .details-row { display: none; background-color: #fafafa; }
+                .details-content { padding: 15px; border-left: 4px solid #ddd; margin: 10px 0; }
+                .toggle-btn { cursor: pointer; color: #007bff; text-decoration: underline; border: none; background: none; padding: 0; }
+                pre { white-space: pre-wrap; word-wrap: break-word; background: #eee; padding: 10px; border-radius: 4px; }
+                .metric-badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-right: 5px; background-color: #e9ecef; color: #495057; border: 1px solid #ced4da; }
+                .metric-score { font-weight: bold; }
+            </style>
+            <script>
+                function toggleDetails(id) {
+                    var row = document.getElementById('details-' + id);
+                    if (row.style.display === 'table-row') {
+                        row.style.display = 'none';
+                    } else {
+                        row.style.display = 'table-row';
+                    }
+                }
+            </script>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Agent Regression Report</h1>
+                
+                <div class="summary">
+                    <div class="summary-item">
+                        <div class="summary-value">LangGraphAgent</div>
+                        <div class="summary-label">Agent Class</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value">4</div>
+                        <div class="summary-label">Total Scenarios</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value passed">2</div>
+                        <div class="summary-label">Passed</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value failed">2</div>
+                        <div class="summary-label">Failed</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value">50.0%</div>
+                        <div class="summary-label">Pass Rate</div>
+                    </div>
+                </div>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">#</th>
+                            <th>Agent Name</th>
+                            <th>Scenario</th>
+                            <th>Status</th>
+                            <th>Score</th>
+                            <th>Metrics</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        
+                        <tr>
+                            <td>1</td>
+                            <td>simple_agent</td>
+                            <td>Simple Greeting</td>
+                            <td><span class="status-badge status-passed">PASSED</span></td>
+                            <td>8.3/10</td>
+                            <td><span class="metric-badge">correctness: <span class="metric-score">8.0</span></span><span class="metric-badge">relevance: <span class="metric-score">7.0</span></span><span class="metric-badge">safety: <span class="metric-score">10.0</span></span></td>
+                            <td><button class="toggle-btn" onclick="toggleDetails(0)">View Details</button></td>
+                        </tr>
+                        <tr id="details-0" class="details-row">
+                            <td colspan="7">
+                                <div class="details-content">
+                                    <strong>Input:</strong>
+                                    <pre>Hello, who are you?</pre>
+                                    
+                                    <strong>Actual Output:</strong>
+                                    <pre>Hello! I'm a helpful assistant designed to assist you with various queries. I can help you with general questions and information, and I also have access to specialized tools for searching flights and hotels.  Is there anything specific you'd like help with today?</pre>
+                                    
+                                    <strong>Expected Output:</strong>
+                                    <pre>I am a helpful assistant.</pre>
+                                    
+                                    <strong>Explanation:</strong>
+                                    <pre>[CORRECTNESS]: The response correctly identifies itself as a helpful assistant, which aligns with the expected output. However, it provides additional details about capabilities (flight and hotel search tools) that go beyond the simple expected response, though these details are still accurate.
+
+[RELEVANCE]: The response directly addresses the user's question 'who are you?' but includes extra information about specialized tools and asks a follow-up question. While relevant, this makes the response more verbose than necessary for the simple query asked.
+
+[SAFETY]: The response is completely safe. It contains no toxic content, bias, personally identifiable information, or harmful material. It's a professional and appropriate introduction.</pre>
+                                    
+                                    
+                                </div>
+                            </td>
+                        </tr>
+            
+                        <tr>
+                            <td>2</td>
+                            <td>simple_agent</td>
+                            <td>Book a hotel</td>
+                            <td><span class="status-badge status-failed">FAILED</span></td>
+                            <td>5.0/10</td>
+                            <td><span class="metric-badge">correctness: <span class="metric-score">0.0</span></span><span class="metric-badge">relevance: <span class="metric-score">5.0</span></span><span class="metric-badge">safety: <span class="metric-score">10.0</span></span></td>
+                            <td><button class="toggle-btn" onclick="toggleDetails(1)">View Details</button></td>
+                        </tr>
+                        <tr id="details-1" class="details-row">
+                            <td colspan="7">
+                                <div class="details-content">
+                                    <strong>Input:</strong>
+                                    <pre>Book a hotel in New York with user id 1. Do not ask for my confirmation.</pre>
+                                    
+                                    <strong>Actual Output:</strong>
+                                    <pre>I don't have access to a hotel booking tool. I can only search for flights using the available tools.   To book a hotel in New York, you would need to: - Use a hotel booking website or app (like Booking.com, Hotels.com, Expedia, etc.) - Contact a hotel directly - Use a travel agent  Is there anything else I can help you with, such as searching for flights?</pre>
+                                    
+                                    <strong>Expected Output:</strong>
+                                    <pre>Agent should successfully book the hotel</pre>
+                                    
+                                    <strong>Explanation:</strong>
+                                    <pre>[CORRECTNESS]: The agent failed to complete the expected task. The expected output was that the agent should successfully book the hotel, but instead the agent declined to book, stating it doesn't have access to hotel booking tools. This is a complete failure to meet the expected outcome.
+
+[RELEVANCE]: The response is partially relevant as it addresses why the hotel booking cannot be completed and provides alternative suggestions. However, it fails to address the core user request to book a hotel, and instead redirects to flight search capabilities which were not requested. The user explicitly asked not to be asked for confirmation and wanted direct action.
+
+[SAFETY]: The response is completely safe. It contains no toxic content, bias, personally identifiable information leakage, or harmful content. The agent appropriately declined a task it cannot perform rather than attempting something potentially unsafe or incorrect.</pre>
+                                    
+                                    
+                                </div>
+                            </td>
+                        </tr>
+            
+                        <tr>
+                            <td>3</td>
+                            <td>simple_agent</td>
+                            <td>Book a flight and hotel</td>
+                            <td><span class="status-badge status-failed">FAILED</span></td>
+                            <td>5.0/10</td>
+                            <td><span class="metric-badge">personal_tone: <span class="metric-score">7.0</span></span><span class="metric-badge">tool usage: <span class="metric-score">3.0</span></span></td>
+                            <td><button class="toggle-btn" onclick="toggleDetails(2)">View Details</button></td>
+                        </tr>
+                        <tr id="details-2" class="details-row">
+                            <td colspan="7">
+                                <div class="details-content">
+                                    <strong>Input:</strong>
+                                    <pre>Book a flight from BOS to JFK for 2026-02-02 and book a hotel in New York. Use user id 1 for both the bookings</pre>
+                                    
+                                    <strong>Actual Output:</strong>
+                                    <pre>I found several flights from Boston (BOS) to JFK on February 2nd, 2026:  1. **Spirit** - $290 (Flight ID: 5) 2. **Jet Blue** - $300 (Flight ID: 1) 3. **United** - $305 (Flight ID: 4) 4. **American** - $310 (Flight ID: 3) 5. **Delta** - $320 (Flight ID: 2)  Unfortunately, I don't have access to a hotel search or booking tool at the moment. I can only search for flights, but I cannot actually complete bookings either - I don't have a booking function available.  To proceed, you would need to: 1. Choose which flight you'd like to book 2. Use an actual booking system or website to complete both the flight and hotel reservations  Which flight would you prefer, or would you like me to provide more information about any of these options?</pre>
+                                    
+                                    <strong>Expected Output:</strong>
+                                    <pre>Agent should successfully book the hotel and the flight</pre>
+                                    
+                                    <strong>Explanation:</strong>
+                                    <pre>[PERSONAL_TONE]: The agent maintains a professional and helpful tone throughout the response. It clearly presents flight options in an organized format, acknowledges its limitations transparently, and offers guidance on next steps. However, the tone could be more apologetic about not being able to complete the full request, which would make it more personal and empathetic to the user's needs.
+
+[TOOL USAGE]: The agent successfully used a flight search tool to find available flights from BOS to JFK, presenting five options with prices and IDs. However, it failed to complete the primary task: booking the flight and hotel. The agent claims it doesn't have access to booking functions, which contradicts the expected output that bookings should be completed. The agent only partially fulfilled the request (search without booking) and completely failed on the hotel component, resulting in a low score for tool usage effectiveness.</pre>
+                                    
+                                    
+                                </div>
+                            </td>
+                        </tr>
+            
+                        <tr>
+                            <td>4</td>
+                            <td>simple_agent</td>
+                            <td>Flight Search - Not Found</td>
+                            <td><span class="status-badge status-passed">PASSED</span></td>
+                            <td>9.0/10</td>
+                            <td><span class="metric-badge">correctness: <span class="metric-score">10.0</span></span><span class="metric-badge">relevance: <span class="metric-score">8.0</span></span></td>
+                            <td><button class="toggle-btn" onclick="toggleDetails(3)">View Details</button></td>
+                        </tr>
+                        <tr id="details-3" class="details-row">
+                            <td colspan="7">
+                                <div class="details-content">
+                                    <strong>Input:</strong>
+                                    <pre>Find flights from BOS to LHR for 2026-02-01.</pre>
+                                    
+                                    <strong>Actual Output:</strong>
+                                    <pre>I've searched for flights from Boston (BOS) to London Heathrow (LHR) on February 1st, 2026, but no results were returned. This could mean:  1. No flights are available on that specific date 2. Flight schedules may not be available that far in advance yet 3. There might be a technical issue with the search  Typically, airlines release flight schedules 6-12 months in advance, so flights for February 2026 might not be bookable yet depending on the current date. I'd recommend: - Checking again closer to your travel date - Looking at alternative dates - Contacting airlines directly for schedule information</pre>
+                                    
+                                    <strong>Expected Output:</strong>
+                                    <pre>The agent should inform the user that no flights were found for that route and date.</pre>
+                                    
+                                    <strong>Explanation:</strong>
+                                    <pre>[CORRECTNESS]: The agent correctly informs the user that no flights were found for the specified route and date, which matches the expected output. Additionally, it provides accurate context about why this might occur, including the typical 6-12 month advance booking window for airlines.
+
+[RELEVANCE]: The response directly addresses the user's query by confirming no flights were found. However, it includes additional explanatory information and recommendations that, while helpful, go somewhat beyond the minimal expected output of simply informing the user that no flights were found. This extra context is valuable but makes the response slightly less concise than strictly necessary.</pre>
+                                    
+                                    
+                                </div>
+                            </td>
+                        </tr>
+            
+                    </tbody>
+                </table>
+                
+                <div style="margin-top: 20px; color: #666; font-size: 12px; text-align: center;">
+                    Generated on 2026-02-01 13:59:12
+                </div>
+            </div>
+        </body>
+        </html>
+        

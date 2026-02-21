@@ -1,0 +1,18 @@
+agent_config: ../../../examples/agents_config/knowledge_base_agent.yaml
+
+scenarios:
+  - name: Policy Coverage - Architect Fees
+    description: Test if the agent can retrieve specific coverage details from the knowledge base.
+    input_message: Is architect fees covered by the insurance policy?
+    expected_output: The agent should state whether architect fees are covered based on the policy document.
+    metrics:
+      - correctness
+      - relevance
+
+  - name: General Policy Coverage
+    description: Test if the agent can summarize what is covered by the policy.
+    input_message: What is covered by the policy?
+    expected_output: The agent should provide a summary of the coverage details from the policy document.
+    metrics:
+      - correctness
+      - relevance

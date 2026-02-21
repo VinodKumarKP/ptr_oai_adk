@@ -1,0 +1,29 @@
+agent_config: ../../../examples/agents_config/simple_agent.yaml
+
+
+scenarios:
+  - name: Simple Greeting
+    description: Test if the agent can greet the user.
+    input_message: Hello, who are you?
+    expected_output: I am a helpful assistant.
+
+  - name: Book a hotel
+    description: Test if the agent successfully book the hotel
+    input_message: Book a hotel in New York with user id 1. Do not ask for my confirmation.
+    expected_output: Agent should successfully book the hotel
+
+  - name: Book a flight and hotel
+    description: Test if the agent successfully book the hotel and flight
+    input_message: Book a Spirit flight from BOS to JFK for 2026-02-02 and book a hotel in New York. Use user id 1 for both the bookings
+    expected_output: Agent should successfully book the hotel and the flight
+    metrics:
+      - personal_tone
+      - tool usage
+
+  - name: Flight Search - Not Found
+    description: Test agent behavior when no flights are found.
+    input_message: Find flights from BOS to LHR for 2026-02-01.
+    expected_output: The agent should inform the user that no flights were found for that route and date.
+    metrics:
+      - correctness
+      - relevance

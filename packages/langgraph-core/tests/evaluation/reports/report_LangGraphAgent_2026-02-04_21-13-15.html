@@ -1,0 +1,139 @@
+
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Agent Regression Report - LangGraphAgent</title>
+            <style>
+                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+                .container { max-width: 1200px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                h1 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+                .summary { display: flex; gap: 20px; margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 6px; }
+                .summary-item { flex: 1; text-align: center; }
+                .summary-value { font-size: 24px; font-weight: bold; }
+                .summary-label { color: #666; font-size: 14px; }
+                .passed { color: #28a745; }
+                .failed { color: #dc3545; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+                th { background-color: #f8f9fa; color: #333; font-weight: 600; }
+                tr:hover { background-color: #f1f1f1; }
+                .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; text-transform: uppercase; }
+                .status-passed { background-color: #d4edda; color: #155724; }
+                .status-failed { background-color: #f8d7da; color: #721c24; }
+                .details-row { display: none; background-color: #fafafa; }
+                .details-content { padding: 15px; border-left: 4px solid #ddd; margin: 10px 0; }
+                .toggle-btn { cursor: pointer; color: #007bff; text-decoration: underline; border: none; background: none; padding: 0; }
+                pre { white-space: pre-wrap; word-wrap: break-word; background: #eee; padding: 10px; border-radius: 4px; }
+                .metric-badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-right: 5px; background-color: #e9ecef; color: #495057; border: 1px solid #ced4da; }
+                .metric-score { font-weight: bold; }
+                .model-id { font-size: 12px; color: #666; font-style: italic; }
+            </style>
+            <script>
+                function toggleDetails(id) {
+                    var row = document.getElementById('details-' + id);
+                    if (row.style.display === 'table-row') {
+                        row.style.display = 'none';
+                    } else {
+                        row.style.display = 'table-row';
+                    }
+                }
+            </script>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Agent Regression Report</h1>
+                
+                <div class="summary">
+                    <div class="summary-item">
+                        <div class="summary-value">LangGraphAgent</div>
+                        <div class="summary-label">Agent Class</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value">1</div>
+                        <div class="summary-label">Total Scenarios</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value passed">1</div>
+                        <div class="summary-label">Passed</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value failed">0</div>
+                        <div class="summary-label">Failed</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value">100.0%</div>
+                        <div class="summary-label">Pass Rate</div>
+                    </div>
+                </div>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">#</th>
+                            <th>Agent Name</th>
+                            <th>Scenario</th>
+                            <th>Model</th>
+                            <th>Status</th>
+                            <th>Score</th>
+                            <th>Metrics</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        
+                        <tr>
+                            <td>1</td>
+                            <td>knowledge_base_as_tool_agent</td>
+                            <td>General Policy Coverage</td>
+                            <td><span class="model-id">bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0</span></td>
+                            <td><span class="status-badge status-passed">PASSED</span></td>
+                            <td>9.7/10</td>
+                            <td><span class="metric-badge">correctness: <span class="metric-score">9.0</span></span><span class="metric-badge">relevance: <span class="metric-score">10.0</span></span><span class="metric-badge">tool_usage: <span class="metric-score">10.0</span></span></td>
+                            <td><button class="toggle-btn" onclick="toggleDetails(0)">View Details</button></td>
+                        </tr>
+                        <tr id="details-0" class="details-row">
+                            <td colspan="8">
+                                <div class="details-content">
+                                    <strong>Input:</strong>
+                                    <pre>Load the doc /Users/vinodkumarkp/PycharmProjects/ptr_oai_openai_agent_core/examples/docs/leave_policy.pdf into the knowledge base 
+and query - What is employee leave policy?
+also, confirm if the record was loaded before querying by displaying which tool was called.
+</pre>
+                                    
+                                    <strong>Actual Output:</strong>
+                                    <pre>Perfect! Here's a summary of what happened:  ## Tools Called: 1. ✅ **load_knowledge_base_leave_policies** - Successfully loaded the document `/Users/vinodkumarkp/PycharmProjects/ptr_oai_openai_agent_core/examples/docs/leave_policy.pdf` 2. ✅ **leave_policies** - Queried the knowledge base with 'What is employee leave policy?'  ## Answer: Employee Leave Policy  Based on the loaded document, here's what I found about the employee leave policy:  **Main Leave Types:** - **Vacation Leave** - **Sick Leave** - **Parental Leave** - **Other Leave Types** (paid leave in specific situations)  **Administrative Leave for Outstanding Performance:** - Employees may be granted **paid administrative leave** for outstanding performance - **Maximum**: 32 hours per fiscal year - Can be granted for a single act of outstanding performance or for outstanding task performance - The reason must be documented - Cannot be used as severance or settlement for departing employees - **Carryover**: Employees may carry administrative leave from one fiscal year to the next within the same biennium - Requires HHS Executive Commissioner approval for carrying leave beyond the biennium  **Effective Date**: February 5, 2018 (Revised April 5, 2023)  The document was successfully loaded and queried from the knowledge base!</pre>
+                                    
+                                    <strong>Expected Output:</strong>
+                                    <pre>The agent should provide a summary of the coverage details from the policy document.</pre>
+                                    
+                                    <strong>Explanation:</strong>
+                                    <pre>[CORRECTNESS]: The agent correctly loaded the document and extracted accurate information about the employee leave policy, including vacation leave, sick leave, parental leave, and detailed administrative leave provisions. The information appears factually correct with specific details like the 32-hour maximum and effective dates. Minor deduction because the expected output mentions 'coverage details' which could imply broader coverage information that wasn't fully explored.
+
+[RELEVANCE]: The response directly addresses all aspects of the user's request: it confirms the document was loaded, displays which tools were called (load_knowledge_base_leave_policies and leave_policies), and provides a comprehensive answer to the query about employee leave policy. The structured format makes it easy to verify each requirement was met.
+
+[TOOL_USAGE]: Excellent tool usage. The agent correctly used two tools in the proper sequence: first 'load_knowledge_base_leave_policies' to load the document, then 'leave_policies' to query it. The agent also explicitly confirmed and displayed which tools were called, exactly as requested by the user. The tools were used appropriately for their intended purposes.</pre>
+                                    
+                                    <strong>Token Usage:</strong>
+                                    <pre>{
+  "input_tokens": 1784,
+  "output_tokens": 329,
+  "total_tokens": 2113
+}</pre>
+
+                                    
+                                </div>
+                            </td>
+                        </tr>
+            
+                    </tbody>
+                </table>
+                
+                <div style="margin-top: 20px; color: #666; font-size: 12px; text-align: center;">
+                    Generated on 2026-02-04 21:13:15
+                </div>
+            </div>
+        </body>
+        </html>
+        

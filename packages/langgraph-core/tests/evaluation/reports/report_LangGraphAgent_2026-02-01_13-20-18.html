@@ -1,0 +1,155 @@
+
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Agent Regression Report - LangGraphAgent</title>
+            <style>
+                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+                .container { max-width: 1200px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                h1 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+                .summary { display: flex; gap: 20px; margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 6px; }
+                .summary-item { flex: 1; text-align: center; }
+                .summary-value { font-size: 24px; font-weight: bold; }
+                .summary-label { color: #666; font-size: 14px; }
+                .passed { color: #28a745; }
+                .failed { color: #dc3545; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+                th { background-color: #f8f9fa; color: #333; font-weight: 600; }
+                tr:hover { background-color: #f1f1f1; }
+                .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; text-transform: uppercase; }
+                .status-passed { background-color: #d4edda; color: #155724; }
+                .status-failed { background-color: #f8d7da; color: #721c24; }
+                .details-row { display: none; background-color: #fafafa; }
+                .details-content { padding: 15px; border-left: 4px solid #ddd; margin: 10px 0; }
+                .toggle-btn { cursor: pointer; color: #007bff; text-decoration: underline; border: none; background: none; padding: 0; }
+                pre { white-space: pre-wrap; word-wrap: break-word; background: #eee; padding: 10px; border-radius: 4px; }
+                .metric-badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-right: 5px; background-color: #e9ecef; color: #495057; border: 1px solid #ced4da; }
+                .metric-score { font-weight: bold; }
+            </style>
+            <script>
+                function toggleDetails(id) {
+                    var row = document.getElementById('details-' + id);
+                    if (row.style.display === 'table-row') {
+                        row.style.display = 'none';
+                    } else {
+                        row.style.display = 'table-row';
+                    }
+                }
+            </script>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Agent Regression Report</h1>
+                
+                <div class="summary">
+                    <div class="summary-item">
+                        <div class="summary-value">LangGraphAgent</div>
+                        <div class="summary-label">Agent Class</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value">2</div>
+                        <div class="summary-label">Total Scenarios</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value passed">2</div>
+                        <div class="summary-label">Passed</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value failed">0</div>
+                        <div class="summary-label">Failed</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value">100.0%</div>
+                        <div class="summary-label">Pass Rate</div>
+                    </div>
+                </div>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">#</th>
+                            <th>Agent Name</th>
+                            <th>Scenario</th>
+                            <th>Status</th>
+                            <th>Score</th>
+                            <th>Metrics</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        
+                        <tr>
+                            <td>1</td>
+                            <td>knowledge_base_agent</td>
+                            <td>Policy Coverage - Architect Fees</td>
+                            <td><span class="status-badge status-passed">PASSED</span></td>
+                            <td>8.0/10</td>
+                            <td><span class="metric-badge">correctness: <span class="metric-score">9.0</span></span><span class="metric-badge">relevance: <span class="metric-score">7.0</span></span></td>
+                            <td><button class="toggle-btn" onclick="toggleDetails(0)">View Details</button></td>
+                        </tr>
+                        <tr id="details-0" class="details-row">
+                            <td colspan="7">
+                                <div class="details-content">
+                                    <strong>Input:</strong>
+                                    <pre>Is architect fees covered?</pre>
+                                    
+                                    <strong>Actual Output:</strong>
+                                    <pre>Yes, **architect fees are covered** under this policy, but with specific conditions:  ## What's Covered:  Following a **valid claim for damage** under the buildings section, the policy will pay for:  - **Architects' fees** - Surveyors' fees - Consulting engineers' fees - Legal fees  ## Important Limitations:  1. **Not covered for preparing a claim** - Fees specifically for preparing the insurance claim itself are excluded  2. **Must follow a valid buildings claim** - The architect fees are only covered as a consequence of an accepted claim for physical damage to the buildings  3. **Subject to your overall buildings cover limit** - These fees count towards your maximum buildings cover limit shown in your policy schedule  4. **Standard excess applies** - Your policy excess (shown in your schedule) will apply  ## Also Included: Along with architect fees, the policy covers: - Debris clearance costs - Demolition or shoring up costs - Costs to comply with government/local authority requirements (unless the order predates the loss)  Would you like more information about the buildings cover limit or any other aspect of this coverage?</pre>
+                                    
+                                    <strong>Expected Output:</strong>
+                                    <pre>The agent should state whether architect fees are covered based on the policy document.</pre>
+                                    
+                                    <strong>Explanation:</strong>
+                                    <pre>[CORRECTNESS]: The response correctly states that architect fees are covered under the policy, which matches the expected output. It provides accurate details about the conditions and limitations, including that fees must follow a valid buildings claim, are subject to the buildings cover limit, and exclude claim preparation fees. The only minor uncertainty is whether all the specific details mentioned can be verified against the actual policy document, but the core answer is correct.
+
+[RELEVANCE]: The response directly answers the user's question about whether architect fees are covered with a clear 'Yes' at the beginning. However, it includes extensive additional information about limitations, conditions, and related coverage that, while potentially useful, goes beyond what was asked. The user asked a simple yes/no question, and while the context is helpful, the response could be considered somewhat verbose for the specific query.</pre>
+                                    
+                                    
+                                </div>
+                            </td>
+                        </tr>
+            
+                        <tr>
+                            <td>2</td>
+                            <td>knowledge_base_agent</td>
+                            <td>General Policy Coverage</td>
+                            <td><span class="status-badge status-passed">PASSED</span></td>
+                            <td>9.5/10</td>
+                            <td><span class="metric-badge">correctness: <span class="metric-score">9.0</span></span><span class="metric-badge">relevance: <span class="metric-score">10.0</span></span></td>
+                            <td><button class="toggle-btn" onclick="toggleDetails(1)">View Details</button></td>
+                        </tr>
+                        <tr id="details-1" class="details-row">
+                            <td colspan="7">
+                                <div class="details-content">
+                                    <strong>Input:</strong>
+                                    <pre>What is covered by the policy?</pre>
+                                    
+                                    <strong>Actual Output:</strong>
+                                    <pre>Based on the policy documents, here's what is covered:  ## Main Coverage Areas:  ### **Buildings & Contents Insurance** The policy covers various types of loss or damage to your home and belongings, including:  ### **Specific Covers Included:**  1. **Emergency Services Forced Entry**    - Damage caused when fire, police, or ambulance services force entry due to an emergency  2. **Moving Home**    - Protection extends to the buyer of your home up to completion date  3. **Keys & Locks**    - Replacement costs for lost or stolen keys and locks for:      - External doors and windows      - Safes within the home      - Alarm systems  4. **Alternative Accommodation**    - Reasonable costs for temporary housing for you, your family, and pets when your home is uninhabitable due to covered damage  5. **Student Cover** (optional extra)    - Contents temporarily removed to student accommodation    - Covers: storm, flood, theft, collision, falling trees, fire, explosion, lightning, earthquake, and malicious acts  ### **Optional Sections:** - Buildings - Contents - Personal Possessions - Bicycles - Student Cover - Home Assistance - Family Legal Protection  **Note:** Your specific coverage depends on what sections you've chosen, which will be shown on your policy schedule. Each section has specific limits and conditions that apply.  Would you like more details about any specific coverage area?</pre>
+                                    
+                                    <strong>Expected Output:</strong>
+                                    <pre>The agent should provide a summary of the coverage details from the policy document.</pre>
+                                    
+                                    <strong>Explanation:</strong>
+                                    <pre>[CORRECTNESS]: The response provides a comprehensive and well-structured summary of policy coverage including buildings & contents insurance, specific covers (emergency services, moving home, keys & locks, alternative accommodation, student cover), and optional sections. The information appears factually accurate and aligns with typical home insurance policy documents. Minor deduction as we cannot verify all specific details against the actual source document.
+
+[RELEVANCE]: The response directly addresses the user's question 'What is covered by the policy?' by providing a clear, organized breakdown of coverage areas. The structure with main categories, specific covers, and optional sections makes it easy to understand what the policy covers. The closing question about additional details is appropriate and helpful without being excessive.</pre>
+                                    
+                                    
+                                </div>
+                            </td>
+                        </tr>
+            
+                    </tbody>
+                </table>
+                
+                <div style="margin-top: 20px; color: #666; font-size: 12px; text-align: center;">
+                    Generated on 2026-02-01 13:20:18
+                </div>
+            </div>
+        </body>
+        </html>
+        

@@ -1,0 +1,177 @@
+
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Agent Regression Report - LangGraphAgent</title>
+            <style>
+                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+                .container { max-width: 1200px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                h1 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+                .summary { display: flex; gap: 20px; margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 6px; }
+                .summary-item { flex: 1; text-align: center; }
+                .summary-value { font-size: 24px; font-weight: bold; }
+                .summary-label { color: #666; font-size: 14px; }
+                .passed { color: #28a745; }
+                .failed { color: #dc3545; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+                th { background-color: #f8f9fa; color: #333; font-weight: 600; }
+                tr:hover { background-color: #f1f1f1; }
+                .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; text-transform: uppercase; }
+                .status-passed { background-color: #d4edda; color: #155724; }
+                .status-failed { background-color: #f8d7da; color: #721c24; }
+                .details-row { display: none; background-color: #fafafa; }
+                .details-content { padding: 15px; border-left: 4px solid #ddd; margin: 10px 0; }
+                .toggle-btn { cursor: pointer; color: #007bff; text-decoration: underline; border: none; background: none; padding: 0; }
+                pre { white-space: pre-wrap; word-wrap: break-word; background: #eee; padding: 10px; border-radius: 4px; }
+                .metric-badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-right: 5px; background-color: #e9ecef; color: #495057; border: 1px solid #ced4da; }
+                .metric-score { font-weight: bold; }
+                .model-id { font-size: 12px; color: #666; font-style: italic; }
+            </style>
+            <script>
+                function toggleDetails(id) {
+                    var row = document.getElementById('details-' + id);
+                    if (row.style.display === 'table-row') {
+                        row.style.display = 'none';
+                    } else {
+                        row.style.display = 'table-row';
+                    }
+                }
+            </script>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Agent Regression Report</h1>
+                
+                <div class="summary">
+                    <div class="summary-item">
+                        <div class="summary-value">LangGraphAgent</div>
+                        <div class="summary-label">Agent Class</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value">2</div>
+                        <div class="summary-label">Total Scenarios</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value passed">2</div>
+                        <div class="summary-label">Passed</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value failed">0</div>
+                        <div class="summary-label">Failed</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value">100.0%</div>
+                        <div class="summary-label">Pass Rate</div>
+                    </div>
+                </div>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">#</th>
+                            <th>Agent Name</th>
+                            <th>Scenario</th>
+                            <th>Model</th>
+                            <th>Status</th>
+                            <th>Score</th>
+                            <th>Metrics</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        
+                        <tr>
+                            <td>1</td>
+                            <td>knowledge_base_as_tool_agent</td>
+                            <td>Policy Coverage - Architect Fees</td>
+                            <td><span class="model-id">bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0</span></td>
+                            <td><span class="status-badge status-passed">PASSED</span></td>
+                            <td>8.7/10</td>
+                            <td><span class="metric-badge">correctness: <span class="metric-score">9.0</span></span><span class="metric-badge">relevance: <span class="metric-score">8.0</span></span><span class="metric-badge">tool_usage: <span class="metric-score">9.0</span></span></td>
+                            <td><button class="toggle-btn" onclick="toggleDetails(0)">View Details</button></td>
+                        </tr>
+                        <tr id="details-0" class="details-row">
+                            <td colspan="8">
+                                <div class="details-content">
+                                    <strong>Input:</strong>
+                                    <pre>Is architect fees covered by the insurance policy?</pre>
+                                    
+                                    <strong>Actual Output:</strong>
+                                    <pre>Yes, **architect fees are covered** by the insurance policy, but with specific conditions:  **What's Covered:** - Architects, surveyors, consulting engineers, and legal fees are covered **following a valid claim for damage** under the buildings insurance section - This coverage is included within your overall buildings cover limit  **Important Exclusions:** - **Fees for preparing a claim are NOT covered** - the policy specifically excludes fees related to preparing the insurance claim itself  **Additional Coverage:** Along with architect fees, the policy also covers: - Cost of clearing debris from the site - Cost of demolishing or shoring up the buildings - Cost to comply with government or local authority requirements (but not if the order predates the loss or damage)  So in summary, architect fees are covered when they're needed to rebuild or repair your property after a valid insurance claim for damage, but not for the administrative work of preparing the claim documentation.</pre>
+                                    
+                                    <strong>Expected Output:</strong>
+                                    <pre>The agent should state whether architect fees are covered based on the policy document.</pre>
+                                    
+                                    <strong>Explanation:</strong>
+                                    <pre>[CORRECTNESS]: The response accurately states that architect fees are covered by the insurance policy following a valid claim for damage, with appropriate caveats about exclusions (fees for preparing claims). The information appears factually correct and aligns with typical insurance policy language regarding professional fees.
+
+[RELEVANCE]: The response directly answers the user's question about whether architect fees are covered. While it provides additional context about related coverages (debris clearing, demolition costs, etc.), this extra information is helpful rather than distracting, though it does make the response somewhat longer than strictly necessary.
+
+[TOOL_USAGE]: The agent appears to have effectively accessed and referenced the policy document to provide specific details about architect fee coverage, including conditions, exclusions, and related provisions. The structured response with clear sections suggests good information retrieval and organization from the source material.</pre>
+                                    
+                                    <strong>Token Usage:</strong>
+                                    <pre>{
+  "input_tokens": 1989,
+  "output_tokens": 204,
+  "total_tokens": 2193
+}</pre>
+
+                                    
+                                </div>
+                            </td>
+                        </tr>
+            
+                        <tr>
+                            <td>2</td>
+                            <td>knowledge_base_as_tool_agent</td>
+                            <td>General Policy Coverage</td>
+                            <td><span class="model-id">bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0</span></td>
+                            <td><span class="status-badge status-passed">PASSED</span></td>
+                            <td>8.7/10</td>
+                            <td><span class="metric-badge">correctness: <span class="metric-score">8.0</span></span><span class="metric-badge">relevance: <span class="metric-score">9.0</span></span><span class="metric-badge">tool_usage: <span class="metric-score">9.0</span></span></td>
+                            <td><button class="toggle-btn" onclick="toggleDetails(1)">View Details</button></td>
+                        </tr>
+                        <tr id="details-1" class="details-row">
+                            <td colspan="8">
+                                <div class="details-content">
+                                    <strong>Input:</strong>
+                                    <pre>What is employee leave policy?</pre>
+                                    
+                                    <strong>Actual Output:</strong>
+                                    <pre>Based on the leave policy documents, here's an overview of the employee leave policy:  ## Employee Leave Policy Overview  The organization provides several types of leave for employees:  ### **1. Administrative Leave for Outstanding Performance** - Employees may receive up to **32 hours** of paid administrative leave per fiscal year for outstanding performance - Can be granted for a single act or task of outstanding performance (must be documented) - Can be carried over from one fiscal year to the next within the same biennium  ### **2. Emergency Leave** - **Family Death**: Employees are entitled to up to **24 work hours** of emergency leave for a death in the family (prorated for part-time employees)   - Family includes: spouse, parents, children, brothers, sisters, grandparents, and grandchildren (including step-relationships) - Emergency leave may also be granted for other reasons when good cause exists  ### **3. Jury and Grand Jury Duty** - Employees receive **paid leave** to serve for jury duty or grand jury duty - Must be supported by summons or court statement  ### **4. Family and Medical Leave Act (FMLA)** - Available to care for spouse, child, or parent with a serious health condition - Available for covered servicemembers who are medically unfit - Available for the employee's own serious health condition  ### **5. Family Leave Pool** - Employees can apply if they've exhausted other leave types - Available for: birth of a child, foster/adoption placement, or serious illness  Would you like more detailed information about any specific type of leave?</pre>
+                                    
+                                    <strong>Expected Output:</strong>
+                                    <pre>The agent should provide a summary of the coverage details from the policy document.</pre>
+                                    
+                                    <strong>Explanation:</strong>
+                                    <pre>[CORRECTNESS]: The response provides detailed and accurate information about various types of employee leave policies including administrative leave, emergency leave, jury duty, FMLA, and family leave pool. The specific details like 32 hours for administrative leave and 24 work hours for family death appear factually correct. However, without access to the source documents, I cannot verify 100% accuracy. The response aligns well with what would be expected from a comprehensive leave policy document.
+
+[RELEVANCE]: The response directly addresses the user's query about employee leave policy by providing a well-organized overview of different leave types. The information is highly relevant and structured in a clear, easy-to-understand format. The agent also offers to provide more detailed information, which is helpful. Minor deduction because the expected output mentions 'coverage details' which could imply a focus on what's covered rather than types of leave, though the interpretation is reasonable.
+
+[TOOL_USAGE]: The agent clearly accessed and retrieved information from leave policy documents, as indicated by the phrase 'Based on the leave policy documents.' The response demonstrates effective use of document retrieval tools to extract comprehensive, structured information. The agent synthesized information from what appears to be multiple sections or documents to provide a complete overview. The formatting and organization suggest good processing of the retrieved information.</pre>
+                                    
+                                    <strong>Token Usage:</strong>
+                                    <pre>{
+  "input_tokens": 2183,
+  "output_tokens": 354,
+  "total_tokens": 2537
+}</pre>
+
+                                    
+                                </div>
+                            </td>
+                        </tr>
+            
+                    </tbody>
+                </table>
+                
+                <div style="margin-top: 20px; color: #666; font-size: 12px; text-align: center;">
+                    Generated on 2026-02-04 19:31:51
+                </div>
+            </div>
+        </body>
+        </html>
+        

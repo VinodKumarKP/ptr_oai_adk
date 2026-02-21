@@ -29,6 +29,30 @@ dependencies = [
     "langchain-litellm>=0.3.2"
 ]
 
+[project.optional-dependencies]
+# Vector-related dependencies
+chromadb = [
+    "oai-agent-core[vector-required]",
+    "langchain-chroma==1.1.0",
+    "chromadb==1.4.1",
+]
+
+postgres = [
+    "oai-agent-core[postgres]",
+]
+
+s3 = [
+    "oai-agent-core[s3]",
+]
+
+# All optional dependencies
+all = [
+    "oai-langgraph-core[chromadb]"
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.version]
 source = "vcs"
 raw-options = { root = "../.." }
@@ -40,5 +64,9 @@ packages = ["src/oai_agent_core"]
 "src" = ""
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+minversion = "6.0"
+addopts = "-ra -q --cov=src --cov-report=term-missing"
+testpaths = [
+    "tests",
+]
+asyncio_mode = "strict"

@@ -1,0 +1,124 @@
+
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Agent Regression Report - LangGraphAgent</title>
+            <style>
+                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+                .container { max-width: 1200px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                h1 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+                .summary { display: flex; gap: 20px; margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 6px; }
+                .summary-item { flex: 1; text-align: center; }
+                .summary-value { font-size: 24px; font-weight: bold; }
+                .summary-label { color: #666; font-size: 14px; }
+                .passed { color: #28a745; }
+                .failed { color: #dc3545; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+                th { background-color: #f8f9fa; color: #333; font-weight: 600; }
+                tr:hover { background-color: #f1f1f1; }
+                .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; text-transform: uppercase; }
+                .status-passed { background-color: #d4edda; color: #155724; }
+                .status-failed { background-color: #f8d7da; color: #721c24; }
+                .details-row { display: none; background-color: #fafafa; }
+                .details-content { padding: 15px; border-left: 4px solid #ddd; margin: 10px 0; }
+                .toggle-btn { cursor: pointer; color: #007bff; text-decoration: underline; border: none; background: none; padding: 0; }
+                pre { white-space: pre-wrap; word-wrap: break-word; background: #eee; padding: 10px; border-radius: 4px; }
+                .metric-badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-right: 5px; background-color: #e9ecef; color: #495057; border: 1px solid #ced4da; }
+                .metric-score { font-weight: bold; }
+            </style>
+            <script>
+                function toggleDetails(id) {
+                    var row = document.getElementById('details-' + id);
+                    if (row.style.display === 'table-row') {
+                        row.style.display = 'none';
+                    } else {
+                        row.style.display = 'table-row';
+                    }
+                }
+            </script>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Agent Regression Report</h1>
+                
+                <div class="summary">
+                    <div class="summary-item">
+                        <div class="summary-value">LangGraphAgent</div>
+                        <div class="summary-label">Agent Class</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value">1</div>
+                        <div class="summary-label">Total Scenarios</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value passed">1</div>
+                        <div class="summary-label">Passed</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value failed">0</div>
+                        <div class="summary-label">Failed</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value">100.0%</div>
+                        <div class="summary-label">Pass Rate</div>
+                    </div>
+                </div>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">#</th>
+                            <th>Agent Name</th>
+                            <th>Scenario</th>
+                            <th>Status</th>
+                            <th>Score</th>
+                            <th>Metrics</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        
+                        <tr>
+                            <td>1</td>
+                            <td>mcp_agent</td>
+                            <td>Environment Lookup</td>
+                            <td><span class="status-badge status-passed">PASSED</span></td>
+                            <td>10.0/10</td>
+                            <td><span class="metric-badge">correctness: <span class="metric-score">10.0</span></span><span class="metric-badge">tool_usage: <span class="metric-score">10.0</span></span></td>
+                            <td><button class="toggle-btn" onclick="toggleDetails(0)">View Details</button></td>
+                        </tr>
+                        <tr id="details-0" class="details-row">
+                            <td colspan="7">
+                                <div class="details-content">
+                                    <strong>Input:</strong>
+                                    <pre>What is the value of PATH environment variable?</pre>
+                                    
+                                    <strong>Actual Output:</strong>
+                                    <pre>The value of the PATH environment variable is:  ``` /Users/vinodkumarkp/.cache/uv/builds-v0/.tmp5be0mQ/bin:/Users/vinodkumarkp/.cache/uv/archive-v0/WBMyzQbJaqnVc05xjJDau/bin:/Users/vinodkumarkp/PycharmProjects/ptr_oai_langgraph_agent_core/.venv/bin:/Users/vinodkumarkp/PycharmProjects/ptr_oai_langgraph_agent_core/.venv/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/opt/pmk/env/global/bin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/usr/local/munki:/Users/vinodkumarkp/.nvm/versions/node/v23.11.0/bin:/Library/Frameworks/Python.framework/Versions/3.13/bin:/opt/homebrew/sbin:/Library/Frameworks/Python.framework/Versions/3.10/bin:/Users/vinodkumarkp/.orbstack/bin ```  This PATH includes various directories for: - UV cache and build directories - Python virtual environment (.venv) - System binaries (/usr/bin, /bin, /usr/sbin, /sbin) - Homebrew (/opt/homebrew/bin, /opt/homebrew/sbin) - Node.js (NVM) - Python frameworks - VMware Fusion - OrbStack - And other development tools</pre>
+                                    
+                                    <strong>Expected Output:</strong>
+                                    <pre>The agent should return the value of the PATH environment variable.</pre>
+                                    
+                                    <strong>Explanation:</strong>
+                                    <pre>[CORRECTNESS]: The agent successfully retrieved and displayed the PATH environment variable value. The response includes the complete PATH string with all directories separated by colons, which is the correct format for Unix-based systems. The agent also provided helpful context by breaking down what types of directories are included in the PATH, making the response more informative without compromising accuracy.
+
+[TOOL_USAGE]: The agent appropriately used system tools to retrieve the PATH environment variable. The response demonstrates proper tool usage by successfully accessing the environment variable and returning its value. The agent also enhanced the response by parsing and categorizing the PATH components, showing effective use of the retrieved data to provide additional context to the user.</pre>
+                                    
+                                    
+                                </div>
+                            </td>
+                        </tr>
+            
+                    </tbody>
+                </table>
+                
+                <div style="margin-top: 20px; color: #666; font-size: 12px; text-align: center;">
+                    Generated on 2026-02-01 13:50:27
+                </div>
+            </div>
+        </body>
+        </html>
+        

@@ -1,0 +1,23 @@
+agent_config: ../../../examples/agents_config/knowledge_base_as_tool_agent.yaml
+
+scenarios:
+#  - name: Policy Coverage - Architect Fees
+#    description: Test if the agent can retrieve specific coverage details using the knowledge base tool.
+#    input_message: Is architect fees covered by the insurance policy?
+#    expected_output: The agent should state whether architect fees are covered based on the policy document.
+#    metrics:
+#      - correctness
+#      - relevance
+#      - tool_usage
+
+  - name: General Policy Coverage
+    description: Test if the agent can summarize what is covered by the policy using the tool.
+    input_message: |
+      Load the doc /Users/vinodkumarkp/PycharmProjects/ptr_oai_openai_agent_core/examples/docs/leave_policy.pdf into the knowledge base 
+      and query - What is employee leave policy?
+      also, confirm if the record was loaded before querying by displaying which tool was called.
+    expected_output: The agent should provide a summary of the coverage details from the policy document.
+    metrics:
+      - correctness
+      - relevance
+      - tool_usage

@@ -1,0 +1,18 @@
+agent_config: ../../../examples/agents_config/multi_agent_agent_as_tool.yaml
+
+scenarios:
+  - name: Flight Booking via Tool
+    description: Test if the supervisor uses the flight assistant tool to book a flight.
+    input_message: Book a Southwest flight from LAX to SFO for 2026-02-02 with user id 1.
+    expected_output: The agent should confirm the flight booking from LAX to SFO.
+    metrics:
+      - correctness
+      - tool_usage
+
+  - name: Flight Booking - Invalid Route
+    description: Test if the agent handles invalid flight routes gracefully.
+    input_message: Book a flight from LAX to JFK for 2026-02-01.
+    expected_output: The agent should state that no flights are available for that route.
+    metrics:
+      - correctness
+      - tool_usage
