@@ -1,5 +1,5 @@
 [project]
-name = "ptr-oai-agent-core-workspace"
+name = "ptr-oai-adk-workspace"
 version = "0.1.0"
 description = "Monorepo workspace for OAI Agent Core and related packages"
 requires-python = ">=3.11"
