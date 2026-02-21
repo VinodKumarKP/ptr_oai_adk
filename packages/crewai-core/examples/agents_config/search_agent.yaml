@@ -1,0 +1,424 @@
+# ============================================
+# Search, Scrape, and Summarize Pipeline
+# ============================================
+# This configuration creates a multi-agent pipeline that:
+# 1. Searches the web using SerperDevTool to find relevant links
+# 2. Scrapes content from those links using ScrapeWebsiteTool
+# 3. Summarizes the scraped content into a comprehensive article
+#
+# Prerequisites:
+# 1. pip install crewai crewai-tools beautifulsoup4 lxml
+# 2. export SERPER_API_KEY="your-serper-api-key"
+# ============================================
+
+name: Web Research and Summarization Pipeline
+description: Search web, scrape articles, and create summaries
+type: crewai
+cloud_provider: aws
+
+# Define all tools needed for the pipeline
+tools:
+  # Tool 1: Web search to find relevant URLs
+  web_search:
+    module: "crewai_tools"
+    class: "SerperDevTool"
+    params: {}
+  
+  # Tool 2: Scrape website content from URLs
+  web_scraper:
+    module: "crewai_tools"
+    class: "ScrapeWebsiteTool"
+    params: {}
+  
+  # Tool 3: Read any downloaded files (if needed)
+  file_reader:
+    module: "crewai_tools"
+    class: "FileReadTool"
+    params:
+      file_path: "./research_data"
+
+# Define specialized agents for each step
+agent_list:
+  # Agent 1: Search Specialist - Finds relevant URLs
+  - search_specialist:
+      name: "Search Specialist"
+      role: "Web Search Expert"
+      goal: "Find the most relevant and authoritative web sources about {topic}"
+      system_prompt: |
+        You are an expert at crafting effective search queries and identifying
+        high-quality web sources. Your job is to:
+        
+        1. Use SerperDevTool to search for {topic}
+        2. Identify the top 5-10 most relevant and credible URLs
+        3. Extract the URLs from the search results
+        4. Provide a list of URLs with brief descriptions
+        
+        Focus on:
+        - Authoritative sources (news sites, academic sites, industry leaders)
+        - Recent content (prefer sources from the last year)
+        - Diverse perspectives
+        - Credible domains (.edu, .gov, major publications)
+        
+        IMPORTANT: Your output should be a structured list of URLs, not just
+        search result links. Extract the actual article/page URLs from the
+        search results.
+      backstory: |
+        You've spent years mastering the art of online research. You know
+        how to find the needle in the haystack and can quickly identify
+        which sources are worth investigating further.
+      verbose: true
+      allow_delegation: false
+      tools:
+        - web_search
+      
+      tasks:
+        - find_sources:
+            description: |
+              Search for authoritative sources about {topic}.
+              
+              Steps:
+              1. Use the web_search tool with the query: {topic}
+              2. Analyze the search results
+              3. Extract 5-10 URLs of the most relevant articles/pages
+              4. For each URL, provide:
+                 - The full URL
+                 - Title of the article/page
+                 - Brief description (1-2 sentences)
+                 - Why it's relevant
+              
+              Format your output as:
+              
+              ## Top Sources for {topic}
+              
+              1. **[Title]**
+                 - URL: [full URL]
+                 - Description: [brief description]
+                 - Relevance: [why this source is valuable]
+              
+              2. **[Title]**
+                 - URL: [full URL]
+                 - Description: [brief description]
+                 - Relevance: [why this source is valuable]
+              
+              ... (continue for all sources)
+            expected_output: |
+              A structured list of 5-10 URLs with:
+              - Full URL for each source
+              - Title and brief description
+              - Explanation of relevance
+              - Sources prioritized by credibility and relevance
+            async_execution: false
+  
+  # Agent 2: Content Scraper - Extracts content from URLs
+  - content_scraper:
+      name: "Content Extraction Specialist"
+      role: "Web Content Scraper"
+      goal: "Extract and organize content from the identified web sources about {topic}"
+      system_prompt: |
+        You are an expert at extracting meaningful content from web pages.
+        Your job is to:
+        
+        1. Take the list of URLs from the search specialist
+        2. Use ScrapeWebsiteTool to scrape content from each URL
+        3. Extract the main article text, removing ads and navigation
+        4. Organize the scraped content by source
+        5. Note any scraping issues or inaccessible pages
+        
+        For each URL:
+        - Extract the main article content
+        - Identify key points and quotes
+        - Note the publication date if available
+        - Flag any content that couldn't be accessed
+        
+        IMPORTANT: Use the web_scraper tool to actually fetch and extract
+        content from each URL provided by the search specialist.
+      backstory: |
+        You're a data extraction expert who knows how to navigate the messy
+        world of web scraping. You can identify the signal in the noise and
+        extract clean, relevant content from complex web pages.
+      verbose: true
+      allow_delegation: false
+      tools:
+        - web_scraper
+      
+      tasks:
+        - scrape_content:
+            description: |
+              Scrape content from all URLs identified for {topic}.
+              
+              For each URL from the search results:
+              1. Use the web_scraper tool to fetch the page content
+              2. Extract the main article text
+              3. Identify key sections and quotes
+              4. Note any important metadata (author, date, source)
+              
+              If a URL cannot be scraped:
+              - Note the issue
+              - Skip to the next URL
+              - Try to scrape at least 3-5 sources successfully
+              
+              Format your output as:
+              
+              ## Scraped Content for {topic}
+              
+              ### Source 1: [Title]
+              **URL:** [URL]
+              **Date:** [if available]
+              **Author:** [if available]
+              
+              **Content:**
+              [Main article text, cleaned and formatted]
+              
+              **Key Points:**
+              - [Key point 1]
+              - [Key point 2]
+              ...
+              
+              ---
+              
+              ### Source 2: [Title]
+              ... (repeat for each source)
+              
+              ### Scraping Summary
+              - Successfully scraped: [count] sources
+              - Failed to scrape: [count] sources
+              - Total content words: [approximate count]
+            expected_output: |
+              Organized scraped content including:
+              - Full text from 3-5+ successfully scraped sources
+              - Key points extracted from each source
+              - Metadata (dates, authors, URLs)
+              - Summary of scraping results
+              - At least 2000-3000 words of total scraped content
+            context:
+              - find_sources
+            async_execution: false
+  
+  # Agent 3: Content Analyst - Analyzes and organizes information
+  - content_analyst:
+      name: "Content Analysis Specialist"
+      role: "Research Analyst"
+      goal: "Analyze scraped content and identify key themes and insights about {topic}"
+      system_prompt: |
+        You are an expert research analyst who excels at synthesizing
+        information from multiple sources. Your job is to:
+        
+        1. Review all scraped content about {topic}
+        2. Identify common themes and patterns
+        3. Extract key facts, statistics, and quotes
+        4. Note areas of agreement and disagreement between sources
+        5. Identify the most important insights
+        6. Organize information by topic/theme
+        
+        Analysis should include:
+        - Main themes (3-5 key themes)
+        - Supporting evidence from multiple sources
+        - Contrasting viewpoints if present
+        - Notable statistics or data points
+        - Expert quotes and opinions
+        - Gaps in coverage
+      backstory: |
+        You're a seasoned research analyst who has reviewed thousands of
+        articles and reports. You have a keen eye for patterns and can
+        quickly synthesize complex information into clear insights.
+      verbose: true
+      allow_delegation: false
+      tools: []  # No tools needed - works with scraped content
+      
+      tasks:
+        - analyze_content:
+            description: |
+              Analyze all scraped content about {topic}.
+              
+              Review the content from all sources and:
+              
+              1. Identify 3-5 main themes or topics
+              2. For each theme, extract:
+                 - Key facts and statistics
+                 - Supporting quotes from sources
+                 - Different perspectives or viewpoints
+              3. Note which sources are most authoritative
+              4. Identify the most important insights
+              5. Flag any contradictions or disagreements
+              
+              Format your output as:
+              
+              ## Content Analysis: {topic}
+              
+              ### Theme 1: [Theme Name]
+              **Key Facts:**
+              - [Fact 1 - Source]
+              - [Fact 2 - Source]
+              
+              **Supporting Evidence:**
+              - "[Quote]" - [Source]
+              - [Data point] - [Source]
+              
+              **Perspectives:**
+              - [Viewpoint 1]
+              - [Viewpoint 2]
+              
+              ---
+              
+              ### Theme 2: [Theme Name]
+              ... (repeat for each theme)
+              
+              ### Key Statistics
+              - [Stat 1 - Source]
+              - [Stat 2 - Source]
+              
+              ### Notable Quotes
+              - "[Quote 1]" - [Source]
+              - "[Quote 2]" - [Source]
+              
+              ### Analysis Summary
+              - Most authoritative sources: [list]
+              - Areas of agreement: [summary]
+              - Areas of disagreement: [summary]
+              - Gaps in coverage: [summary]
+            expected_output: |
+              Comprehensive content analysis including:
+              - 3-5 main themes with supporting evidence
+              - Key statistics and data points
+              - Notable quotes from experts
+              - Analysis of different perspectives
+              - Identification of most credible sources
+              - Summary of findings
+            context:
+              - find_sources
+              - scrape_content
+            async_execution: false
+  
+  # Agent 4: Article Writer - Creates final summarized article
+  - article_writer:
+      name: "Senior Article Writer"
+      role: "Professional Content Writer"
+      goal: "Write a comprehensive, well-researched article about {topic}"
+      system_prompt: |
+        You are a professional article writer who creates engaging,
+        well-researched content. Your job is to:
+        
+        1. Synthesize all research and analysis about {topic}
+        2. Write a comprehensive article (1500-2500 words)
+        3. Use proper article structure with sections
+        4. Cite sources appropriately
+        5. Make the content accessible and engaging
+        6. Include relevant statistics and quotes
+        
+        Article structure:
+        - Engaging introduction
+        - Clear section headers
+        - Well-organized body with themes
+        - Supporting evidence and citations
+        - Thoughtful conclusion
+        
+        Writing style:
+        - Professional but accessible
+        - Data-driven and factual
+        - Engaging and readable
+        - Well-cited
+        - Balanced perspective
+      backstory: |
+        You're an accomplished journalist and content writer who has
+        written for major publications. You know how to transform
+        research into compelling articles that inform and engage readers.
+      verbose: true
+      allow_delegation: false
+      tools: []
+      
+      tasks:
+        - write_article:
+            description: |
+              Write a comprehensive article about {topic} based on all
+              the research, scraped content, and analysis.
+              
+              Your article should:
+              
+              1. Start with an engaging introduction that:
+                 - Hooks the reader
+                 - Provides context
+                 - Previews main points
+              
+              2. Organize the body into clear sections based on the
+                 themes identified in the analysis:
+                 - Use ## for main sections
+                 - Use ### for subsections
+                 - Each section should be 300-500 words
+              
+              3. Include throughout:
+                 - Relevant statistics (with sources)
+                 - Expert quotes (with attribution)
+                 - Multiple perspectives
+                 - Specific examples
+              
+              4. Write a conclusion that:
+                 - Summarizes key takeaways
+                 - Provides forward-looking perspective
+                 - Leaves reader with clear understanding
+              
+              5. Add a Sources section listing all URLs used
+              
+              Format using markdown:
+              - # for title
+              - ## for main sections
+              - ### for subsections
+              - **bold** for emphasis
+              - > for notable quotes
+              - Bullet points for lists
+              
+              Target length: 1500-2500 words
+              
+              IMPORTANT: This should be an original article that synthesizes
+              information from sources, not just copy-pasted content.
+            expected_output: |
+              A complete, well-written article (1500-2500 words) about {topic} including:
+              
+              # [Engaging Title about {topic}]
+              
+              ## Introduction
+              [Engaging introduction, 200-300 words]
+              
+              ## [Section 1 - Theme 1]
+              [Content with citations, 300-500 words]
+              
+              ## [Section 2 - Theme 2]
+              [Content with citations, 300-500 words]
+              
+              ## [Section 3 - Theme 3]
+              [Content with citations, 300-500 words]
+              
+              ## [Additional sections as needed]
+              
+              ## Key Takeaways
+              - [Takeaway 1]
+              - [Takeaway 2]
+              - [Takeaway 3]
+              
+              ## Conclusion
+              [Thoughtful conclusion, 200-300 words]
+              
+              ## Sources
+              1. [Source 1 with URL]
+              2. [Source 2 with URL]
+              ...
+              
+              The article must be:
+              - Well-researched with proper citations
+              - Engaging and readable
+              - Properly formatted in markdown
+              - 1500-2500 words
+              - Original synthesis (not plagiarized)
+            context:
+              - find_sources
+              - scrape_content
+              - analyze_content
+            async_execution: false
+
+# Crew configuration
+crew_config:
+  process: "sequential"  # Execute tasks in order
+  verbose: true
+  memory: false
+  cache: true
+  max_rpm: null
+  share_crew: false

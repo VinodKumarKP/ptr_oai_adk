@@ -1,0 +1,111 @@
+name: RAG Agent
+description: An agent that answers questions based on a knowledge base
+type: crewai
+cloud_provider: aws
+port: 8102
+order: 1
+instructions: |
+  This agent uses a knowledge base to answer user questions accurately.
+
+model:
+  model_id: bedrock/us.anthropic.claude-3-5-sonnet-20241022-v2:0
+  region_name: us-west-2
+  temperature: 0.0
+
+guardrails:
+  enable_agent_validation: true
+  custom_validators_dir: "custom_guardrails"
+  validators:
+    - name: competitor_check
+      full_name: guardrails/competitor_check
+      parameters:
+        competitors: ['Apple', 'Microsoft']
+      on_fail: "fix"
+
+#    - name: json_validator
+#      full_name: ValidJson
+#      module: valid_json
+#      on_fail: "noop"
+#      instruction: Response should be a valid json # Optional instruction
+  output:
+    validators:
+      - ref: competitor_check
+
+agent_list:
+  - rag_agent:
+      name: "Knowledge Assistant"
+      role: "Knowledge Base Specialist"
+      goal: "Answer questions using the provided knowledge base"
+      backstory: |
+        You are a helpful assistant dedicated to providing accurate information derived from your knowledge base.
+      verbose: true
+      allow_delegation: false
+      tasks:
+        - answer_question:
+            description: |
+              Answer the user's question based on the available knowledge.
+              Question: {user_message}
+            expected_output: |
+              A clear and concise answer derived from the knowledge base.
+            async_execution: false
+            human_input: false
+      knowledge_base:
+        - name: insurance_policies
+          description: "Search insurance policy documents"
+          vector_store:
+            type: chroma
+            settings:
+              collection_name: "insurance_policies"
+              persist_directory: "./rag_db2"
+              db_host: capgemini-vinodkumar-a89b.e.aivencloud.com
+              db_user: avnadmin
+              db_port: 18940
+              db_name: accounts_db
+          embedding:
+            model_id: "bedrock/amazon.titan-embed-text-v1"
+            region_name: "us-west-2"
+          data_sources:
+            - path: "knowledge/docs/sample_policy.pdf"
+          text_splitter:
+            type: "recursive_character"
+            chunk_size: 1000
+            chunk_overlap: 200
+          retrieval_settings:
+            top_k: 5
+            score_threshold: 0.7
+
+# Global knowledge base (Context injection)
+#knowledge_base:
+#  - name: insurance_policies
+#    description: "Search insurance policy documents"
+#    vector_store:
+#      type: chroma
+#      settings:
+#        collection_name: "insurance_policies"
+#        persist_directory: "./rag_db2"
+#    embedding:
+#      model_id: "bedrock/amazon.titan-embed-text-v1"
+#      region_name: "us-west-2"
+#    data_sources:
+#      - path: "knowledge/docs/sample_policy.pdf"
+#    text_splitter:
+#      type: "recursive_character"
+#      chunk_size: 1000
+#      chunk_overlap: 200
+#    retrieval_settings:
+#      top_k: 5
+#      score_threshold: 0.7
+
+#memory:
+#  db_name: "memory_db"
+#  embedding_model_id: "amazon.titan-embed-text-v1"
+#  persist_directory: './memory_db'
+#  max_recent_turns: 3
+#  max_relevant_turns: 3
+#  similarity_threshold: 0.6
+
+crew_config:
+  process: "sequential"
+  verbose: true
+  memory: false
+  cache: true

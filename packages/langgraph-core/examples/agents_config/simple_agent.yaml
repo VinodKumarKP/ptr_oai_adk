@@ -1,0 +1,22 @@
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+tools:
+  utils:
+    module: demo_tools
+    base_path: "./utils"
+
+agent_list:
+  - simple_assistant:
+      system_prompt: |
+        You are a helpful assistant. You can help with general queries.
+        You also have access to flight and hotel search tools.
+      tools:
+        - search_flights
+        - search_hotels
+        - book_hotel
+        - book_flight
+
+crew_config:
+  pattern: supervisor

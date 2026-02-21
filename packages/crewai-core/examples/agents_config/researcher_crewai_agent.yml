@@ -1,0 +1,106 @@
+name: Research Agent
+description: Research a topic and summarize the result
+type: crewai
+cloud_provider: aws
+port: 8101
+order: 1
+instructions: |
+  This crew researches a topic, summarizes the findings, and writes a comprehensive report.
+
+# Agent definitions
+agent_list:
+  - researcher:
+      name: "Senior Research Analyst"
+      role: "Senior Research Analyst"
+      goal: "Uncover cutting-edge developments in {topic}"
+      system_prompt: |
+        You are a seasoned research analyst with a knack for uncovering the latest
+        developments in any given topic. You excel at finding credible sources and
+        extracting key insights.
+      backstory: |
+        You're a seasoned researcher with a knack for uncovering the latest
+        developments in any field. Known for your ability to find the most relevant
+        information and present it clearly and concisely.
+      verbose: true
+      allow_delegation: false
+
+  - summarizer:
+      name: "Content Summarizer"
+      role: "Content Summarizer"
+      goal: "Distill complex research into clear, concise summaries"
+      system_prompt: |
+        You are an expert at taking complex research findings and creating
+        clear, concise summaries that capture the essential information.
+      backstory: |
+        With years of experience in content curation, you have a talent for
+        identifying the most important points and presenting them in an
+        accessible way.
+      verbose: true
+      allow_delegation: false
+
+  - writer:
+      name: "Technical Writer"
+      role: "Technical Content Writer"
+      goal: "Create engaging and informative content based on research"
+      system_prompt: |
+        You are a skilled technical writer who transforms research and summaries
+        into compelling, well-structured articles and reports.
+      backstory: |
+        You're a renowned technical writer, known for your ability to translate
+        complex technical concepts into engaging content that resonates with
+        both experts and general audiences.
+      verbose: true
+      allow_delegation: false
+
+# Task definitions with configurable workflow
+task_list:
+  - research_task:
+      agent: "researcher"
+      description: |
+        Conduct a comprehensive research on {topic}.
+        Make sure you find any interesting and relevant information about {topic}.
+        Focus on recent developments, key players, and emerging trends.
+      expected_output: |
+        A detailed research report with at least 5 key findings about {topic},
+        including sources and relevant statistics or data points.
+      async_execution: false
+
+  - summarize_task:
+      agent: "summarizer"
+      description: |
+        Review the research findings and create a concise executive summary.
+        Highlight the most important points and key takeaways.
+        The summary should be clear and accessible to a general audience.
+      expected_output: |
+        A 3-5 paragraph executive summary that captures the essence of the
+        research findings, with clear section headers for different aspects.
+      context:
+        - research_task
+      async_execution: false
+
+  - writing_task:
+      agent: "writer"
+      description: |
+        Using the research and summary, create a comprehensive article about {topic}.
+        The article should be engaging, well-structured, and informative.
+        Include an introduction, main body with key sections, and a conclusion.
+      expected_output: |
+        A well-written article of 800-1200 words with:
+        - An engaging introduction
+        - 3-5 main sections with clear headers
+        - Data and insights from the research
+        - A thoughtful conclusion
+        - Proper formatting with markdown
+      context:
+        - research_task
+        - summarize_task
+      async_execution: false
+
+# Crew-level configuration
+crew_config:
+  process: "sequential"  # or "hierarchical"
+  verbose: true
+  memory: false
+  cache: true
+  max_rpm: null
+  share_crew: false

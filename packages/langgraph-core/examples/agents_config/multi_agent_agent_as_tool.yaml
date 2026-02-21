@@ -1,0 +1,37 @@
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+tools:
+  utils:
+    module: demo_tools
+    base_path: "./utils"
+
+agent_list:
+  - flight_assistant:
+      system_prompt: |
+        You are a flight booking assistant.
+        You can search for flights and book them.
+      tools:
+        - search_flights
+        - book_flight
+
+  - hotel_assistant:
+      system_prompt: |
+        You are a hotel booking assistant.
+        You can search for hotels and book them.
+      tools:
+        - search_hotels
+        - book_hotel
+
+system_prompt: |
+  You are a travel concierge supervisor.
+  You have access to the following specialized agents:
+  - flight_assistant: For flight searches and bookings.
+  - hotel_assistant: For hotel searches and bookings.
+  
+  Delegate tasks to the appropriate agent based on the user's request.
+  For complex requests involving both, coordinate between them.
+
+crew_config:
+  pattern: agent-as-tool

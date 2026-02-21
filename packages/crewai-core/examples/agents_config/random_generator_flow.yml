@@ -1,0 +1,29 @@
+name: Random Generator Flow
+description: Generate random numbers and names using Flow pattern
+type: crewai
+mode: flow  # NEW: Specify execution mode (crew or flow)
+cloud_provider: aws
+port: 8102
+order: 1
+instructions: |
+  This flow generates random numbers and names using a flow-based approach.
+
+# Flow configuration
+flow_config:
+  script_path: ./flows/random_flow.py
+  flow_class: RandomFlow
+
+# Model configuration (shared by flow)
+model:
+  model_id: bedrock/anthropic.claude-3-haiku-20240307-v1:0
+  temperature: 0.0
+
+# Tools configuration (automatically available in flow)
+tools:
+  random_generator:
+    module: random_generator
+    base_path: ./utils
+    function_params:
+      generate_random_number:
+        lower: 100
+        upper: 111

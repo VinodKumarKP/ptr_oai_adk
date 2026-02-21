@@ -1,0 +1,62 @@
+name: Environment Agent
+description: Research the current environment and provide relevant information
+type: crewai
+cloud_provider: aws
+port: 8101
+order: 1
+instructions: |
+  This crew researches a topic, summarizes the findings, and writes a comprehensive report.
+# Agent definitions
+
+model:
+  model_id: bedrock/anthropic.claude-3-haiku-20240307-v1:0
+  temperature: 0.0
+
+tools:
+  # Load all the functions from the random_generator module
+  random_generator:
+    module: random_generator
+    base_path: ./utils
+    function_params:
+      generate_random_number:
+        lower: 10
+        upper: 11
+
+#mcps:
+#  env_lookup_server:
+#    command: "uv"
+#    args: [ "run", "--with", "git+https://github.com/Capgemini-Innersource/ptr-cloud-mcp-servers.git ", "env_lookup_server" ]
+
+
+agent_list:
+  - researcher:
+      name: "Linux System Monitor"
+      role: "Linux System Monitor"
+      goal: "Analyze and report on the current environment {additional_instructions}"
+      backstory: |
+        An expert in Linux systems, this agent can execute commands and analyze the output to provide a report on environment variables and also generate random number.
+      verbose: true
+      allow_delegation: false
+      tasks:
+        - research_task:
+            description: |
+              Execute a system command to list all environment variables. {additional_instructions} and generate random number
+            expected_output: |
+              A list of all environment variables and their values and generate a random number
+            async_execution: false
+            human_input: false
+      mcps:
+        env_lookup_server:
+          command: "uv"
+          args: [ "run", "--with", "git+https://github.com/Capgemini-Innersource/ptr-cloud-mcp-servers.git ", "env_lookup_server" ]
+      tools:
+        - generate_random_number
+
+# Crew-level configuration
+crew_config:
+  process: "sequential"  # or "hierarchical"
+  verbose: true
+  memory: false
+  cache: true
+  max_rpm: null
+  share_crew: false

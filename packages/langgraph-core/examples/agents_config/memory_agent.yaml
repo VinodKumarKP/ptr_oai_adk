@@ -1,0 +1,41 @@
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+tools:
+  utils:
+    module: demo_tools
+    base_path: "./utils"
+
+mcps:
+  environment_lookup:
+    command: uv
+    args:
+      - run
+      - --with
+      - "git+https://github.com/Capgemini-Innersource/ptr-cloud-mcp-servers.git"
+      - env_lookup_server
+
+memory:
+  vector_store:
+    type: chroma
+    settings:
+      collection_name: "chat_memory"
+      persist_directory: "./memory_db"
+  embedding:
+    model_id: "bedrock/amazon.titan-embed-text-v1"
+    region_name: "us-west-2"
+  settings:
+    max_recent_turns: 3
+    max_relevant_turns: 3
+    similarity_threshold: 0.6
+
+agent_list:
+  - env_lookup_assistant:
+      system_prompt: |
+        You are a environment lookup assistant
+      mcps:
+        - environment_lookup
+
+crew_config:
+  pattern: single

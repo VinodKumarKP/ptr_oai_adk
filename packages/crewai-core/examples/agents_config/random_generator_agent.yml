@@ -1,0 +1,54 @@
+name: Random Generator Agent
+description: Research the current environment and provide relevant information
+type: crewai
+cloud_provider: aws
+port: 8101
+order: 1
+instructions: |
+  This crew researches a topic, summarizes the findings, and writes a comprehensive report.
+# Agent definitions
+
+model:
+  model_id: bedrock/anthropic.claude-3-haiku-20240307-v1:0
+  temperature: 0.0
+
+tools:
+  # Load all the functions from the random_generator module
+  random_generator:
+    module: random_generator
+    base_path: ./utils
+    function_params:
+      generate_random_number:
+        lower: 100
+        upper: 111
+
+
+agent_list:
+  - random_generator:
+      name: "Random Number Generator"
+      role: "Random Number Generator"
+      goal: "Generate random number {additional_instructions}"
+      backstory: |
+        An expert in generating random number and names.
+      verbose: true
+      allow_delegation: false
+      tasks:
+        - research_task:
+            description: |
+              Execute tools to generate random number and name
+            expected_output: |
+              A random number and name
+            async_execution: false
+            human_input: false
+
+      tools:
+        - generate_random_number
+        - generate_random_name
+
+crew_config:
+  process: "sequential"  # or "hierarchical"
+  verbose: true
+  memory: false
+  cache: true
+  max_rpm: null
+  share_crew: false

@@ -2,16 +2,16 @@ import asyncio
 import os
 from pprint import pprint
 import yaml
-from oai_agent_core.openai_core.agents.openai_agent import OpenAIAgent
+from oai_agent_core.langgraph_core.agents.langgraph_agent import LangGraphAgent
 
 # Get the absolute path to the examples directory
 EXAMPLES_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_DIR = os.path.join(EXAMPLES_DIR, 'agents_config')
 
-async def run_mcp_agent():
-    """Run an agent with MCP tools."""
+async def run_memory_agent():
+    """Run a memory agent example."""
     print("\n" + "=" * 60)
-    print("Example: Agent with MCP Tools")
+    print("Example: Memory Agent")
     print("=" * 60)
 
     config_path = os.path.join(CONFIG_DIR, 'memory_agent.yaml')
@@ -21,27 +21,25 @@ async def run_mcp_agent():
         config = yaml.safe_load(f)
 
     # Initialize agent
-    agent = OpenAIAgent(
-        agent_name="env_lookup_assistant",
+    agent = LangGraphAgent(
+        agent_name="memory_assistant",
         agent_config=config,
         config_root=EXAMPLES_DIR
     )
 
     await agent.initialize()
 
-    # Test 1: MCP Tool Usage
-    print("\n--- Test 1: Environment Lookup (MCP) ---")
-    # Note: This query depends on the specific MCP server capabilities
-    query = "What is the value of PATH environment variable?"
+    # Test 1: Store memory
+    print("\n--- Test 1: Store Memory ---")
+    query = "My favorite color is blue."
     result = await agent.ainvoke(query)
     pprint(result['content'][0]['text'])
 
-    # Test 2: Memory lookup
-    print("\n--- Test 2: Memory Lookup  ---")
-    # Note: This query depends on the specific MCP server capabilities
-    query = "What was my previous questions ?"
+    # Test 2: Retrieve memory
+    print("\n--- Test 2: Retrieve Memory ---")
+    query = "What is my favorite color?"
     result = await agent.ainvoke(query)
     pprint(result['content'][0]['text'])
 
 if __name__ == "__main__":
-    asyncio.run(run_mcp_agent())
+    asyncio.run(run_memory_agent())

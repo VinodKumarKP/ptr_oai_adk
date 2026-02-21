@@ -2,7 +2,7 @@ import asyncio
 import os
 from pprint import pprint
 import yaml
-from oai_openai_agent_core.agents.openai_agent import OpenAIAgent
+from oai_agent_core.openai_core.agents.openai_agent import OpenAIAgent
 
 # Get the absolute path to the examples directory
 EXAMPLES_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
