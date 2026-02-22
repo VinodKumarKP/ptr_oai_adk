@@ -5,7 +5,7 @@ SHELL := /bin/bash
 install:
 	pip install uv
 	uv venv
-	. .venv/bin/activate && uv pip install -e "packages/agent-core"
+	. .venv/bin/activate && uv pip install -e "packages/agent-core[all]"
 	. .venv/bin/activate && uv pip install pytest pytest-cov pytest-asyncio
 
 install-all:
