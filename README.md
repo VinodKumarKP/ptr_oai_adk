@@ -36,6 +36,7 @@ The ADK is organized as a monorepo containing several specialized packages:
 | Package | Description |
 | :--- | :--- |
 | [`agent-core`](./packages/agent-core) | Foundational abstractions, shared components, and base classes. |
+| [`mcp-core`](./packages/mcp-core) | Enterprise-grade framework for building Model Context Protocol (MCP) servers. |
 | [`crewai-core`](./packages/crewai-core) | Implementation for CrewAI-based multi-agent orchestrations. |
 | [`langgraph-core`](./packages/langgraph-core) | Implementation for stateful LangGraph/LangChain workflows. |
 | [`openai-core`](./packages/openai-core) | Implementation for OpenAI's native agent framework. |
@@ -68,6 +69,14 @@ Ground your agents in custom data using the built-in RAG system.
 ### Memory & Guardrails
 *   **Memory**: Short-term (recent turns) and long-term (semantic retrieval) persistent memory.
 *   **Guardrails**: Validate inputs and outputs against competitors, PII, or custom logic.
+
+## 🔌 MCP Server Development (`mcp-core`)
+
+The `mcp-core` package provides an enterprise-ready framework for building custom MCP servers. It extends `FastMCP` with:
+*   **Request Isolation**: Thread-safe handling of concurrent requests with isolated environment variables.
+*   **Authentication**: Redis-based token validation and security middleware.
+*   **Unified Configuration**: Standardized YAML/JSON configuration and logging.
+*   **Automatic Tool Exposure**: Public methods in your tool classes are automatically exposed as MCP tools.
 
 ## 🌐 Serving & Evaluation
 
