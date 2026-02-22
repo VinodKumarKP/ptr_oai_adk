@@ -33,8 +33,7 @@ dependencies = [
 # Vector-related dependencies
 chromadb = [
     "oai-agent-core[vector-required]",
-    "langchain-chroma==1.1.0",
-    "chromadb==1.4.1",
+    "chromadb",
 ]
 
 postgres = [

@@ -28,7 +28,7 @@ dependencies = [
 # Vector-related dependencies
 chromadb = [
     "oai-agent-core[vector-required]",
-    "chromadb==1.4.1",
+    "chromadb",
 ]
 
 postgres = [
@@ -41,7 +41,7 @@ s3 = [
 
 # All optional dependencies
 all = [
-    "oai-agent-core[vector]"
+    "oai-agent-core[chromadb]"
 ]
 
 [tool.hatch.metadata]
