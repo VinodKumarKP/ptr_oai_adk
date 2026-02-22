@@ -32,6 +32,61 @@ The OAI Agent Development Kit (ADK) simplifies the creation of complex multi-age
 ## 🏗️ Architecture Diagram
 
 Here's a simplified overview of the OAI ADK's layered architecture:
+```mermaid
+---
+config:
+  theme: redux
+  look: classic
+  layout: elk
+---
+flowchart TB
+ subgraph s1["User / Developer Interaction"]
+        A["API Server"]
+        B["Python SDK"]
+        C["CLI Tools"]
+  end
+ subgraph s2["Agent Orchestration Frameworks"]
+        D["CrewAI Agents"]
+        E["LangGraph Agents"]
+        F["OpenAI Agents"]
+        G["AWS Strands Agents"]
+  end
+ subgraph s3["OAI Agent Core (agent-core)"]
+        H["BaseAgent Abstraction"]
+        I["Config Management"]
+        J["Message Processing"]
+  end
+ subgraph s4["Shared Capabilities"]
+        K["Knowledge Base RAG"]
+        L["Tool Registry incl. MCP"]
+        M["Memory Management"]
+        N["Guardrails"]
+  end
+ subgraph s5["External Services & Infrastructure"]
+        O["LLM Providers"]
+        P["MCP Servers"]
+        Q["Databases / Vector Stores"]
+        R["Observability"]
+  end
+ subgraph s6["Quality & Evaluation"]
+        S["Agent Evaluator"]
+  end
+    A --> D
+    B --> D
+    C --> S
+    D --> H
+    E --> H
+    F --> H
+    G --> H
+    H --> K & L & M & N
+    K --> O & Q
+    L --> P
+    M --> Q
+    N --> O
+    S --> D & O
+    n1["Agent Development Kit"]
+```
+
 ![Architecture Diagram](./architecture_diagram.png)
 
 ## 📂 Project Structure
