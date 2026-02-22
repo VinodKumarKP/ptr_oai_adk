@@ -1,30 +1,42 @@
 SHELL := /bin/bash
 
-.PHONY: install install-all test clean
+PACKAGES := agent-core crewai-core openai-core agent-server langgraph-core agent-evaluator aws-strands-core
 
-install:
-	pip install uv
-	uv venv
-	. .venv/bin/activate && uv pip install -e "packages/agent-core[all]"
-	. .venv/bin/activate && uv pip install pytest pytest-cov pytest-asyncio
+.PHONY: all install test clean $(PACKAGES)
 
-install-all:
-	pip install uv
-	uv venv
-	. .venv/bin/activate && uv pip install -e "packages/agent-core[all]"
-	. .venv/bin/activate && uv pip install pytest pytest-cov pytest-asyncio litellm
+all: install test
 
-test:
-	cd packages/agent-core && pytest
-	cd packages/agent-server && pytest
-	cd packages/agent-evaluator && pytest
-	cd packages/openai-core && pytest
-	cd packages/aws-strands-core && pytest
-	cd packages/langgraph-core && pytest
-	cd packages/crewai-core && pytest
+install: $(addprefix install-,$(PACKAGES))
+
+test: $(addprefix test-,$(PACKAGES))
+
+# Generic install rule for each package
+install-%:
+	@echo "Installing dependencies for $*..."
+	cd packages/$* && \
+	uv venv && \
+	. .venv/bin/activate && \
+	if [ "$*" == "agent-core" ]; then \
+		uv pip install -e ".[all]"; \
+	else \
+		uv pip install -e .; \
+	fi && \
+	uv pip install pytest pytest-cov pytest-asyncio
+
+# Generic test rule for each package
+test-%:
+	@echo "Running tests for $*..."
+	cd packages/$* && \
+	if [ -d ".venv" ]; then \
+		. .venv/bin/activate && pytest; \
+	else \
+		echo "No virtualenv found for $*. Run 'make install-$*' first."; \
+		exit 1; \
+	fi
 
 clean:
-	rm -rf .pytest_cache
-	rm -rf htmlcov
-	rm -rf .coverage
+	@echo "Cleaning up..."
+	find . -type d -name ".venv" -exec rm -rf {} +
 	find . -type d -name "__pycache__" -exec rm -rf {} +
+	find . -type d -name ".pytest_cache" -exec rm -rf {} +
+	rm -rf .coverage htmlcov
