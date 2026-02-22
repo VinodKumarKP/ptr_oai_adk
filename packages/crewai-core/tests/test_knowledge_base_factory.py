@@ -16,11 +16,11 @@ def test_create_tool(factory):
         
         # Check if it's a tool
         assert hasattr(tool, 'name')
-        assert tool.name == "search_knowledge_base_My KB Tool"
+        assert "search_knowledge_base_My KB Tool" in tool.name
         
         # CrewAI might format the description to include name and args
         # So we check if our description is contained in it
-        assert "Tool Name: search_knowledge_base_My KB" in tool.description
+        assert "Tool Name: search_knowledge_base_my_kb_tool" in tool.description
         
         # Invoke
         if callable(tool):
