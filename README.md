@@ -6,6 +6,7 @@ A robust, modular, and extensible framework for building, serving, and evaluatin
 
 - [Overview](#-overview)
 - [Key Features](#-key-features)
+- [Architecture Diagram](#-architecture-diagram)
 - [Project Structure](#-project-structure)
 - [Core Frameworks](#-core-frameworks)
 - [Shared Capabilities](#-shared-capabilities)
@@ -28,6 +29,73 @@ The OAI Agent Development Kit (ADK) simplifies the creation of complex multi-age
 *   **Guardrails**: Integrated input/output validation using Guardrails AI.
 *   **Observability**: First-class support for Langfuse tracing and monitoring.
 *   **Production Ready**: Includes a high-performance FastAPI server and a comprehensive evaluation framework.
+
+## 🏗️ Architecture Diagram
+
+Here's a simplified overview of the OAI ADK's layered architecture:
+
+```mermaid
+graph TD
+    subgraph "User / Developer Interaction"
+        A[API Server]
+        B[Python SDK]
+        C[CLI Tools]
+    end
+
+    subgraph "Agent Orchestration Frameworks"
+        D[CrewAI Agents]
+        E[LangGraph Agents]
+        F[OpenAI Agents]
+        G[AWS Strands Agents]
+    end
+
+    subgraph "OAI Agent Core (agent-core)"
+        H[BaseAgent Abstraction]
+        I[Config Management]
+        J[Message Processing]
+    end
+
+    subgraph "Shared Capabilities"
+        K[Knowledge Base - RAG]
+        L[Tool Registry incl. MCP]
+        M[Memory Management]
+        N[Guardrails]
+    end
+
+    subgraph "External Services & Infrastructure"
+        O[LLM Providers]
+        P[MCP Servers]
+        Q[Databases / Vector Stores]
+        R[Observability - Langfuse]
+    end
+
+    subgraph "Quality & Evaluation"
+        S[Agent Evaluator]
+    end
+
+    A --> D
+    B --> D
+    C --> S
+
+    D --> H
+    E --> H
+    F --> H
+    G --> H
+
+    H --> K
+    H --> L
+    H --> M
+    H --> N
+
+    K --> O
+    K --> Q
+    L --> P
+    M --> Q
+    N --> O
+
+    S --> D
+    S --> O
+```
 
 ## 📂 Project Structure
 
