@@ -1,6 +1,6 @@
 """Factory for creating vector store instances."""
 
-from typing import Optional, Any
+from typing import Any
 
 from oai_agent_core.core.base_vector_store import BaseVectorStore
 
