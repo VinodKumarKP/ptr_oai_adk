@@ -72,5 +72,9 @@ packages = ["src/oai_agent_core"]
 "src" = ""
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+minversion = "6.0"
+addopts = "-ra -q --cov=src --cov-report=term-missing"
+testpaths = [
+    "tests",
+]
+asyncio_mode = "strict"
