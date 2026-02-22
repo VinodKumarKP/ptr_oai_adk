@@ -2,7 +2,7 @@
 set -e
 
 # Configuration - Replace with your bucket name
-BUCKET_NAME="vkp-agent-core-v2"
+BUCKET_NAME="ptr-oai-agent-development-kit"
 
 echo "🚀 Starting build and publish process..."
 
