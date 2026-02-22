@@ -33,7 +33,7 @@ The OAI Agent Development Kit (ADK) simplifies the creation of complex multi-age
 ## 🏗️ Architecture Diagram
 
 Here's a simplified overview of the OAI ADK's layered architecture:
-![Architecture Diagram](./architecture_diagram.png)]
+![Architecture Diagram](./architecture_diagram.png)
 
 ## 📂 Project Structure
 
