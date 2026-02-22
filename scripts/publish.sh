@@ -8,7 +8,7 @@ echo "🚀 Starting build and publish process..."
 
 # 1. Ensure s3pypi is installed in the environment
 echo "📦 Ensuring s3pypi is available..."
-uv pip install s3pypi
+uv pip install s3pypi --upgrade
 
 # 2. Clean previous builds
 rm -rf dist/
