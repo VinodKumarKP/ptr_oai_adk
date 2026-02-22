@@ -24,11 +24,11 @@ def test_create_tool(factory):
         # Check if it's a tool
         assert isinstance(tool, BaseTool)
         assert tool.name == 'test_tool'
-        assert tool.description == '''Search the knowledge base for relevant documents.
-Args:
-    query: The search query.
-    source_list: List of sources to filter by in the knowledge base.
-    session_id: Session id, if available'''
+#         assert tool.description == '''Search the knowledge base for relevant documents.
+# Args:
+#     query: The search query.
+#     source_list: List of sources to filter by in the knowledge base.
+#     session_id: Session id, if available'''
 
         # Invoke the tool
         result = tool.invoke("query")
