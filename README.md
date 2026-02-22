@@ -133,7 +133,3 @@ A regression testing framework to ensure agent quality:
     if __name__ == "__main__":
         asyncio.run(main())
     ```
-
-## 📄 License
-
-This project is licensed under the MIT License.
