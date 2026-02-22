@@ -8,10 +8,10 @@ PACKAGES := agent-core crewai-core openai-core agent-server langgraph-core agent
 # Default target
 help:
 	@echo "Available commands:"
-	@echo "  make install          - Install all packages in isolated venvs"
+	@echo "  make install          - Install/Update all packages in isolated venvs"
 	@echo "  make test             - Run tests for all packages"
 	@echo "  make <package>        - Install and test a specific package (e.g., make agent-core)"
-	@echo "  make install-<pkg>    - Install a specific package"
+	@echo "  make install-<pkg>    - Install/Update a specific package"
 	@echo "  make test-<pkg>       - Test a specific package"
 	@echo "  make clean            - Remove all .venv and cache files"
 	@echo ""
@@ -19,7 +19,7 @@ help:
 
 all: install test
 
-# Install all packages
+# Install/Update all packages
 install: $(addprefix install-,$(PACKAGES))
 
 # Test all packages
@@ -29,12 +29,14 @@ test: $(addprefix test-,$(PACKAGES))
 $(PACKAGES): %: install-% test-%
 
 # Generic install rule for each package
+# This is efficient: it only creates the venv if missing,
+# and uv pip install will only install new/changed dependencies.
 install-%:
 	@echo "----------------------------------------------------------------"
-	@echo "Installing dependencies for $*..."
+	@echo "Installing/Updating dependencies for $*..."
 	@echo "----------------------------------------------------------------"
 	cd packages/$* && \
-	uv venv && \
+	if [ ! -d ".venv" ]; then uv venv; fi && \
 	. .venv/bin/activate && \
 	if [ "$*" == "agent-core" ]; then \
 		uv pip install -e ".[all]"; \
