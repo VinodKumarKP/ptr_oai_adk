@@ -1,0 +1,10 @@
+port: 8001
+description: |-
+  A powerful MCP server for automated code analysis and remediation, enabling AI assistants to analyze codebases, identify issues, and generate remediated code suggestions.
+tags:
+  - code
+  - analyze
+  - remediate
+source: https://github.com/Capgemini-Innersource/ptr-development-mcp-servers.git
+env:
+  RESULTS_BUCKET: ${RESULTS_BUCKET}

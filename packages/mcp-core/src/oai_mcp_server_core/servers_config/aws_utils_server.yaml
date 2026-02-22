@@ -1,0 +1,16 @@
+port: 8002
+description: |-
+  A comprehensive Model Context Protocol (MCP) server that provides advanced AWS S3 storage capabilities.
+  This server enables AI assistants to upload, download, and manage files in Amazon S3 buckets with seamless integration and presigned URL generation.
+tags:
+  - aws
+  - s3
+  - storage
+  - mcp
+source: https://github.com/Capgemini-Innersource/ptr-cloud-mcp-servers.git
+env:
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+  AWS_REGION: ${AWS_REGION}
+  AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
+  

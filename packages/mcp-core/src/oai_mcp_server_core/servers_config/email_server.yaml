@@ -1,0 +1,7 @@
+port: 8009
+description: |-
+  An MCP server for email operations, providing capabilities to send emails and check server status.
+tags:
+  - email
+  - communication
+source: https://github.com/Capgemini-Innersource/ptr-email-mcp-servers.git

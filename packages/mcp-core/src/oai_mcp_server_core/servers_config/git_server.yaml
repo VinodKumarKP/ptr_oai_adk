@@ -1,0 +1,9 @@
+port: 8007
+description: |-
+  An MCP server that provides Git repository analysis and management capabilities, enabling AI assistants to clone, analyze, and extract information from Git repositories.
+tags:
+  - git
+  - analyze
+source: https://github.com/Capgemini-Innersource/ptr-development-mcp-servers.git
+env:
+  GITHUB_TOKEN: ${GITHUB_TOKEN}

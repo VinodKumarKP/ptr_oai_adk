@@ -1,0 +1,10 @@
+port: 8005
+description: |-
+  An MCP server that provides secure access to environment variables and system information, enabling AI assistants to safely retrieve and analyze environment variables.
+tags:
+  - env
+  - environment
+  - lookup
+source: https://github.com/Capgemini-Innersource/ptr-cloud-mcp-servers.git
+env:
+  DUMMY_ENV_VAR: ${DUMMY_ENV_VAR}

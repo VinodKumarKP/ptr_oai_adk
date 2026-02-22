@@ -1,0 +1,10 @@
+port: 8011
+description: |-
+  An MCP server providing GitLab repository analysis and merge-request inspection utilities, including cloning, language detection, repository statistics, and MR formatting.
+tags:
+  - gitlab
+  - analyze
+  - merge_request
+source: https://github.com/Capgemini-Innersource/ptr-development-mcp-servers.git
+env:
+  GITLAB_TOKEN: ${GITLAB_TOKEN}

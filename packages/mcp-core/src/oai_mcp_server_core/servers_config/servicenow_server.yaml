@@ -1,0 +1,11 @@
+port: 8003
+description: |-
+  An MCP server that provides ServiceNow incident management capabilities, enabling AI assistants to interact with ServiceNow instances to manage incidents, add comments, and perform various operations.
+tags:
+  - servicenow
+  - itsm
+source: https://github.com/Capgemini-Innersource/ptr-enterprise-mcp-servers.git
+env:
+  SERVICENOW_INSTANCE_URL: ${SERVICENOW_INSTANCE_URL}
+  SERVICENOW_USERNAME: ${SERVICENOW_USERNAME}
+  SERVICENOW_PASSWORD: ${SERVICENOW_PASSWORD}

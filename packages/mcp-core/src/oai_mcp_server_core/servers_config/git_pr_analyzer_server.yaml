@@ -1,0 +1,10 @@
+port: 8006
+description: |-
+  A specialized MCP server for GitHub Pull Request analysis, enabling AI assistants to fetch, analyze, and extract insights from PRs, including code changes and automated recommendations.
+tags:
+  - git
+  - pull-request
+  - analyze
+source: https://github.com/Capgemini-Innersource/ptr-development-mcp-servers.git
+env:
+  GITHUB_TOKEN: ${GITHUB_TOKEN}

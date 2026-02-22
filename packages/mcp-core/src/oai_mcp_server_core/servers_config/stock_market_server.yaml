@@ -1,0 +1,12 @@
+port: 8010
+description: |-
+  An MCP server for fetching live and historical stock market data using Yahoo Finance via RapidAPI, supporting real-time quotes and historical price charts.
+tags:
+  - stocks
+  - finance
+  - market
+  - trading
+source: https://github.com/Capgemini-Innersource/ptr_portfolio_mcp_servers.git
+env:
+  INDIA_MARKET_RAPIDAPI_KEY: ${INDIA_MARKET_RAPIDAPI_KEY}
+  US_MARKET_RAPIDAPI_KEY: ${US_MARKET_RAPIDAPI_KEY}

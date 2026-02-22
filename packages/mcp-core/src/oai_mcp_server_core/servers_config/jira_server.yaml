@@ -1,0 +1,10 @@
+port: 8004
+description: |-
+  An MCP server that provides Jira issue management capabilities, enabling AI assistants to manage issues, search for tickets, add comments, and perform various Jira operations.
+tags:
+  - jira
+source: https://github.com/Capgemini-Innersource/ptr-enterprise-mcp-servers.git
+env:
+  JIRA_API_TOKEN: ${JIRA_API_TOKEN}
+  JIRA_BASE_URL: ${JIRA_BASE_URL}
+  JIRA_EMAIL: ${JIRA_EMAIL}
