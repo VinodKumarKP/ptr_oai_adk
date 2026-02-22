@@ -12,7 +12,6 @@ A robust, modular, and extensible framework for building, serving, and evaluatin
 - [Shared Capabilities](#-shared-capabilities)
 - [Serving & Evaluation](#-serving--evaluation)
 - [Quick Start](#-quick-start)
-- [License](#-license)
 
 ## 🌟 Overview
 
