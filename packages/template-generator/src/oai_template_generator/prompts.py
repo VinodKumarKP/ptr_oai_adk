@@ -111,7 +111,13 @@ def prompt_project_details(
     framework = None
     if template == "mcp":
         servers_input = _ask("List of MCP servers (comma-separated)", default="default_server")
-        items = [s.strip() for s in servers_input.split(",") if s.strip()]
+        raw_items = [s.strip() for s in servers_input.split(",") if s.strip()]
+        # Ensure each server name ends with _server
+        items = []
+        for item in raw_items:
+            if not item.endswith("_server"):
+                item = f"{item}_server"
+            items.append(item)
     elif template == "agent":
         agents_input = _ask("List of Agents (comma-separated)", default="default_agent")
         raw_items = [s.strip() for s in agents_input.split(",") if s.strip()]
