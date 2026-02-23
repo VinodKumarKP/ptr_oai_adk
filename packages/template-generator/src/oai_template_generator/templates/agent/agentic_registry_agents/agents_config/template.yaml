@@ -1,0 +1,74 @@
+active: true
+name: [Agent Name]
+description: [Comprehensive description of what the agent does, its capabilities, and value proposition]
+type: mcp  # Options: mcp, crewai, aws-strands, multi-agent
+cloud_provider: aws
+port: [Port Number]
+
+instructions: |
+  [Detailed instructions for users on how to interact with the agent]
+  
+  [List of capabilities or features]
+  
+  [Any specific requirements or parameters needed]
+
+# Model configuration
+model:
+  model_id: [Model ID]
+  region_name: [AWS Region]
+
+# For tools configuration
+tools:
+  [tool_name]:
+    module: [module_name]
+    class: [class_name]
+
+# For multi-agent type, specify sub-agents
+agent_list:
+  - [agent_name]:
+      system_prompt: [Agent specific system prompt]
+      tools:
+        - [tool_name]
+      context:
+        - [other_agent_name]
+
+# For MCP type agents
+mcps:
+  [server_name]:
+    command: [server_command]
+    args: []
+    description: [Description of what the MCP server provides]
+    title: [Server Title]
+    env:
+      [ENV_VAR]: [value]
+
+# For AWS Strands type agents - crew configuration
+crew_config:
+  pattern: [graph/swarm/sequential]
+  entry_agent: [agent_name]
+  verbose: true
+
+system_prompt: |
+  [System prompt that defines the agent's behavior and role]
+  
+  [Instructions on how to use available tools]
+  
+  [Guidelines for response format and behavior]
+
+source: https://github.com/[organization]/[repository].git
+tags:
+  - [tag1]
+  - [tag2]
+  - [tag3]
+
+# Optional: Environment variables for agent configuration
+env:
+  [ENV_VAR_1]: ${ENV_VAR_1}
+  [ENV_VAR_2]: ${ENV_VAR_2}
+
+prompts:
+  - "[Example prompt 1]"
+  - "[Example prompt 2]"
+  - "[Example prompt 3]"
+  - "[Example prompt 4]"
+  - "[Example prompt 5]"

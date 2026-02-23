@@ -1,0 +1,13 @@
+.idea
+*.pyc
+*.egg-info
+build
+uv.lock
+docker-compose.yaml
+logs
+__pycache__/
+*_version.py
+*.html
+*.venv
+*rag_db*
+*memory_db*

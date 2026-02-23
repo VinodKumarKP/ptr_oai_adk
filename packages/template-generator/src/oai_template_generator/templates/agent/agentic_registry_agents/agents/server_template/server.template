@@ -1,0 +1,19 @@
+"""
+Rename the extension to .py
+Copy this file into your agent directory.
+This code will convert the agent into http server
+"""
+
+import os
+
+from oai_agent_server.main import AgentHTTPServer as BaseAgentHTTPServer, main as http_main
+from agentic_registry_agents.agents.{{agent_class_file_name}}.agent import {{AgentName}}
+
+def main():
+    server = BaseAgentHTTPServer(agent_name=os.path.basename(os.path.dirname(__file__)),
+                                 config_root=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                                 agent={{AgentName}}())
+    http_main(server)
+
+if __name__ == "__main__":
+    main()

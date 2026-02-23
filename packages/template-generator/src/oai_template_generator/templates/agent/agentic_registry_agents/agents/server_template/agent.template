@@ -1,0 +1,17 @@
+import os
+
+from oai_agent_core.{{core_package_name}}.agents.{{agent_package_name}} import {{agent_class_name}}
+
+
+class {{AgentName}}({{agent_class_name}}):
+    """
+    Build your agent logic here.
+    This agent is a placeholder and should be replaced with your actual agent implementation.
+    """
+
+    def __init__(self, agent_config=None, llm=None, **kwargs):
+        agent_name = os.path.basename(os.path.dirname(__file__))
+        super().__init__(agent_name,
+                         llm=llm,
+                         agent_config=agent_config,
+                         **kwargs)

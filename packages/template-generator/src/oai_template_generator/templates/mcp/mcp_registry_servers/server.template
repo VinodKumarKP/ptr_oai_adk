@@ -1,0 +1,46 @@
+import os
+import sys
+
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+file_root = os.path.dirname(os.path.abspath(__file__))
+path_list = [
+    file_root,
+    os.path.dirname(file_root),
+    os.path.dirname(os.path.dirname(file_root))
+]
+for path in path_list:
+    if path not in sys.path:
+        sys.path.append(path)
+
+import nest_asyncio  # Added import
+
+nest_asyncio.apply()  # Added call
+
+from mcp_registry_servers.tools.{tool_file_name} import {tools_class_name}
+from oai_mcp_server_core.core.base_mcp_server import BaseMCPServer
+from oai_mcp_server_core.utils.logger_utils import get_logger
+
+logger = get_logger()
+
+
+class {server_name}(BaseMCPServer):
+    """MCP server implementation."""
+
+    def __init__(self):
+        """
+        Initialize the MCP server.
+        """
+        super().__init__(self.base_directory(__file__), object_list=[{tools_class_name}()],
+                         source_file=__file__)
+
+def main():
+    """Main function to run the Code Remediation server."""
+    server = {server_name}()
+    server.main()
+
+
+if __name__ == "__main__":
+    main()

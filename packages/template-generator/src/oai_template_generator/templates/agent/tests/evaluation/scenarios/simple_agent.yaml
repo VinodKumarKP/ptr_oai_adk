@@ -1,0 +1,9 @@
+agent_config: ../../../examples/agents_config/simple_agent.yaml
+agent_class: oai_openai_agent_core.agents.openai_agent.OpenAIAgent
+judge_model_id: 'bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0'
+
+scenarios:
+  - name: Simple Greeting
+    description: Test if the agent can greet the user.
+    input_message: Hello, how are you ?
+    expected_output: I am a helpful assistant.

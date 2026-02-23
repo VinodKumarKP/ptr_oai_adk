@@ -1,0 +1,1 @@
+oai-mcp-server-core @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit.git@main#subdirectory=packages/mcp-core

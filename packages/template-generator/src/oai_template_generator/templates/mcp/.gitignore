@@ -1,0 +1,9 @@
+.venv
+.idea
+*.pyc
+logs
+uv.lock
+*.egg-info
+docker-compose.yaml
+build
+*_version.py

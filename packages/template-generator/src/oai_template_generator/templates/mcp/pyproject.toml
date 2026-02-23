@@ -1,0 +1,50 @@
+# pyproject.toml
+[build-system]
+requires = ["setuptools>=61.0", "wheel", "ruamel.yaml", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "{{PROJECT_NAME}}"
+description = "{{DESCRIPTION}}"
+authors = [{name = "{{AUTHOR}}", email = "{{EMAIL}}"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["mcp", "mcp_registry_servers"]
+dynamic = ["scripts", "version"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "oai-mcp-server-core"
+]
+
+[tool.uv.sources]
+ oai-mcp-server-core = { git = "https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit.git", branch = "main", subdirectory = "packages/mcp-core" }
+
+
+
+[project.urls]
+Homepage = "https://github.com/Capgemini-Innersource/{{PROJECT_NAME}}"
+Repository = "https://github.com/Capgemini-Innersource/{{PROJECT_NAME}}.git"
+Issues = "https://github.com/Capgemini-Innersource/{{PROJECT_NAME}}/issues"
+
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mcp_registry_servers*"]
+exclude = [".venv", "build", "mcp_registry_servers.egg_info", "tests"]
+
+[tool.setuptools.package-data]
+"mcp_registry_servers" = ["**/*"]
+
+# Configuration for setuptools_scm (git-based versioning)
+[tool.setuptools_scm]
+write_to = "mcp_registry_servers/_version.py"
+version_scheme = "post-release"
+local_scheme = "no-local-version"
