@@ -35,7 +35,7 @@ def test_prompt_project_details_mcp(mocker):
     assert slug == "ptr_mcp_servers_mcp_test"
     assert author == "Author Name"
     assert email == "test@capgemini.com"
-    assert items == ["server1", "server2"]
+    assert items == ["server1_server", "server2_server"]
     assert framework is None
 
 def test_prompt_project_details_agent(mocker):
