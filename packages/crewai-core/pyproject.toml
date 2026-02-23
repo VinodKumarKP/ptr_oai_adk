@@ -3,7 +3,7 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "oai-crewai-agent-core"
+name = "oai-crewai-core"
 description = "OAI CrewAI Agent core"
 authors = [{name = "Vinod Kumar KP", email = "vinod.kunnum-purath@capgemini.com"}]
 license = {text = "MIT"}
