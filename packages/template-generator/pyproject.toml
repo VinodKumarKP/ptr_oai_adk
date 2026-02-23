@@ -38,8 +38,6 @@ source = "vcs"
 raw-options = { root = "../.." }
 fallback-version = "0.1.0"
 
-[tool.hatch.build.targets.wheel]
-packages = ["oai_template_generator"]
 
 [tool.hatch.build.targets.wheel.sources]
 "src" = ""
