@@ -4,7 +4,7 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "oai_agent_evaluator"
+name = "oai-agent-evaluator"
 description = "OAI Agent Evaluator"
 authors = [{name = "Vinod Kumar KP", email = "vinod.kunnum-purath@capgemini.com"}]
 license = {text = "MIT"}
