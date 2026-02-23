@@ -39,9 +39,14 @@ s3 = [
     "oai-agent-core[s3]",
 ]
 
+guardrails = [
+    "oai-agent-core[guardrails-ai]"
+]
+
 # All optional dependencies
 all = [
-    "oai-agent-core[chromadb]"
+    "oai-agent-core[chromadb]",
+    "oai-agent-core[guardrails]"
 ]
 
 [tool.hatch.metadata]

@@ -46,7 +46,12 @@ s3 = [
 
 # All optional dependencies
 all = [
-    "oai-agent-core[vector]"
+    "oai-agent-core[vector]",
+    "oai-agent-core[guardrails]"
+]
+
+guardrails = [
+    "oai-agent-core[guardrails-ai]"
 ]
 
 [tool.hatch.metadata]

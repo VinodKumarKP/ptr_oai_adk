@@ -54,11 +54,16 @@ s3 = [
     "numpy"
 ]
 
+guardrails = [
+    "guardrails-ai"
+]
+
 # All optional dependencies
 all = [
     "oai-agent-core[chromadb]",
     "oai-agent-core[postgres]",
-    "oai-agent-core[s3]"
+    "oai-agent-core[s3]",
+    "oai-agent-core[guardrails]"
 ]
 
 [tool.hatch.version]
