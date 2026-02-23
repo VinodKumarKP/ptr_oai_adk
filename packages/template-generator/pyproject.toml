@@ -24,6 +24,12 @@ dependencies = [
     "click>=8.0.0",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-mock>=3.0.0",
+]
+
 [project.scripts]
 pytemplate = "oai_template_generator.cli:main"
 
@@ -37,3 +43,10 @@ packages = ["oai_template_generator"]
 
 [tool.hatch.build.targets.wheel.sources]
 "src" = ""
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --cov=src --cov-report=term-missing"
+testpaths = [
+    "tests",
+]

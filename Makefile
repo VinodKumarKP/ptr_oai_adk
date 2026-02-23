@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 # List of all packages
-PACKAGES := agent-core openai-core agent-server langgraph-core agent-evaluator aws-strands-core mcp-core crewai-core
+PACKAGES := agent-core openai-core agent-server langgraph-core agent-evaluator aws-strands-core mcp-core crewai-core template-generator
 
 .PHONY: all install test clean help $(PACKAGES)
 
@@ -43,7 +43,7 @@ install-%:
 	else \
 		uv pip install -e .; \
 	fi && \
-	uv pip install pytest pytest-cov pytest-asyncio litellm
+	uv pip install pytest pytest-cov pytest-asyncio litellm pytest-mock
 
 # Generic test rule for each package
 test-%:
