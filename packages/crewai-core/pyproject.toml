@@ -46,7 +46,7 @@ s3 = [
 
 # All optional dependencies
 all = [
-    "oai_crewai_agent_core[chromadb]"
+    "oai-crewai-core[chromadb]"
 ]
 
 [tool.hatch.metadata]
