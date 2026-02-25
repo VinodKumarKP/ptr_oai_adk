@@ -245,6 +245,7 @@ class GuardrailManager:
                     continue
 
             full_name = config.get("full_name") or config.get("name")
+            class_name = config.get("class_name") or config.get("name")
             if not full_name:
                 self.logger.error(f"Validator config missing 'name' or 'full_name': {config}")
                 continue
@@ -254,7 +255,7 @@ class GuardrailManager:
 
             if is_hub_validator:
                 validator_name = full_name.split("/")[-1]
-                class_name = self._snake_to_pascal(validator_name)
+                class_name = class_name or self._snake_to_pascal(validator_name)
                 module_path = "guardrails.hub"
             else:
                 class_name = full_name
