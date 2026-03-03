@@ -150,11 +150,11 @@ class BaseAgent(ABC):
                 # We use a generic MemoryStore implementation that uses BaseMemoryStore logic
                 # but allows for dynamic vector store creation
                 from oai_agent_core.core.base_memory_store import BaseMemoryStore
-                
+
                 # Create a concrete implementation of BaseMemoryStore
                 class ConfigurableMemoryStore(BaseMemoryStore):
                     pass
-                
+
                 try:
                     self.memory_store = ConfigurableMemoryStore(
                         memory_config=memory_config,
@@ -182,7 +182,18 @@ class BaseAgent(ABC):
                         self.agent_config['agent_list'][0][agent_name][
                             'system_prompt'] = f"{self.agent_config['agent_list'][0][agent_name].get('system_prompt', '')}\n{self.guardrails_manager.get_guardrails_prompt()}"
 
-        await asyncio.gather(_load_tools_and_mcp(), _init_global_kb(), _init_memory_store(), _init_guardrails())
+        async def _init_environment_vars():
+            environ_dict = self.agent_config.get('environment') or self.agent_config.get('env', {})
+            resolved_env = self.tool_registry.update_env(environ_dict)
+            import os
+            for k, v in resolved_env.items():
+                os.environ[k] = v
+
+        await asyncio.gather(_load_tools_and_mcp(),
+                             _init_global_kb(),
+                             _init_memory_store(),
+                             _init_guardrails(),
+                             _init_environment_vars())
 
     def _get_conversation_context(self, current_message: str) -> str:
         """Retrieve and format conversation context for the current message.
