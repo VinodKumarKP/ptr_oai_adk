@@ -1,6 +1,7 @@
 """AWS Strands-specific tool registry implementation."""
 
 import inspect
+from abc import ABC
 from typing import Dict, Any, Callable, List
 
 from mcp.client.sse import sse_client
@@ -27,6 +28,12 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
         logger: Logger instance for debugging
         project_root: Project root directory path
     """
+
+    def get_input_parameter_schema(self, tool_list: str) -> str:
+        pass
+
+    async def execute_tool(self, tool_name: str, arguments: Any) -> Any:
+        pass
 
     def __init__(self, logger=None, project_root=None):
         """Initialize the AWS Strands tool registry.

@@ -157,8 +157,114 @@ class OpenAIToolRegistry(BaseToolRegistry):
                     self.mcp_clients[agent_name].append(client)
                     self.tools[tool_name] = client
                     self.logger.info(f"✅ Loaded MCP client: {tool_name}")
+
+                    if self.enable_lazy_loading:
+                        if tool_name not in self.available_mcp_tools:
+                            self.available_mcp_tools[tool_name] = {}
+                            async with client:
+                                list_of_tools = await client.list_tools()
+                                for tool in list_of_tools:
+                                    self.available_mcp_tools[tool.name] = tool_name
+                                    self.available_mcp_tools[tool_name][tool.name] = {
+                                        'type': 'mcp',
+                                        'mcp_client': client,
+                                        'input_schema': tool.inputSchema
+                                    }
+
                 else:
                     self.logger.warning(f"⚠️  No valid MCP configuration for '{tool_name}'")
 
             except Exception as e:
                 self.logger.error(f"❌ Failed to load MCP tool '{tool_name}': {e}", exc_info=True)
+
+    def _format_schema(self, schema: Dict[str, Any]) -> str:
+        """Format the schema into a concise string."""
+        if not schema:
+            return "No parameters"
+
+        # Handle case where schema is just properties (legacy/simplified)
+        properties = schema.get('properties', schema)
+        # If properties is not a dict (e.g. it's the schema itself and has no properties key but is an object)
+        if not isinstance(properties, dict):
+            properties = schema
+
+        required = schema.get('required', [])
+
+        formatted = []
+        for name, details in properties.items():
+            if not isinstance(details, dict):
+                continue
+            type_ = details.get('type', 'any')
+            desc = details.get('description', '')
+            is_required = "required" if name in required else "optional"
+            default = f", default={details['default']}" if 'default' in details else ""
+
+            line = f"- {name} ({type_}, {is_required}{default}): {desc}"
+            formatted.append(line)
+
+        return "\n".join(formatted)
+
+    def get_input_parameter_schema(self, tool_list: str) -> str:
+        """
+        Get the input parameter schema for a list of tools.
+
+        Args:
+            tool_list: Comma-separated list of tool names.
+
+        Returns:
+            String containing input parameter schemas for the tools.
+        """
+        print(f"Fetching input schema of tools: {tool_list}")
+        schemas = []
+        for tool_name in tool_list.split(','):
+            tool_name = tool_name.strip()
+            if tool_name in self.available_mcp_tools:
+                mcp_client = self.available_mcp_tools[tool_name]
+                schema = self.available_mcp_tools[mcp_client][tool_name]['input_schema']
+                formatted_schema = self._format_schema(schema)
+                schemas.append(f"{tool_name}:\n{formatted_schema}")
+            elif tool_name in self.tools:
+                schema = self.tools[tool_name].params_json_schema.get('properties', {})
+                formatted_schema = self._format_schema(schema)
+                schemas.append(f"{tool_name}:\n{formatted_schema}")
+        return "\n\n".join(schemas)
+
+    async def execute_tool(self, tool_name: str, arguments: Any) -> Any:
+        """
+        Execute a tool with the given arguments.
+        Args:
+            tool_name: Name of the tool to execute.
+            arguments: Arguments for the tool (dict or json string).
+        Returns:
+            Result of the tool execution.
+        """
+        print(f"Executing tool:{tool_name} with arguments: {arguments}")
+        import json
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                pass  # Maybe it's not JSON, but let the tool handle it or fail later
+
+        if tool_name in self.available_mcp_tools:
+            mcp_client = self.available_mcp_tools[tool_name]
+            async with self.available_mcp_tools[mcp_client][tool_name]['mcp_client'] as client:
+                return await client.call_tool(tool_name, arguments)
+        elif tool_name in self.tools:
+            import agents.tool as tool_module
+            from agents.tool_context import ToolContext
+
+            # Ensure arguments is a string for invoke_function_tool if it expects JSON string
+            # But invoke_function_tool might expect dict or string depending on implementation
+            # Based on previous code: arguments=json.dumps(arguments)
+
+            args_str = json.dumps(arguments) if not isinstance(arguments, str) else arguments
+
+            ctx = ToolContext(None, tool_name=tool_name, tool_call_id=f"{tool_name}_call", tool_arguments="{}")
+            return await tool_module.invoke_function_tool(
+                function_tool=self.tools[tool_name],
+                arguments=args_str,
+                context=ctx
+            )
+        else:
+            raise ValueError(f"Tool '{tool_name}' not found")

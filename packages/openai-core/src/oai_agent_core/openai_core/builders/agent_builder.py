@@ -71,19 +71,31 @@ class AgentBuilder(BaseAgentBuilder):
         # Note: This is a bit of a hack to attach it to the agent instance
         # Ideally, the Agent class would support this natively or we wrap it.
         # But for now, we follow the existing pattern.
-        
+
+        if self.tool_registry.enable_lazy_loading:
+            tools = self.tool_registry.lazy_loading_required_tools()
+            system_prompt = f"""{agent_config.get('system_prompt', "Use MCP tools when they help.")}
+                            {self.tool_registry.generate_lazy_mcp_system_prompt(
+                agent_config.get('tools', []),
+                agent_config.get('mcps', [])
+            )}          
+                            """
+        else:
+            system_prompt = agent_config.get('system_prompt', "Use MCP tools when they help.")
+
         oai_agent = Agent(
             model=self.llm,
             name=agent_name,
-            instructions=agent_config.get('system_prompt', "Use MCP tools when they help."),
-            mcp_servers=[], # MCPs are already in 'tools' list as clients
+            instructions=system_prompt,
+            mcp_servers=[],  # MCPs are already in 'tools' list as clients
             tools=tools,
             model_settings=ModelSettings(include_usage=True),
         )
 
         # Store agent-specific MCP config for later activation
-        oai_agent.mcp_config = agent_config.get('mcps', agent_config.get('servers', {}))
-        
+        if not self.tool_registry.enable_lazy_loading:
+            oai_agent.mcp_config = agent_config.get('mcps', agent_config.get('servers', {}))
+
         return oai_agent
 
     def _create_agent_as_tool(self, agent: Any, name: str, description: str) -> Any:
@@ -134,12 +146,12 @@ class AgentBuilder(BaseAgentBuilder):
                 "You are a supervisor. Transfer to appropriate agents when required. "
                 "Use MCP tools when they help."
             )
-            
+
             instructions = system_prompt or default_instruction
-            
+
             # Ensure the transfer instruction is present if architecture is supervisor
             if pattern == Constants.PATTERN_SUPERVISOR and "Transfer to appropriate agents when required" not in instructions:
-                 instructions += " Transfer to appropriate agents when required."
+                instructions += " Transfer to appropriate agents when required."
 
             supervisor = Agent(
                 model=self.llm,

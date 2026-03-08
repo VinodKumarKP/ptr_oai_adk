@@ -33,7 +33,9 @@ class BaseToolRegistry(ABC):
         mcp_clients: List of active MCP clients
     """
 
-    def __init__(self, logger: Optional[logging.Logger] = None, project_root: Optional[str] = None):
+    def __init__(self, logger: Optional[logging.Logger] = None,
+                 project_root: Optional[str] = None,
+                 enable_lazy_loading: Optional[bool] = False):
         """Initialize the tool registry.
 
         Args:
@@ -46,6 +48,9 @@ class BaseToolRegistry(ABC):
         self.project_root = project_root
         self.mcp_configs: Dict[str, Any] = {}
         self.mcp_clients: Dict[str, Any] = {}
+        self.enable_lazy_loading = enable_lazy_loading
+        self.available_mcp_tools = {}
+
 
     def load_mcp_config(self, mcp_config: Dict[str, Any]) -> Any:
         """Load MCP configuration into tool registry for later retrieval.
@@ -114,6 +119,17 @@ class BaseToolRegistry(ABC):
             The tool decorator function for the specific framework
         """
         pass
+
+    @abstractmethod
+    async def execute_tool(self, tool_name: str, arguments: Any) -> Any:
+        """
+        Execute a tool with the given arguments.
+        Args:
+            tool_name: Name of the tool to execute.
+            arguments: Arguments for the tool (dict or json string).
+        Returns:
+            Result of the tool execution.
+        """
 
     def load_tools_from_config(self, tools_config: Dict[str, Any]) -> None:
         """Load all tools defined in configuration.
@@ -409,6 +425,18 @@ class BaseToolRegistry(ABC):
             True if it's a framework tool type
         """
         pass
+
+    @abstractmethod
+    def get_input_parameter_schema(self, tool_list: str) -> str:
+        """
+        Get the input parameter schema for a list of tools.
+
+        Args:
+            tool_list: Comma-separated list of tool names.
+
+        Returns:
+            String containing input parameter schemas for the tools.
+        """
 
     def _load_custom_module_tool(
             self,
@@ -738,3 +766,69 @@ class BaseToolRegistry(ABC):
             Dictionary of MCP configurations.
         """
         return self.mcp_configs
+
+    def generate_lazy_mcp_system_prompt(self, tool_list: List[str], mcp_client_list: List[str]) -> str:
+        """
+        Generate a system prompt for lazy loading MCP tools.
+
+        Args:
+            tool_list: List of standard tool names.
+            mcp_client_list: List of MCP client names.
+
+        Returns:
+            Formatted system prompt string listing available tools.
+        """
+        if not tool_list and not mcp_client_list:
+            return ""
+
+        system_prompt = ','.join(list(tool_list))
+
+        for mcp_client in mcp_client_list:
+            if mcp_client in self.available_mcp_tools:
+                system_prompt = f"{system_prompt}\n{mcp_client}:{', '.join(list(self.available_mcp_tools[mcp_client].keys()))}"
+
+        system_prompt = f"You have access to following tools. Follow workflow instructions to execute the tools{system_prompt}"
+
+        system_prompt = f"""{system_prompt}
+        Workflow: Follow this workflow strictly
+        1. Call `get_input_parameter_schema(tool_list)` with a comma-separated list of required tools to retrieve schemas.
+        2. Call `execute_multiple_tools(tool_list, arguments)` where tool_list is a comma-separated string and arguments is a dictionary mapping tool names to their parameters.    
+        """
+
+        return system_prompt
+
+    async def execute_multiple_tools(self, arguments: str):
+        """
+        Execute multiple tools in parallel.
+        Args:
+            arguments: YAML string containing arguments for each tool, keyed by tool name.
+        """
+        print(f"Executing multiple tools with arguments: {arguments}")
+        import yaml
+        import asyncio
+        arguments = yaml.safe_load(arguments)
+
+        tool_names = []
+        tasks = []
+
+        for tool_name in arguments.keys():
+            tool_name_stripped = tool_name.strip()
+            tool_names.append(tool_name_stripped)
+            tasks.append(self.execute_tool(tool_name_stripped, arguments[tool_name]))
+
+        results = await asyncio.gather(*tasks)
+
+        return dict(zip(tool_names, results))
+
+    def lazy_loading_required_tools(self):
+        """
+        Get the list of tools required for lazy loading.
+
+        Returns:
+            List of tools required for lazy loading.
+        """
+        return [
+            self._get_framework_tool_decorator()(self.get_input_parameter_schema),
+            # self._get_framework_tool_decorator()(self.execute_tool),
+            self._get_framework_tool_decorator()(self.execute_multiple_tools)
+        ]

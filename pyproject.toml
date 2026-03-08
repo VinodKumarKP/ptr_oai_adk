@@ -11,3 +11,4 @@ members = ["packages/*"]
 [tool.uv.sources]
 oai-agent-core = { workspace = true }
 oai-langgraph-core = { workspace = true }
+oai-openai-core = {workspace=true}

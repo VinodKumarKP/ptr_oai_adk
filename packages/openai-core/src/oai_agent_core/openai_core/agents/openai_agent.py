@@ -69,7 +69,8 @@ class OpenAIAgent(BaseAgent):
         # Initialize tool registry
         self.tool_registry = OpenAIToolRegistry(
             project_root=config_root,
-            logger=self.logger
+            logger=self.logger,
+            enable_lazy_loading=self.agent_config.get('crew_config', {}).get('enable_lazy_loading', False)
         )
 
         self.message_formatter = MessageFormatter(logger=self.logger)
@@ -194,30 +195,34 @@ class OpenAIAgent(BaseAgent):
         Ensures MCP servers are connected before execution and properly closed after.
         Assigns active servers to the agent(s).
         """
-        from agents.mcp import MCPServerManager
 
-        # Load all required MCP clients
-        mcp_clients = self.tool_registry.get_mcp_clients()
-        mcp_servers = []
-        for mcp_list in mcp_clients.values():
-            mcp_servers.extend(mcp_list)
-
-        async with MCPServerManager(mcp_servers, connect_timeout_seconds=600):
-            # Assign active servers to agents based on their specific config
-
-            def _assign_servers(agent_obj):
-                if hasattr(agent_obj, 'mcp_servers'):
-                    agent_obj.mcp_servers = mcp_clients.get(agent_obj.name, [])
-                    agent_obj.mcp_config = {}
-
-            # Assign to sub-agents
-            if self.is_multi_agent and self.base_agent_list:
-                for sub_agent in self.base_agent_list:
-                    _assign_servers(sub_agent)
-            else:
-                _assign_servers(self.agent)
-
+        if self.tool_registry.enable_lazy_loading:
             yield
+        else:
+            from agents.mcp import MCPServerManager
+
+            # Load all required MCP clients
+            mcp_clients = self.tool_registry.get_mcp_clients()
+            mcp_servers = []
+            for mcp_list in mcp_clients.values():
+                mcp_servers.extend(mcp_list)
+
+            async with MCPServerManager(mcp_servers, connect_timeout_seconds=1200):
+                # Assign active servers to agents based on their specific config
+
+                def _assign_servers(agent_obj):
+                    if hasattr(agent_obj, 'mcp_servers'):
+                        agent_obj.mcp_servers = mcp_clients.get(agent_obj.name, [])
+                        agent_obj.mcp_config = {}
+
+                # Assign to sub-agents
+                if self.is_multi_agent and self.base_agent_list:
+                    for sub_agent in self.base_agent_list:
+                        _assign_servers(sub_agent)
+                else:
+                    _assign_servers(self.agent)
+
+                yield
 
     async def process_request(
             self,

@@ -1,6 +1,7 @@
 """LangChain-specific tool registry implementation."""
 
 import inspect
+from abc import ABC
 from typing import Dict, Any, Callable
 
 from langchain_core.tools import StructuredTool
@@ -13,6 +14,12 @@ from oai_agent_core.utils.dynamic_class_loader import DynamicClassLoader
 
 class LangChainToolRegistry(BaseToolRegistry):
     """LangChain-specific tool registry implementation."""
+
+    async def execute_tool(self, tool_name: str, arguments: Any) -> Any:
+        pass
+
+    def get_input_parameter_schema(self, tool_list: str) -> str:
+        pass
 
     async def load_mcp_tools_from_config(self, mcp_config: Dict[str, Any]) -> list[Any]:
         """Load MCP tools defined in configuration.

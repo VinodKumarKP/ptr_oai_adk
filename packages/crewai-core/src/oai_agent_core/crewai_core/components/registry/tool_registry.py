@@ -13,6 +13,12 @@ from oai_agent_core.utils.dynamic_class_loader import DynamicClassLoader
 class CrewAIToolRegistry(BaseToolRegistry):
     """CrewAI-specific tool registry implementation."""
 
+    async def execute_tool(self, tool_name: str, arguments: Any) -> Any:
+        pass
+
+    def get_input_parameter_schema(self, tool_list: str) -> str:
+        pass
+
     def load_mcp_tools_from_config(self, mcp_configs: Dict[str, Any]) -> list[Any]:
         """Load MCP (Model Context Protocol) tools from configuration.
 
