@@ -1,5 +1,7 @@
 import os
 import sys
+from typing import Any
+
 import pytest
 import logging
 from unittest.mock import MagicMock
@@ -41,6 +43,12 @@ class MockBaseToolRegistry:
         return {}
         
     def load_mcp_config(self, mcp_config):
+        pass
+
+    def get_input_parameter_schema(self, tool_list: str) -> str:
+        pass
+
+    async def execute_tool(self, tool_name: str, arguments: Any) -> Any:
         pass
 
 class MockBaseKnowledgeBaseFactory:

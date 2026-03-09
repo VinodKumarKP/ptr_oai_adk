@@ -1,9 +1,17 @@
+from typing import Any
+
 import pytest
 from unittest.mock import MagicMock, patch
 from oai_agent_core.core.base_tool_registry import BaseToolRegistry
 
 # Concrete implementation for testing abstract base class
 class ConcreteToolRegistry(BaseToolRegistry):
+    async def execute_tool(self, tool_name: str, arguments: Any) -> Any:
+        pass
+
+    def get_input_parameter_schema(self, tool_list: str) -> str:
+        pass
+
     def load_mcp_tools_from_config(self, mcp_config):
         return []
 

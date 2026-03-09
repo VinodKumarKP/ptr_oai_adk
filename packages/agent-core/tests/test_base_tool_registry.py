@@ -33,7 +33,13 @@ class MockLogger:
 
 class ConcreteToolRegistry(BaseToolRegistry):
     """Concrete implementation for testing"""
-    
+
+    async def execute_tool(self, tool_name: str, arguments: Any) -> Any:
+        pass
+
+    def get_input_parameter_schema(self, tool_list: str) -> str:
+        pass
+
     def load_mcp_tools_from_config(self, mcp_config: Dict[str, Any], agent_name: Optional[str]) -> Any:
         return f"mcp_tools_loaded_{len(mcp_config)}"
     
