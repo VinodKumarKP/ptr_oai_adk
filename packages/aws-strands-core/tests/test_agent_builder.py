@@ -17,6 +17,7 @@ def mock_tool_registry():
     registry.get_mcp_configs.return_value = {}
     registry.get_mcp_clients.return_value = []
     registry.has_tool.return_value = True
+    registry.enable_lazy_loading = False
     registry.project_root = "/tmp"
     # Mock async load methods
     registry.load_mcp_tools_from_config = AsyncMock(return_value=[])
