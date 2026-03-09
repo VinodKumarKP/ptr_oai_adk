@@ -58,7 +58,8 @@ def test_is_framework_builtin_tool(registry):
     assert registry._is_framework_builtin_tool('strands_tools') is True
     assert registry._is_framework_builtin_tool('other_module') is False
 
-def test_load_mcp_tools_from_config_stdio(registry):
+@pytest.mark.asyncio
+async def test_load_mcp_tools_from_config_stdio(registry):
     mcp_config = {
         'tools': {
             'test_tool': {
@@ -68,20 +69,21 @@ def test_load_mcp_tools_from_config_stdio(registry):
         }
     }
     
-    async def run():
-        with patch('oai_agent_core.langgraph_core.components.registry.tool_registry.MultiServerMCPClient') as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get_tools.return_value = ['tool1', 'tool2']
-            mock_client_cls.return_value = mock_client
-            
-            tools = await registry.load_mcp_tools_from_config(mcp_config)
-            
-            assert len(tools) == 2
-            assert 'test_tool' in registry.mcp_configs
-    
-    asyncio.run(run())
+    with patch('oai_agent_core.langgraph_core.components.registry.tool_registry.MultiServerMCPClient') as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.get_tools.return_value = ['tool1', 'tool2']
+        mock_client_cls.return_value = mock_client
+        
+        # Ensure lazy loading is disabled for this test to return tools immediately
+        registry.enable_lazy_loading = False
+        
+        tools = await registry.load_mcp_tools_from_config(mcp_config)
+        
+        assert len(tools) == 2
+        assert 'test_tool' in registry.mcp_configs
 
-def test_load_mcp_tools_from_config_sse(registry):
+@pytest.mark.asyncio
+async def test_load_mcp_tools_from_config_sse(registry):
     mcp_config = {
         'tools': {
             'sse_tool': {
@@ -90,20 +92,20 @@ def test_load_mcp_tools_from_config_sse(registry):
         }
     }
     
-    async def run():
-        with patch('oai_agent_core.langgraph_core.components.registry.tool_registry.MultiServerMCPClient') as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get_tools.return_value = ['tool1']
-            mock_client_cls.return_value = mock_client
-            
-            tools = await registry.load_mcp_tools_from_config(mcp_config)
-            
-            assert len(tools) == 1
-            assert 'sse_tool' in registry.mcp_configs
-            
-    asyncio.run(run())
+    with patch('oai_agent_core.langgraph_core.components.registry.tool_registry.MultiServerMCPClient') as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.get_tools.return_value = ['tool1']
+        mock_client_cls.return_value = mock_client
+        
+        registry.enable_lazy_loading = False
+        
+        tools = await registry.load_mcp_tools_from_config(mcp_config)
+        
+        assert len(tools) == 1
+        assert 'sse_tool' in registry.mcp_configs
 
-def test_load_mcp_tools_from_config_http(registry):
+@pytest.mark.asyncio
+async def test_load_mcp_tools_from_config_http(registry):
     mcp_config = {
         'tools': {
             'http_tool': {
@@ -112,20 +114,20 @@ def test_load_mcp_tools_from_config_http(registry):
         }
     }
     
-    async def run():
-        with patch('oai_agent_core.langgraph_core.components.registry.tool_registry.MultiServerMCPClient') as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get_tools.return_value = ['tool1']
-            mock_client_cls.return_value = mock_client
-            
-            tools = await registry.load_mcp_tools_from_config(mcp_config)
-            
-            assert len(tools) == 1
-            assert 'http_tool' in registry.mcp_configs
-            
-    asyncio.run(run())
+    with patch('oai_agent_core.langgraph_core.components.registry.tool_registry.MultiServerMCPClient') as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.get_tools.return_value = ['tool1']
+        mock_client_cls.return_value = mock_client
+        
+        registry.enable_lazy_loading = False
+        
+        tools = await registry.load_mcp_tools_from_config(mcp_config)
+        
+        assert len(tools) == 1
+        assert 'http_tool' in registry.mcp_configs
 
-def test_load_mcp_tools_invalid_url(registry):
+@pytest.mark.asyncio
+async def test_load_mcp_tools_invalid_url(registry):
     mcp_config = {
         'tools': {
             'bad_tool': {
@@ -134,11 +136,8 @@ def test_load_mcp_tools_invalid_url(registry):
         }
     }
     
-    async def run():
-        with pytest.raises(ValueError, match="Unsupported url"):
-            await registry.load_mcp_tools_from_config(mcp_config)
-            
-    asyncio.run(run())
+    with pytest.raises(ValueError, match="Unsupported url"):
+        await registry.load_mcp_tools_from_config(mcp_config)
 
 def test_load_framework_builtin_tool_success(registry):
     with patch('oai_agent_core.utils.dynamic_class_loader.DynamicClassLoader.dynamic_import_tool') as mock_import:

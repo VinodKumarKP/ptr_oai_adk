@@ -80,7 +80,17 @@ class AgentBuilder(BaseAgentBuilder):
             Configured Agent instance.
         """
         # Get system prompt
-        system_prompt = agent_config.get('system_prompt', '')
+        # Get system prompt (instructions)
+        if self.tool_registry.enable_lazy_loading:
+            tools = self.tool_registry.lazy_loading_required_tools()
+            system_prompt = f"""{agent_config.get('system_prompt', "Use MCP tools when they help.")}
+                                    {self.tool_registry.generate_lazy_mcp_system_prompt(
+                agent_config.get('tools', []),
+                agent_config.get('mcps', [])
+            )}          
+                                    """
+        else:
+            system_prompt = agent_config.get('system_prompt', "Use MCP tools when they help.")
 
         # Create the agent
         agent = create_agent(

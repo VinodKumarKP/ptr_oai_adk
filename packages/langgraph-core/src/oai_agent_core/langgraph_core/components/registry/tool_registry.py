@@ -1,7 +1,6 @@
 """LangChain-specific tool registry implementation."""
 
 import inspect
-from abc import ABC
 from typing import Dict, Any, Callable
 
 from langchain_core.tools import StructuredTool
@@ -16,10 +15,112 @@ class LangChainToolRegistry(BaseToolRegistry):
     """LangChain-specific tool registry implementation."""
 
     async def execute_tool(self, tool_name: str, arguments: Any) -> Any:
-        pass
+        """
+                Execute a tool with the given arguments.
+                Args:
+                    tool_name: Name of the tool to execute.
+                    arguments: Arguments for the tool (dict or json string).
+                Returns:
+                    Result of the tool execution.
+                """
+        self.logger.info(f"Executing tool:{tool_name} with arguments: {arguments}")
+        import json
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                pass  # Maybe it's not JSON, but let the tool handle it or fail later
+
+        if tool_name in self.available_mcp_tools:
+            mcp_client = self.available_mcp_tools[tool_name]
+            return await self.available_mcp_tools[mcp_client][tool_name]['tool'].ainvoke(input=arguments)
+        elif tool_name in self.tools:
+            return self.tools[tool_name].func(
+                **arguments
+            )
+        else:
+            raise ValueError(f"Tool '{tool_name}' not found")
+
+    def _format_schema(self, schema: Dict[str, Any]) -> str:
+        """Format the schema into a concise string."""
+        if not schema or not isinstance(schema, dict):
+            return "No parameters"
+
+        properties = schema
+
+        formatted = []
+        for name, details in properties.items():
+            if not isinstance(details, dict):
+                continue
+
+            type_ = details.get('type')
+            if not type_ and 'anyOf' in details:
+                types = [t['type'] for t in details['anyOf'] if t.get('type') and t.get('type') != 'null']
+                if types:
+                    type_ = " | ".join(types)
+
+            if not type_:
+                type_ = 'any'
+
+            desc = details.get('description', '')
+            if not desc and 'title' in details:
+                desc = details.get('title', '')
+
+            is_required = "optional" if 'default' in details else "required"
+            default = f", default={details['default']}" if 'default' in details else ""
+
+            line = f"- {name} ({type_}, {is_required}{default}): {desc}"
+            formatted.append(line)
+
+        return "\n".join(formatted)
 
     def get_input_parameter_schema(self, tool_list: str) -> str:
-        pass
+        """
+        Get the input parameter schema for a list of tools.
+
+        Args:
+            tool_list: Comma-separated list of tool names.
+
+        Returns:
+            String containing input parameter schemas for the tools.
+        """
+        self.logger.info(f"Fetching input schema of tools: {tool_list}")
+        schemas = []
+        for tool_name in tool_list.split(','):
+            tool_name = tool_name.strip()
+            if tool_name in self.available_mcp_tools:
+                mcp_client = self.available_mcp_tools[tool_name]
+                schema = self.available_mcp_tools[mcp_client][tool_name]['input_schema']
+                formatted_schema = self._format_schema(schema)
+                schemas.append(f"{tool_name}:\n{formatted_schema}")
+            elif tool_name in self.tools:
+                schema = self.tools[tool_name].args
+                formatted_schema = self._format_schema(schema)
+                schemas.append(f"{tool_name}:\n{formatted_schema}")
+        return "\n\n".join(schemas)
+
+    async def execute_multiple_tools(self, arguments: str):
+        """
+        Execute multiple tools in parallel.
+        Args:
+            arguments: YAML string containing arguments for each tool, keyed by tool name.
+        """
+        self.logger.info(f"Executing multiple tools with arguments: {arguments}")
+        import yaml
+        import asyncio
+        arguments = yaml.safe_load(arguments)
+
+        tool_names = []
+        tasks = []
+
+        for tool_name in arguments.keys():
+            tool_name_stripped = tool_name.strip()
+            tool_names.append(tool_name_stripped)
+            tasks.append(self.execute_tool(tool_name_stripped, arguments[tool_name]))
+
+        results = await asyncio.gather(*tasks)
+
+        return dict(zip(tool_names, results))
 
     async def load_mcp_tools_from_config(self, mcp_config: Dict[str, Any]) -> list[Any]:
         """Load MCP tools defined in configuration.
@@ -36,12 +137,13 @@ class LangChainToolRegistry(BaseToolRegistry):
             mcp_configs = {}
             for tool_name in mcp_list:
                 mcp = self._get_mcp_config(mcp_config, tool_name)
-                mcp = {k: v for k, v in mcp.items() if k in {'command', 'args', 'env', 'transport', 'url', 'headers', 'environment'}}
+                mcp = {k: v for k, v in mcp.items() if
+                       k in {'command', 'args', 'env', 'transport', 'url', 'headers', 'environment'}}
 
                 if 'command' in mcp:
                     mcp['transport'] = 'stdio'
                     mcp_configs[tool_name] = StdioConnection(**mcp)
-                    self.mcp_configs[tool_name] =  mcp_configs[tool_name]
+                    self.mcp_configs[tool_name] = mcp_configs[tool_name]
                     self.logger.info(f"Creating STDIO MCP client for '{tool_name}'")
                 elif 'url' in mcp:
                     url = mcp.get('url', '')
@@ -58,9 +160,26 @@ class LangChainToolRegistry(BaseToolRegistry):
                     else:
                         raise ValueError("Unsupported url. It should either end with mcp and sse")
 
-            client = MultiServerMCPClient(mcp_configs)
-            tools = await client.get_tools()
-            return tools
+                if self.enable_lazy_loading:
+                    if tool_name not in self.available_mcp_tools:
+                        self.available_mcp_tools[tool_name] = {}
+                        client = MultiServerMCPClient({tool_name: mcp_configs[tool_name]})
+                        list_of_tools = await client.get_tools()
+                        for tool in list_of_tools:
+                            self.available_mcp_tools[tool.name] = tool_name
+                            self.available_mcp_tools[tool_name][tool.name] = {
+                                'tool': tool,
+                                'type': 'mcp',
+                                'mcp_client': mcp_configs[tool_name],
+                                'input_schema': tool.tool_call_schema['properties']
+                            }
+
+            if not self.enable_lazy_loading:
+                client = MultiServerMCPClient(mcp_configs)
+                tools = await client.get_tools()
+                return tools
+            else:
+                return []
         except Exception as e:
             self.logger.error(f"Failed to initialize MCP client: {e}")
             raise

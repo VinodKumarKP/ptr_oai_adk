@@ -11,12 +11,18 @@ def mock_llm():
     llm.model_name = "gpt-4"
     return llm
 
+def dummy():
+    pass
+
 @pytest.fixture
 def mock_tool_registry():
     registry = MagicMock(spec=LangChainToolRegistry)
     registry.get_tools_for_agent.return_value = []
     registry.load_mcp_tools_from_config = AsyncMock(return_value=[])
     registry.has_tool.return_value = True
+    # Add the missing method mock
+    registry.generate_lazy_mcp_system_prompt = MagicMock(return_value="")
+    registry.enable_lazy_loading = False
     return registry
 
 @pytest.fixture
@@ -45,116 +51,106 @@ def test_init(builder, mock_llm, mock_tool_registry):
     assert builder.tool_registry == mock_tool_registry
     assert builder.config_root == "/tmp"
 
-def test_create_single_agent(builder):
+@pytest.mark.asyncio
+async def test_create_single_agent(builder):
     agent_config = {
         'system_prompt': 'You are a helper',
         'tools': ['tool1']
     }
     
-    async def run():
-        with patch('oai_agent_core.langgraph_core.builders.agent_builder.create_agent') as mock_create_agent:
-            mock_agent = MagicMock()
-            mock_create_agent.return_value = mock_agent
-            
-            # Mock base class methods
-            builder._ensure_model = MagicMock()
-            builder._get_regular_tools = AsyncMock(return_value=['tool1_obj'])
-            builder._load_mcp_tools = AsyncMock(return_value=[])
-            builder._load_knowledge_base_tools = AsyncMock(return_value=[])
-            
-            agent = await builder.create_single_agent('test_agent', agent_config)
-            
-            assert agent == mock_agent
-            mock_create_agent.assert_called_once()
-            builder._get_regular_tools.assert_called_once()
-            
-    asyncio.run(run())
+    with patch('oai_agent_core.langgraph_core.builders.agent_builder.create_agent') as mock_create_agent:
+        mock_agent = MagicMock()
+        mock_create_agent.return_value = mock_agent
+        
+        # Mock base class methods
+        builder._ensure_model = MagicMock()
+        builder._get_regular_tools = AsyncMock(return_value=['tool1_obj'])
+        builder._load_mcp_tools = AsyncMock(return_value=[])
+        builder._load_knowledge_base_tools = AsyncMock(return_value=[])
+        
+        agent = await builder.create_single_agent('test_agent', agent_config)
+        
+        assert agent == mock_agent
+        mock_create_agent.assert_called_once()
+        builder._get_regular_tools.assert_called_once()
 
-def test_create_single_agent_with_dict_tools(builder):
+@pytest.mark.asyncio
+async def test_create_single_agent_with_dict_tools(builder):
     agent_config = {
         'system_prompt': 'You are a helper',
         'tools': {'tool1': {'arg': 'val'}}
     }
     
-    async def run():
-        with patch('oai_agent_core.langgraph_core.builders.agent_builder.create_agent') as mock_create_agent:
-            mock_agent = MagicMock()
-            mock_create_agent.return_value = mock_agent
-            
-            builder._ensure_model = MagicMock()
-            builder._get_regular_tools = AsyncMock(return_value=['tool1_obj'])
-            builder._load_mcp_tools = AsyncMock(return_value=[])
-            builder._load_knowledge_base_tools = AsyncMock(return_value=[])
-            
-            agent = await builder.create_single_agent('test_agent', agent_config)
-            
-            assert agent == mock_agent
-            builder._get_regular_tools.assert_called_once()
-            
-    asyncio.run(run())
+    with patch('oai_agent_core.langgraph_core.builders.agent_builder.create_agent') as mock_create_agent:
+        mock_agent = MagicMock()
+        mock_create_agent.return_value = mock_agent
+        
+        builder._ensure_model = MagicMock()
+        builder._get_regular_tools = AsyncMock(return_value=['tool1_obj'])
+        builder._load_mcp_tools = AsyncMock(return_value=[])
+        builder._load_knowledge_base_tools = AsyncMock(return_value=[])
+        
+        agent = await builder.create_single_agent('test_agent', agent_config)
+        
+        assert agent == mock_agent
+        builder._get_regular_tools.assert_called_once()
 
-def test_create_single_agent_with_mcps(builder):
+@pytest.mark.asyncio
+async def test_create_single_agent_with_mcps(builder):
     agent_config = {
         'system_prompt': 'helper',
         'mcps': {'mcp1': {}}
     }
     
-    async def run():
-        with patch('oai_agent_core.langgraph_core.builders.agent_builder.create_agent'):
-            builder._ensure_model = MagicMock()
-            builder._get_regular_tools = AsyncMock(return_value=[])
-            builder._load_mcp_tools = AsyncMock(return_value=['mcp_tool'])
-            builder._load_knowledge_base_tools = AsyncMock(return_value=[])
-            
-            await builder.create_single_agent('test_agent', agent_config)
-            
-            builder._load_mcp_tools.assert_called_once()
-            
-    asyncio.run(run())
+    with patch('oai_agent_core.langgraph_core.builders.agent_builder.create_agent'):
+        builder._ensure_model = MagicMock()
+        builder._get_regular_tools = AsyncMock(return_value=[])
+        builder._load_mcp_tools = AsyncMock(return_value=['mcp_tool'])
+        builder._load_knowledge_base_tools = AsyncMock(return_value=[])
+        
+        await builder.create_single_agent('test_agent', agent_config)
+        
+        builder._load_mcp_tools.assert_called_once()
 
-def test_create_single_agent_with_kb(builder):
+@pytest.mark.asyncio
+async def test_create_single_agent_with_kb(builder):
     agent_config = {
         'system_prompt': 'You are a helper',
         'knowledge_base': [{'name': 'kb1'}]
     }
     
-    async def run():
-        with patch('oai_agent_core.langgraph_core.builders.agent_builder.create_agent') as mock_create_agent:
-            builder._ensure_model = MagicMock()
-            builder._get_regular_tools = AsyncMock(return_value=[])
-            builder._load_mcp_tools = AsyncMock(return_value=[])
-            builder._load_knowledge_base_tools = AsyncMock(return_value=['kb_tool'])
-            
-            await builder.create_single_agent('test_agent', agent_config)
-            
-            builder._load_knowledge_base_tools.assert_called_once()
-            
-            # Verify create_agent was called with the tool
-            call_args = mock_create_agent.call_args
-            assert 'kb_tool' in call_args[1]['tools']
-                
-    asyncio.run(run())
+    with patch('oai_agent_core.langgraph_core.builders.agent_builder.create_agent') as mock_create_agent:
+        builder._ensure_model = MagicMock()
+        builder._get_regular_tools = AsyncMock(return_value=[])
+        builder._load_mcp_tools = AsyncMock(return_value=[])
+        builder._load_knowledge_base_tools = AsyncMock(return_value=['kb_tool'])
+        
+        await builder.create_single_agent('test_agent', agent_config)
+        
+        builder._load_knowledge_base_tools.assert_called_once()
+        
+        # Verify create_agent was called with the tool
+        call_args = mock_create_agent.call_args
+        assert 'kb_tool' in call_args[1]['tools']
 
-def test_create_multi_agent_system(builder):
+@pytest.mark.asyncio
+async def test_create_multi_agent_system(builder):
     agent_configs = [
         {'agent1': {'system_prompt': 'p1'}},
         {'agent2': {'system_prompt': 'p2'}}
     ]
     
-    async def run():
-        with patch('oai_agent_core.langgraph_core.builders.agent_builder.create_supervisor') as mock_create_supervisor:
-            # Mock base class methods
-            builder._normalize_agent_configs = MagicMock(return_value=[('agent1', {}), ('agent2', {})])
-            builder._create_agents_parallel = AsyncMock(return_value=([], [], []))
-            builder._create_supervisor_agent = MagicMock(return_value=MagicMock())
-            
-            supervisor, base_agents = await builder.create_multi_agent_system(agent_configs)
-            
-            builder._normalize_agent_configs.assert_called_once()
-            builder._create_agents_parallel.assert_called_once()
-            builder._create_supervisor_agent.assert_called_once()
-                
-    asyncio.run(run())
+    with patch('oai_agent_core.langgraph_core.builders.agent_builder.create_supervisor') as mock_create_supervisor:
+        # Mock base class methods
+        builder._normalize_agent_configs = MagicMock(return_value=[('agent1', {}), ('agent2', {})])
+        builder._create_agents_parallel = AsyncMock(return_value=([], [], []))
+        builder._create_supervisor_agent = MagicMock(return_value=MagicMock())
+        
+        supervisor, base_agents = await builder.create_multi_agent_system(agent_configs)
+        
+        builder._normalize_agent_configs.assert_called_once()
+        builder._create_agents_parallel.assert_called_once()
+        builder._create_supervisor_agent.assert_called_once()
 
 def test_validate_agent_config_valid(builder):
     config = {
@@ -240,30 +236,28 @@ def test_repr(builder):
     assert "LangChainAgentBuilder" in repr_str
     assert "tools=1" in repr_str
 
-def test_load_knowledge_base_tools(builder):
-    import asyncio
-    async def run():
-        # Mock the module import using sys.modules
-        mock_kb_module = MagicMock()
-        mock_kb_factory = MagicMock()
-        mock_kb_tool = MagicMock()
-        mock_kb_factory.return_value.create_tool.return_value = mock_kb_tool
-        mock_kb_module.KnowledgeBaseFactory = mock_kb_factory
-        
-        with patch.dict('sys.modules', {'oai_agent_core.langgraph_core.components.knowledge.knowledge_base_factory': mock_kb_module}):
-            with patch('asyncio.to_thread', new_callable=AsyncMock) as mock_to_thread:
-                mock_to_thread.return_value = mock_kb_factory.return_value
-                
-                # Call the method on the CLASS to ensure we use the implementation in AgentBuilder (via BaseAgentBuilder)
-                # passing the builder instance as self
-                tools = await AgentBuilder._load_knowledge_base_tools(builder, 'agent1', {'knowledge_base': [{'name': 'kb1'}]})
-                
-                assert len(tools) == 1
-                assert tools[0] == mock_kb_tool
-                
-    asyncio.run(run())
+@pytest.mark.asyncio
+async def test_load_knowledge_base_tools(builder):
+    # Mock the module import using sys.modules
+    mock_kb_module = MagicMock()
+    mock_kb_factory = MagicMock()
+    mock_kb_tool = MagicMock()
+    mock_kb_factory.return_value.create_tool.return_value = mock_kb_tool
+    mock_kb_module.KnowledgeBaseFactory = mock_kb_factory
+    
+    with patch.dict('sys.modules', {'oai_agent_core.langgraph_core.components.knowledge.knowledge_base_factory': mock_kb_module}):
+        with patch('asyncio.to_thread', new_callable=AsyncMock) as mock_to_thread:
+            mock_to_thread.return_value = mock_kb_factory.return_value
+            
+            # Call the method on the CLASS to ensure we use the implementation in AgentBuilder (via BaseAgentBuilder)
+            # passing the builder instance as self
+            tools = await AgentBuilder._load_knowledge_base_tools(builder, 'agent1', {'knowledge_base': [{'name': 'kb1'}]})
+            
+            assert len(tools) == 1
+            assert tools[0] == mock_kb_tool
 
-def test_create_agent_as_tool(builder):
+@pytest.mark.asyncio
+async def test_create_agent_as_tool(builder):
     mock_agent = MagicMock()
     mock_agent.ainvoke = AsyncMock(return_value={'messages': [MagicMock(content='response')]})
     
@@ -273,12 +267,9 @@ def test_create_agent_as_tool(builder):
     assert tool.description == 'tool_desc'
     
     # Test execution
-    async def run_tool():
-        result = await tool.ainvoke("query")
-        assert result == 'response'
-        mock_agent.ainvoke.assert_called_once()
-        
-    asyncio.run(run_tool())
+    result = await tool.ainvoke("query")
+    assert result == 'response'
+    mock_agent.ainvoke.assert_called_once()
 
 def test_create_supervisor_agent_supervisor(builder):
     with patch('oai_agent_core.langgraph_core.builders.agent_builder.create_supervisor') as mock_create:

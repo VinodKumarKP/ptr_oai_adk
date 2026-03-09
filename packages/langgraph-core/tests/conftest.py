@@ -14,6 +14,7 @@ class MockBaseToolRegistry:
         self.logger = MagicMock()
         self.tools = {}
         self.mcp_configs = {}
+        self.enable_lazy_loading = True
     
     def _get_mcp_name_list_from_mcp_config(self, config):
         return list(config.get('tools', {}).keys())

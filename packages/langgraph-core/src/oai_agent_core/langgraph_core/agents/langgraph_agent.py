@@ -100,7 +100,8 @@ class LangGraphAgent(BaseAgent):
         # Initialize tool registry
         self.tool_registry = LangChainToolRegistry(
             project_root=config_root,
-            logger=self.logger
+            logger=self.logger,
+            enable_lazy_loading=self.agent_config.get('crew_config', {}).get('enable_lazy_loading', False)
         )
 
         # Initialize agent builder (will be created after tools are loaded)
