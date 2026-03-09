@@ -2,7 +2,7 @@ import asyncio
 import os
 from pprint import pprint
 import yaml
-from oai_agent_core.langgraph_core.agents.langgraph_agent import LangGraphAgent
+from oai_agent_core.aws_strands_core.agents.aws_strands_agent import StrandsAgent
 
 # Get the absolute path to the examples directory
 EXAMPLES_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -21,7 +21,7 @@ async def run_supervisor_agent():
         config = yaml.safe_load(f)
 
     # Initialize agent
-    agent = LangGraphAgent(
+    agent = StrandsAgent(
         agent_name="supervisor",
         agent_config=config,
         config_root=EXAMPLES_DIR
@@ -31,9 +31,14 @@ async def run_supervisor_agent():
 
     # Test 1: Delegated task
     print("\n--- Test 1: Hotel Search (Delegated) ---")
-    query = "Find a hotel in downtown Chicago."
+    query = """
+    Search for flight from Boston to JFK for 2026-03-09 and display the available flights
+    and book McKittrick Hotel hotel in New York. After booking again search for flight from Boston to JFK for 2026-03-09 and display the available flights
+    and book McKittrick Hotel hotel in New York.
+    """
     result = await agent.ainvoke(query)
-    pprint(result['content'][0]['text'])
+    pprint(result)
+    # pprint(result['content']['text'])
 
 if __name__ == "__main__":
     asyncio.run(run_supervisor_agent())

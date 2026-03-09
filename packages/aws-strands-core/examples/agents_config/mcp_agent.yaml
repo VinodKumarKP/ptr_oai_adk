@@ -9,12 +9,11 @@ tools:
 
 mcps:
   environment_lookup:
-    command: uv
-    args:
-      - run
-      - --with
-      - "git+https://github.com/Capgemini-Innersource/ptr-cloud-mcp-servers.git"
-      - env_lookup_server
+    command: env_lookup_server
+  stock_market_lookup:
+    command: stock_market_server
+  customer_records_server:
+    command: customer_records_server
 
 
 agent_list:
@@ -23,6 +22,14 @@ agent_list:
         You are a environment lookup assistant
       mcps:
         - environment_lookup
+        - stock_market_lookup
+        - customer_records_server
+      tools:
+        - search_flights
+        - search_hotels
+        - book_hotel
+        - book_flight
 
 crew_config:
   pattern: single
+  enable_lazy_loading: true
