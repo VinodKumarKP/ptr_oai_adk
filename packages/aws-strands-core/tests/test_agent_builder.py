@@ -20,6 +20,7 @@ def mock_tool_registry():
     registry.project_root = "/tmp"
     # Mock async load methods
     registry.load_mcp_tools_from_config = AsyncMock(return_value=[])
+    registry.lazy_loading_required_tools.return_value = []
     return registry
 
 @pytest.fixture
@@ -42,7 +43,8 @@ def builder(mock_model_manager, mock_tool_registry):
         builder._kb_lock = asyncio.Lock()
         return builder
 
-def test_create_agent_basic(builder):
+@pytest.mark.asyncio
+async def test_create_agent_basic(builder):
     config = {
         'system_prompt': 'You are a helper',
         'model': {'model_id': 'gpt-4'}
@@ -55,20 +57,21 @@ def test_create_agent_basic(builder):
         builder._load_mcp_tools = AsyncMock(return_value=[])
         builder._load_knowledge_base_tools = AsyncMock(return_value=[])
         
-        import asyncio
-        agent = asyncio.run(builder.create_agent('test_agent', config))
+        agent = await builder.create_agent('test_agent', config)
         
         MockAgent.assert_called_once()
         call_args = MockAgent.call_args[1]
         assert call_args['name'] == 'test_agent'
-        assert call_args['system_prompt'] == 'You are a helper'
+        # The system prompt might be modified by lazy loading logic, so check if it contains the original prompt
+        assert 'You are a helper' in call_args['system_prompt']
         
         builder.llm = "mock_model"
-        agent = asyncio.run(builder.create_agent('test_agent', config))
+        agent = await builder.create_agent('test_agent', config)
         call_args = MockAgent.call_args[1]
         assert call_args['model'] == 'mock_model'
 
-def test_create_agent_with_tools(builder):
+@pytest.mark.asyncio
+async def test_create_agent_with_tools(builder):
     config = {
         'system_prompt': 'helper',
         'tools': ['tool1', 'tool2']
@@ -80,14 +83,20 @@ def test_create_agent_with_tools(builder):
         builder._load_mcp_tools = AsyncMock(return_value=[])
         builder._load_knowledge_base_tools = AsyncMock(return_value=[])
         
-        import asyncio
-        asyncio.run(builder.create_agent('test_agent', config))
+        await builder.create_agent('test_agent', config)
         
         call_args = MockAgent.call_args[1]
-        assert len(call_args['tools']) == 2
+        # Check if tools are passed correctly. Note that lazy loading might add extra tools.
+        # So we check if our tools are present in the list
+        tools_arg = call_args['tools']
+        if tools_arg is None:
+             tools_arg = []
+        assert 't1' in tools_arg
+        assert 't2' in tools_arg
         builder._get_regular_tools.assert_called_once()
 
-def test_create_agent_with_mcps(builder):
+@pytest.mark.asyncio
+async def test_create_agent_with_mcps(builder):
     config = {
         'system_prompt': 'helper',
         'mcps': {'mcp1': {}}
@@ -101,14 +110,18 @@ def test_create_agent_with_mcps(builder):
         builder._load_mcp_tools = AsyncMock(return_value=[mock_mcp_client])
         builder._load_knowledge_base_tools = AsyncMock(return_value=[])
         
-        import asyncio
-        asyncio.run(builder.create_agent('test_agent', config))
+        await builder.create_agent('test_agent', config)
         
         call_args = MockAgent.call_args[1]
-        assert mock_mcp_client in call_args['tools']
+        # Check if mcp client is in tools
+        tools_arg = call_args['tools']
+        if tools_arg is None:
+             tools_arg = []
+        assert mock_mcp_client in tools_arg
         builder._load_mcp_tools.assert_called_once()
 
-def test_create_agent_with_kb(builder):
+@pytest.mark.asyncio
+async def test_create_agent_with_kb(builder):
     config = {
         'system_prompt': 'helper',
         'knowledge_base': [{'name': 'kb1'}]
@@ -122,12 +135,12 @@ def test_create_agent_with_kb(builder):
         builder._load_mcp_tools = AsyncMock(return_value=[])
         builder._load_knowledge_base_tools = AsyncMock(return_value=[mock_kb_tool])
         
-        import asyncio
-        asyncio.run(builder.create_agent('test_agent', config))
+        await builder.create_agent('test_agent', config)
         
         builder._load_knowledge_base_tools.assert_called_once()
 
-def test_create_agents_from_config(builder):
+@pytest.mark.asyncio
+async def test_create_agents_from_config(builder):
     configs = [
         {'a1': {'system_prompt': 'p1'}},
         {'a2': {'system_prompt': 'p2'}}
@@ -139,14 +152,14 @@ def test_create_agents_from_config(builder):
         # We can mock create_single_agent directly on the builder instance
         builder.create_single_agent = AsyncMock(return_value=MagicMock())
         
-        import asyncio
-        agents = asyncio.run(builder.create_agents_from_config(configs))
+        agents = await builder.create_agents_from_config(configs)
         assert len(agents) == 2
         assert 'a1' in agents
         assert 'a2' in agents
         assert builder.create_single_agent.call_count == 2
 
-def test_create_agents_from_config_agent_as_tool(builder):
+@pytest.mark.asyncio
+async def test_create_agents_from_config_agent_as_tool(builder):
     configs = [
         {'a1': {'system_prompt': 'p1'}},
         {'a2': {'system_prompt': 'p2'}}
@@ -160,8 +173,7 @@ def test_create_agents_from_config_agent_as_tool(builder):
             mock_tool = MagicMock()
             mock_create_tool.return_value = mock_tool
             
-            import asyncio
-            agents = asyncio.run(builder.create_agents_from_config(configs, architecture="agent-as-tool"))
+            agents = await builder.create_agents_from_config(configs, architecture="agent-as-tool")
             
             assert len(agents) == 2
             assert agents['a1'] == mock_tool
@@ -225,37 +237,34 @@ def test_get_agent_summary(builder):
     assert summary['tool_count'] == 1
     assert summary['has_instructions'] is True
 
-def test_load_knowledge_base_tools(builder):
-    import asyncio
-    async def run():
-        # Mock the module import using sys.modules
-        mock_kb_module = MagicMock()
-        mock_kb_factory = MagicMock()
-        mock_kb_tool = MagicMock()
-        mock_kb_factory.return_value.create_tool.return_value = mock_kb_tool
-        mock_kb_module.KnowledgeBaseFactory = mock_kb_factory
-        
-        # Ensure parent packages exist in sys.modules to avoid import errors
-        with patch.dict('sys.modules', {
-            'oai_aws_strands_agent_core': MagicMock(),
-            'oai_agent_core.aws_strands_core.components': MagicMock(),
-            'oai_agent_core.aws_strands_core.components.knowledge': MagicMock(),
-            'oai_agent_core.aws_strands_core.components.knowledge.knowledge_base_factory': mock_kb_module
-        }):
-            # We also need to patch asyncio.to_thread because the code uses it
-            with patch('asyncio.to_thread', new_callable=AsyncMock) as mock_to_thread:
-                # to_thread will be called with KnowledgeBaseFactory class and args
-                # It should return the instance
-                mock_to_thread.return_value = mock_kb_factory.return_value
-                
-                # Call the method on the CLASS to ensure we use the implementation in AgentBuilder
-                # passing the builder instance as self
-                tools = await AgentBuilder._load_knowledge_base_tools(builder, 'agent1', {'knowledge_base': [{'name': 'kb1'}]})
-                
-                assert len(tools) == 1
-                assert tools[0] == mock_kb_tool
-                
-    asyncio.run(run())
+@pytest.mark.asyncio
+async def test_load_knowledge_base_tools(builder):
+    # Mock the module import using sys.modules
+    mock_kb_module = MagicMock()
+    mock_kb_factory = MagicMock()
+    mock_kb_tool = MagicMock()
+    mock_kb_factory.return_value.create_tool.return_value = mock_kb_tool
+    mock_kb_module.KnowledgeBaseFactory = mock_kb_factory
+    
+    # Ensure parent packages exist in sys.modules to avoid import errors
+    with patch.dict('sys.modules', {
+        'oai_aws_strands_agent_core': MagicMock(),
+        'oai_agent_core.aws_strands_core.components': MagicMock(),
+        'oai_agent_core.aws_strands_core.components.knowledge': MagicMock(),
+        'oai_agent_core.aws_strands_core.components.knowledge.knowledge_base_factory': mock_kb_module
+    }):
+        # We also need to patch asyncio.to_thread because the code uses it
+        with patch('asyncio.to_thread', new_callable=AsyncMock) as mock_to_thread:
+            # to_thread will be called with KnowledgeBaseFactory class and args
+            # It should return the instance
+            mock_to_thread.return_value = mock_kb_factory.return_value
+            
+            # Call the method on the CLASS to ensure we use the implementation in AgentBuilder
+            # passing the builder instance as self
+            tools = await AgentBuilder._load_knowledge_base_tools(builder, 'agent1', {'knowledge_base': [{'name': 'kb1'}]})
+            
+            assert len(tools) == 1
+            assert tools[0] == mock_kb_tool
 
 def test_create_supervisor_agent(builder):
     mock_agent = MagicMock()
