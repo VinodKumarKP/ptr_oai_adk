@@ -161,8 +161,6 @@ class GuardrailManager:
         # ── 2. Normalise the hub URI ───────────────────────────────────────────
         install_name = full_name
         if not install_name.startswith("hub://"):
-            if not install_name.startswith("guardrails/"):
-                install_name = f"guardrails/{install_name}"
             install_name = f"hub://{install_name}"
 
         self.logger.info(f"Installing validator from hub: {install_name}")
@@ -244,8 +242,9 @@ class GuardrailManager:
                     self.logger.error(f"Reference '{ref_name}' not found.")
                     continue
 
+            name=config.get("name")
             full_name = config.get("full_name") or config.get("name")
-            class_name = config.get("class_name") or config.get("name")
+            class_name = config.get("class_name")
             if not full_name:
                 self.logger.error(f"Validator config missing 'name' or 'full_name': {config}")
                 continue
@@ -254,8 +253,7 @@ class GuardrailManager:
             is_hub_validator = not bool(module_path)
 
             if is_hub_validator:
-                validator_name = full_name.split("/")[-1]
-                class_name = class_name or self._snake_to_pascal(validator_name)
+                class_name = class_name or self._snake_to_pascal(name)
                 module_path = "guardrails.hub"
             else:
                 class_name = full_name
