@@ -3,7 +3,7 @@ import datetime
 from collections import defaultdict
 from typing import Dict, List, Optional
 
-from langchain.tools import tool
+from strands.tools import tool
 
 RESERVATIONS = defaultdict(lambda: {"flight_info": {}, "hotel_info": {}})
 TOMORROW = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
@@ -54,7 +54,7 @@ HOTELS = [
 ]
 
 # Flight tools
-
+@tool
 def search_flights(
     departure_airport: Optional[str] = None,
     arrival_airport: Optional[str] = None,
@@ -103,6 +103,7 @@ def book_flight(
 
 
 # Hotel tools
+
 @tool
 def search_hotels(location: str) -> list[dict]:
     """Search hotels.

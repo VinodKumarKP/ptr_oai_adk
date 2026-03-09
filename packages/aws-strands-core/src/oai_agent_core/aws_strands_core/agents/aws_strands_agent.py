@@ -103,7 +103,10 @@ class StrandsAgent(BaseAgent):
         )
         self.llm = self.model_manager.create_model()
 
-        self.tool_registry = ToolRegistry(logger=self.logger, project_root=config_root)
+        self.tool_registry = ToolRegistry(
+            logger=self.logger,
+            project_root=config_root,
+            enable_lazy_loading=self.agent_config.get('crew_config', {}).get('enable_lazy_loading', False))
         self.message_formatter = MessageFormatter(logger=self.logger)
         self.output_serializer = OutputSerializer(logger=self.logger)
         self.result_extractor = ResultExtractor(logger=self.logger)
@@ -554,7 +557,7 @@ class StrandsAgent(BaseAgent):
                     include_raw=config.get('include_raw', False) if config else False,
                     input_message=formatted_message if config and config.get('include_input_message', False) else None,
                     original_message=actual_original_message if config and config.get('include_original_message',
-                                                                               False) else None
+                                                                                      False) else None
                 )
                 if 'content' in response:
                     response['content']['text'] = self._guardrail_output_message(response['content'].get('text'))
@@ -570,7 +573,7 @@ class StrandsAgent(BaseAgent):
                     include_raw=config.get('include_raw', False) if config else False,
                     input_message=formatted_message if config and config.get('include_input_message', False) else None,
                     original_message=actual_original_message if config and config.get('include_original_message',
-                                                                               False) else None
+                                                                                      False) else None
                 )
         else:
             # Multi-agent system - use streaming

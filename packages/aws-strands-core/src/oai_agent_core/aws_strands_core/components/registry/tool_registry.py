@@ -1,15 +1,14 @@
 """AWS Strands-specific tool registry implementation."""
 
 import inspect
-from abc import ABC
 from typing import Dict, Any, Callable, List
 
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
-from oai_agent_core.core.base_tool_registry import BaseToolRegistry
 from strands.tools.mcp.mcp_client import MCPClient
 
+from oai_agent_core.core.base_tool_registry import BaseToolRegistry
 from oai_agent_core.utils.dynamic_class_loader import DynamicClassLoader
 
 
@@ -29,20 +28,113 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
         project_root: Project root directory path
     """
 
+    def _format_schema(self, schema: Dict[str, Any]) -> str:
+        """Format the schema into a concise string."""
+        if not schema:
+            return "No parameters"
+
+        # Handle case where schema is just properties (legacy/simplified)
+        properties = schema.get('properties', schema)
+        # If properties is not a dict (e.g. it's the schema itself and has no properties key but is an object)
+        if not isinstance(properties, dict):
+            properties = schema
+
+        # If schema is nested inside 'json' key (common in some frameworks)
+        if 'json' in schema and isinstance(schema['json'], dict):
+            properties = schema['json'].get('properties', schema['json'])
+
+        required = schema.get('required', [])
+
+        formatted = []
+        for name, details in properties.items():
+            if not isinstance(details, dict):
+                continue
+            type_ = details.get('type', 'any')
+            desc = details.get('description', '')
+            is_required = "required" if name in required else "optional"
+            default = f", default={details['default']}" if 'default' in details else ""
+
+            line = f"- {name} ({type_}, {is_required}{default}): {desc}"
+            formatted.append(line)
+
+        return "\n".join(formatted)
+
     def get_input_parameter_schema(self, tool_list: str) -> str:
-        pass
-
-    async def execute_tool(self, tool_name: str, arguments: Any) -> Any:
-        pass
-
-    def __init__(self, logger=None, project_root=None):
-        """Initialize the AWS Strands tool registry.
+        """
+        Get the input parameter schema for a list of tools.
 
         Args:
-            logger: Optional logger instance
-            project_root: Optional project root directory path
+            tool_list: Comma-separated list of tool names.
+
+        Returns:
+            String containing input parameter schemas for the tools.
         """
-        super().__init__(logger, project_root)
+        self.logger.info(f"Fetching input schema of tools: {tool_list}")
+        schemas = []
+        for tool_name in tool_list.split(','):
+            tool_name = tool_name.strip()
+            if tool_name in self.available_mcp_tools:
+                mcp_client = self.available_mcp_tools[tool_name]
+                schema = self.available_mcp_tools[mcp_client][tool_name]['input_schema']
+                formatted_schema = self._format_schema(schema)
+                schemas.append(f"{tool_name}:\n{formatted_schema}")
+            elif tool_name in self.tools:
+                schema = self.tools[tool_name].tool_spec.get('inputSchema', {})
+                formatted_schema = self._format_schema(schema)
+                schemas.append(f"{tool_name}:\n{formatted_schema}")
+        return "\n\n".join(schemas)
+
+    async def execute_multiple_tools(self, arguments: str):
+        """
+        Execute multiple tools in parallel.
+        Args:
+            arguments: YAML string containing arguments for each tool, keyed by tool name.
+        """
+        self.logger.info(f"Executing multiple tools with arguments: {arguments}")
+        import yaml
+        import asyncio
+        arguments = yaml.safe_load(arguments)
+
+        tool_names = []
+        tasks = []
+
+        for tool_name in arguments.keys():
+            tool_name_stripped = tool_name.strip()
+            tool_names.append(tool_name_stripped)
+            tasks.append(self.execute_tool(tool_name_stripped, arguments[tool_name]))
+
+        results = await asyncio.gather(*tasks)
+
+        return dict(zip(tool_names, results))
+
+    async def execute_tool(self, tool_name: str, arguments: Any) -> Any:
+        """
+        Execute a tool with the given arguments.
+        Args:
+            tool_name: Name of the tool to execute.
+            arguments: Arguments for the tool (dict or json string).
+        Returns:
+            Result of the tool execution.
+        """
+        self.logger.info(f"Executing tool:{tool_name} with arguments: {arguments}")
+        import json
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                pass  # Maybe it's not JSON, but let the tool handle it or fail later
+
+        if tool_name in self.available_mcp_tools:
+            mcp_client = self.available_mcp_tools[tool_name]
+            with self.available_mcp_tools[mcp_client][tool_name]['mcp_client'] as client:
+                return client.call_tool_sync(tool_use_id=None,
+                                             name=tool_name, arguments=arguments)
+        elif tool_name in self.tools:
+            return self.tools[tool_name](
+                **arguments
+            )
+        else:
+            raise ValueError(f"Tool '{tool_name}' not found")
 
     async def load_mcp_tools_from_config(self, mcp_configs: Dict[str, Any], agent_name: str = None) -> List[Any]:
         """Load MCP tools defined in configuration.
@@ -103,12 +195,27 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
                     self.tools[tool_name] = client
                     loaded_clients.append(client)
                     self.logger.info(f"✅ Loaded MCP client: {tool_name}")
+
+                    if self.enable_lazy_loading:
+                        if tool_name not in self.available_mcp_tools:
+                            self.available_mcp_tools[tool_name] = {}
+                            with client:
+                                list_of_tools = client.list_tools_sync()
+                                for tool in list_of_tools:
+                                    self.available_mcp_tools[tool.tool_name] = tool_name
+                                    self.available_mcp_tools[tool_name][tool.tool_name] = {
+                                        'type': 'mcp',
+                                        'mcp_client': client,
+                                        'input_schema': tool.tool_spec['inputSchema']
+                                    }
+
+
                 else:
                     self.logger.warning(f"⚠️  No valid MCP configuration for '{tool_name}'")
 
             except Exception as e:
                 self.logger.error(f"❌ Failed to load MCP tool '{tool_name}': {e}", exc_info=True)
-        
+
         return loaded_clients
 
     def _wrap_function_with_defaults(self, func: Callable, default_params: Dict[str, Any]) -> Callable:
@@ -197,11 +304,11 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
 
     @staticmethod
     def _preserve_function_metadata(
-        wrapper: Callable,
-        original_func: Callable,
-        sig: inspect.Signature,
-        default_params: Dict[str, Any],
-        type_hints: Dict[str, Any]
+            wrapper: Callable,
+            original_func: Callable,
+            sig: inspect.Signature,
+            default_params: Dict[str, Any],
+            type_hints: Dict[str, Any]
     ) -> None:
         """Preserve function metadata on the wrapper.
 
@@ -284,7 +391,8 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
         Returns:
             False (AWS Strands tools don't have a specific type to check)
         """
-        return False
+        from strands.tools.decorator import DecoratedFunctionTool
+        return isinstance(obj, DecoratedFunctionTool)
 
     def clear(self) -> None:
         """Clear all registered tools and MCP clients.
