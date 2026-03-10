@@ -3,6 +3,7 @@
 import inspect
 from typing import Dict, Any, Callable, List
 
+import httpx
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
@@ -136,6 +137,30 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
         else:
             raise ValueError(f"Tool '{tool_name}' not found")
 
+    @staticmethod
+    def _sanitize_headers(headers: Dict[str, Any]) -> Dict[str, str]:
+        """Sanitize HTTP headers to remove illegal characters.
+
+        Strips non-printable characters, newlines, carriage returns, and
+        null bytes that would cause httpcore.LocalProtocolError.
+
+        Args:
+            headers: Raw headers dictionary from config
+
+        Returns:
+            Sanitized headers dictionary with only valid string values
+        """
+        if not headers:
+            return {}
+        import re
+        sanitized = {}
+        for key, value in headers.items():
+            clean_key = re.sub(r'[^\x21-\x7e]', '', str(key)).strip()
+            clean_value = re.sub(r'[^\x09\x20-\x7e]', '', str(value)).strip()
+            if clean_key and clean_value:
+                sanitized[clean_key] = clean_value
+        return sanitized
+
     async def load_mcp_tools_from_config(self, mcp_configs: Dict[str, Any], agent_name: str = None) -> List[Any]:
         """Load MCP tools defined in configuration.
 
@@ -177,14 +202,20 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
 
                 elif 'url' in mcp:
                     url = mcp.get('url', '')
-                    headers = mcp.get('headers')
+                    headers = self._sanitize_headers(mcp.get('headers'))
                     if 'sse' in url:
                         # SSE MCP client
                         client = MCPClient(lambda u=url, h=headers: sse_client(url=u, headers=h))
                         self.logger.info(f"Creating SSE MCP client for '{tool_name}' at {url}")
                     elif 'mcp' in url:
                         # HTTP MCP client
-                        client = MCPClient(lambda u=url, h=headers: streamable_http_client(url=u, headers=h))
+                        custom_http_client = httpx.AsyncClient(
+                            headers=headers,
+                            timeout=httpx.Timeout(30.0, read=300.0)
+                        )
+                        client = MCPClient(lambda u=url: streamable_http_client(url=u,
+                                                                                http_client=custom_http_client,
+                                                                                terminate_on_close=True))
                         self.logger.info(f"Creating HTTP MCP client for '{tool_name}' at {url}")
 
                 if client:
