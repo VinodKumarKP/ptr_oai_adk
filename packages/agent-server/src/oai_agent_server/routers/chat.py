@@ -36,12 +36,13 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
             if temp_dir and os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
 
-        def _append_files_to_message(message: Union[str, dict], file_paths: List[str], session_id: Optional[str] = None) -> Union[str, dict]:
+        def _append_files_to_message(message: Union[str, dict], file_paths: List[str],
+                                     session_id: Optional[str] = None) -> Union[str, dict]:
             """Append file paths and session ID to the message content."""
             extra_content = ""
             if file_paths:
                 extra_content += "\nUploaded Files:\n" + "\n".join(file_paths)
-            
+
             if session_id:
                 extra_content += f"\nSession ID: {session_id}"
 
@@ -67,14 +68,36 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                                                    headers=req.headers,
                                                    original_message=original_message)
 
-        @router.post("/with-files", response_model=ChatResponse)
+        _with_files_openapi = {
+            "requestBody": {
+                "content": {
+                    "multipart/form-data": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "message": {"type": "string"},
+                                "session_id": {"type": "string"},
+                                "user_id": {"type": "string"},
+                                "files": {
+                                    "type": "array",
+                                    "items": {"type": "string", "format": "binary"},
+                                },
+                            },
+                            "required": ["message"],
+                        }
+                    }
+                }
+            }
+        }
+
+        @router.post("/with-files", response_model=ChatResponse, openapi_extra=_with_files_openapi)
         async def chat_with_files(
                 req: Request,
                 background_tasks: BackgroundTasks,
                 message: str = Form(...),
                 session_id: Optional[str] = Form(None),
                 user_id: Optional[str] = Form("user"),
-                files: List[UploadFile] = File(None)
+                files: List[UploadFile] = File(default=[])
         ):
             """Process a synchronous chat request with file uploads."""
             file_paths, temp_dir = _save_files(files)
@@ -104,7 +127,30 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                                                           headers=req.headers,
                                                           original_message=original_message)
 
-        @router.post("/stream/with-files")
+        _stream_with_files_openapi = {
+            "requestBody": {
+                "content": {
+                    "multipart/form-data": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "message": {"type": "string"},
+                                "session_id": {"type": "string"},
+                                "user_id": {"type": "string"},
+                                "verbose": {"type": "boolean"},
+                                "files": {
+                                    "type": "array",
+                                    "items": {"type": "string", "format": "binary"},
+                                },
+                            },
+                            "required": ["message"],
+                        }
+                    }
+                }
+            }
+        }
+
+        @router.post("/stream/with-files", openapi_extra=_stream_with_files_openapi)
         async def chat_stream_with_files(
                 req: Request,
                 background_tasks: BackgroundTasks,
@@ -112,7 +158,7 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                 session_id: Optional[str] = Form(None),
                 user_id: Optional[str] = Form("user"),
                 verbose: bool = Form(False),
-                files: List[UploadFile] = File(None)
+                files: List[UploadFile] = File(default=[])
         ):
             """Process a streaming chat request with file uploads."""
             file_paths, temp_dir = _save_files(files)
