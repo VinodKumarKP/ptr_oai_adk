@@ -139,25 +139,31 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
 
     @staticmethod
     def _sanitize_headers(headers: Dict[str, Any]) -> Dict[str, str]:
-        """Sanitize HTTP headers to remove illegal characters.
+        """Sanitize HTTP headers, strictly enforcing RFC 7230 token rules.
 
-        Strips non-printable characters, newlines, carriage returns, and
-        null bytes that would cause httpcore.LocalProtocolError.
+        Header names must only contain RFC 7230 token characters:
+        alphanumerics and !#$%&'*+-.^_`|~ (no parentheses, spaces, etc.)
+        This prevents environment variables or shell vars from leaking in.
 
         Args:
             headers: Raw headers dictionary from config
 
         Returns:
-            Sanitized headers dictionary with only valid string values
+            Sanitized headers with only RFC-compliant names and values
         """
         if not headers:
             return {}
         import re
+        # RFC 7230 token: alphanumeric + !#$%&'*+\-.^_`|~
+        valid_header_name = re.compile(r'^[a-zA-Z0-9!#$%&\'*+\-.^_`|~]+$')
+        # Header values: printable ASCII + tab, no newlines
+        invalid_value_chars = re.compile(r'[^\x09\x20-\x7e]')
+
         sanitized = {}
         for key, value in headers.items():
-            clean_key = re.sub(r'[^\x21-\x7e]', '', str(key)).strip()
-            clean_value = re.sub(r'[^\x09\x20-\x7e]', '', str(value)).strip()
-            if clean_key and clean_value:
+            clean_key = str(key).strip()
+            clean_value = invalid_value_chars.sub('', str(value)).strip()
+            if valid_header_name.match(clean_key) and clean_value:
                 sanitized[clean_key] = clean_value
         return sanitized
 
