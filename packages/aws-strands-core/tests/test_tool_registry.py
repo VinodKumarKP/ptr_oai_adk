@@ -43,7 +43,7 @@ def test_load_mcp_tools_sse(registry):
     async def run():
         with patch('oai_agent_core.aws_strands_core.components.registry.tool_registry.MCPClient') as MockClient:
             loaded = await registry.load_mcp_tools_from_config(config)
-            
+
             assert len(loaded) == 1
             assert len(registry.mcp_clients) == 1
             MockClient.assert_called()

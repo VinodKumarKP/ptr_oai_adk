@@ -1,6 +1,7 @@
 import sys
 import types
 import os
+from typing import Dict, Any
 from unittest.mock import MagicMock
 
 # Add src to sys.path to ensure local packages are discoverable
@@ -33,6 +34,10 @@ class MockBaseToolRegistry:
         
     async def load_mcp_tools_from_config(self, config):
         return []
+
+    @staticmethod
+    def _sanitize_headers(headers: Dict[str, Any]) -> Dict[str, str]:
+        pass
 
 class MockBaseKnowledgeBaseFactory:
     def __init__(self, knowledge_base_config=None, logger=None, **kwargs):

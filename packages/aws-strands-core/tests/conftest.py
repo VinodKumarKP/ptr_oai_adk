@@ -1,6 +1,7 @@
 import os
 import sys
 import types
+from typing import Optional, Dict, Any
 from unittest.mock import MagicMock
 
 # Add src to sys.path to ensure local packages are discoverable
@@ -208,7 +209,7 @@ if 'oai_agent_core' not in sys.modules:
     # Tool Registry
     mock_tool_registry = types.ModuleType('oai_agent_core.core.base_tool_registry')
     class MockBaseToolRegistry:
-        def __init__(self, logger=None, project_root=None):
+        def __init__(self, logger=None, project_root=None, enable_lazy_loading: Optional[bool] = False):
             self.logger = logger or MagicMock()
             self.project_root = project_root
             self.tools = {}
@@ -218,6 +219,10 @@ if 'oai_agent_core' not in sys.modules:
         def clear(self): 
             self.tools = {}
             self.mcp_clients = []
+
+        @staticmethod
+        def _sanitize_headers(headers: Dict[str, Any]) -> Dict[str, str]:
+            return headers
     mock_tool_registry.BaseToolRegistry = MockBaseToolRegistry
     sys.modules['oai_agent_core.core.base_tool_registry'] = mock_tool_registry
     core.BaseToolRegistry = MockBaseToolRegistry
