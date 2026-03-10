@@ -137,36 +137,6 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
         else:
             raise ValueError(f"Tool '{tool_name}' not found")
 
-    @staticmethod
-    def _sanitize_headers(headers: Dict[str, Any]) -> Dict[str, str]:
-        """Sanitize HTTP headers, strictly enforcing RFC 7230 token rules.
-
-        Header names must only contain RFC 7230 token characters:
-        alphanumerics and !#$%&'*+-.^_`|~ (no parentheses, spaces, etc.)
-        This prevents environment variables or shell vars from leaking in.
-
-        Args:
-            headers: Raw headers dictionary from config
-
-        Returns:
-            Sanitized headers with only RFC-compliant names and values
-        """
-        if not headers:
-            return {}
-        import re
-        # RFC 7230 token: alphanumeric + !#$%&'*+\-.^_`|~
-        valid_header_name = re.compile(r'^[a-zA-Z0-9!#$%&\'*+\-.^_`|~]+$')
-        # Header values: printable ASCII + tab, no newlines
-        invalid_value_chars = re.compile(r'[^\x09\x20-\x7e]')
-
-        sanitized = {}
-        for key, value in headers.items():
-            clean_key = str(key).strip()
-            clean_value = invalid_value_chars.sub('', str(value)).strip()
-            if valid_header_name.match(clean_key) and clean_value:
-                sanitized[clean_key] = clean_value
-        return sanitized
-
     async def load_mcp_tools_from_config(self, mcp_configs: Dict[str, Any], agent_name: str = None) -> List[Any]:
         """Load MCP tools defined in configuration.
 
@@ -208,7 +178,7 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
 
                 elif 'url' in mcp:
                     url = mcp.get('url', '')
-                    headers = self._sanitize_headers(mcp.get('headers'))
+                    headers = self._sanitize_headers(mcp.get('headers', {}))
                     if 'sse' in url:
                         # SSE MCP client
                         client = MCPClient(lambda u=url, h=headers: sse_client(url=u, headers=h))

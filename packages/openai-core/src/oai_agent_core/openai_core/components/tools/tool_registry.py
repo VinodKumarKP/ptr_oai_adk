@@ -124,14 +124,14 @@ class OpenAIToolRegistry(BaseToolRegistry):
 
                 elif 'url' in mcp:
                     url = mcp.get('url', '')
-                    headers = mcp.get('headers')
+                    headers = self._sanitize_headers(mcp.get('headers', {}))
                     if 'sse' in url:
                         # SSE MCP client
                         params = {
                             "name": tool_name,
                             "params": {
                                 "url": mcp['url'],
-                                "headers": mcp.get('headers', {})
+                                "headers": headers
                             },
                             "cache_tools_list": True
                         }
@@ -139,11 +139,12 @@ class OpenAIToolRegistry(BaseToolRegistry):
                         self.logger.info(f"Creating SSE MCP client for '{tool_name}' at {url}")
                     elif 'mcp' in url:
                         # HTTP MCP client
+                        headers = self._sanitize_headers(mcp.get('headers', {}))
                         params = {
                             "name": tool_name,
                             "params": {
                                 "url": mcp['url'],
-                                "headers": mcp.get('headers', {})
+                                "headers": headers
                             },
                             "cache_tools_list": True
                         }
