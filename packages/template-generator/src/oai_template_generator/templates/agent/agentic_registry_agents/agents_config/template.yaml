@@ -1,9 +1,9 @@
 active: true
-name: [Agent Name]
-description: [Comprehensive description of what the agent does, its capabilities, and value proposition]
-type: mcp  # Options: mcp, crewai, aws-strands, multi-agent
+name: [ Agent Name ]
+description: [ Comprehensive description of what the agent does, its capabilities, and value proposition ]
+type: mcp  # Options: langgraph, crewai, aws-strands, openai
 cloud_provider: aws
-port: [Port Number]
+port: [ Port Number ]
 
 instructions: |
   [Detailed instructions for users on how to interact with the agent]
@@ -14,38 +14,41 @@ instructions: |
 
 # Model configuration
 model:
-  model_id: [Model ID]
-  region_name: [AWS Region]
+  model_id: [ Model ID ]
+  region_name: [ AWS Region ]
 
 # For tools configuration
 tools:
-  [tool_name]:
-    module: [module_name]
-    class: [class_name]
+  [ tool_name ]:
+    module: [ module_name ]
+    class: [ class_name ]
+    base_path: "./utils"
 
 # For multi-agent type, specify sub-agents
 agent_list:
-  - [agent_name]:
-      system_prompt: [Agent specific system prompt]
+  - [ agent_name ]:
+      system_prompt: [ Agent specific system prompt ]
       tools:
-        - [tool_name]
+        - [ tool_name ]
+      mcps:
+        - [ server_name ]
       context:
-        - [other_agent_name]
+        - [ other_agent_name ]
 
 # For MCP type agents
 mcps:
-  [server_name]:
-    command: [server_command]
-    args: []
-    description: [Description of what the MCP server provides]
-    title: [Server Title]
+  [ server_name ]:
+    command: [ server_command ]
+    args: [ ]
+    description: [ Description of what the MCP server provides ]
+    title: [ Server Title ]
     env:
-      [ENV_VAR]: [value]
+      [ ENV_VAR ]: [ value ]
 
 # For AWS Strands type agents - crew configuration
 crew_config:
-  pattern: [graph/swarm/sequential]
-  entry_agent: [agent_name]
+  pattern: [ graph/swarm/sequential ]
+  entry_agent: [ agent_name ]
   verbose: true
 
 system_prompt: |
@@ -57,14 +60,14 @@ system_prompt: |
 
 source: https://github.com/[organization]/[repository].git
 tags:
-  - [tag1]
-  - [tag2]
-  - [tag3]
+  - [ tag1 ]
+  - [ tag2 ]
+  - [ tag3 ]
 
 # Optional: Environment variables for agent configuration
 env:
-  [ENV_VAR_1]: ${ENV_VAR_1}
-  [ENV_VAR_2]: ${ENV_VAR_2}
+  [ ENV_VAR_1 ]: ${ENV_VAR_1}
+    [ ENV_VAR_2 ]: ${ENV_VAR_2}
 
 prompts:
   - "[Example prompt 1]"

@@ -1,24 +1,39 @@
-# 🚀 Python Project Template Builder
+# 🚀 Python Project Template Builder (oai-gen)
 
-A powerful CLI tool to instantly scaffold **AI Agent** and **Model Context Protocol (MCP)** projects with best practices, framework-specific configurations, and organizational standards.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+
+A powerful, interactive CLI tool designed to instantly scaffold production-ready **AI Agent** and **Model Context Protocol (MCP)** projects. It enforces organizational standards, automates boilerplate code generation, and sets up framework-specific configurations for seamless development.
 
 ## ✨ Features
 
-- **Agent Scaffolding**: Support for multiple frameworks including `langgraph`, `crewai`, `strands`, and `openai`.
-- **MCP Scaffolding**: Quickly create MCP server projects with registry and server configurations.
-- **Interactive CLI**: Guided setup for project name, author, email, and specific project details.
-- **Automated Setup**:
-  - Prefixes project names (`ptr_agent_servers_` or `ptr_mcp_servers_`).
-  - Validates organizational email (`@capgemini.com`).
-  - Automatically uncomments framework-specific dependencies in `pyproject.toml` and `requirements.txt`.
-  - Generates boilerplate code for agents and servers from templates.
-  - Initializes Git and creates a virtual environment (`.venv`).
+- **🤖 Advanced Agent Scaffolding**:
+  - Support for leading frameworks: **LangGraph**, **CrewAI**, **AWS Strands**, and **OpenAI Swarm**.
+  - **Pattern Selection**: Choose from predefined patterns like *Supervisor*, *Agent-as-Tool*, *Swarm*, *Flow*, etc.
+  - **Multi-Agent Orchestration**: Easily configure supervisors and sub-agents with context-aware communication.
+  - **Tool Integration**: Automatically scaffolds tool directories and utility scripts.
+  - **Knowledge Base (RAG)**: Built-in support for configuring **Chroma**, **Postgres (pgvector)**, and **S3** based knowledge bases.
+  - **Memory**: Configure global conversation history using vector stores.
+  - **Guardrails**: Integrated placeholder support for **Guardrails AI** validators.
+
+- **🛠 MCP Server Scaffolding**:
+  - Quickly create MCP server projects with standardized directory structures.
+  - Automated `Tools` class generation with dummy implementations.
+  - Dynamic configuration for ports, tags, and environment variables.
+
+- **⚡ Developer Experience**:
+  - **Interactive CLI**: A guided wizard prompts for all necessary details (models, regions, tools, etc.).
+  - **Automated Setup**:
+    - Validates organizational email domains (`@capgemini.com`).
+    - Prefixes project names (`ptr_agent_servers_` or `ptr_mcp_servers_`).
+    - Auto-generates `pyproject.toml`, `requirements.txt`, and `docker-compose` configurations.
+    - Initializes **Git** and creates a **Virtual Environment** (`.venv`).
 
 ## 🚀 Getting Started
 
 ### Installation
 
-Install the tool in editable mode:
+Install the tool in editable mode from the source:
 
 ```bash
 pip install -e .
@@ -26,72 +41,96 @@ pip install -e .
 
 ### Usage
 
-#### List Available Templates
+#### 1. List Available Templates
+
+View the types of projects you can create:
 
 ```bash
-pytemplate list
+oai-gen list
 ```
 
-#### Create a New Project
+#### 2. Create a New Project
 
-You can start the interactive wizard by running:
+Start the interactive wizard:
 
 ```bash
-pytemplate new
+oai-gen new
 ```
 
-Or provide arguments directly:
+Or provide arguments directly to skip initial prompts:
 
 ```bash
-pytemplate new agent my_agent_project --author "Your Name" --email "your.email@capgemini.com"
+oai-gen new agent my_agent_project --author "Jane Doe" --email "jane.doe@capgemini.com"
 ```
 
-## 🤖 Agent Project Setup
+## 🏗 Project Types & Workflows
 
-When creating an **Agent** project, the tool will:
-1. Ask for a list of agents (e.g., `research_agent, writer_agent`).
-2. Ask for a framework (`langgraph`, `crewai`, `strands`, or `openai`).
-3. Scaffold each agent with its own `agent.py`, `server.py`, and `<agent_name>.yaml` config.
-4. Enable the correct framework dependencies in your project files.
+### 🤖 Agent Project
+When creating an agent, the CLI will guide you through:
+1. **Framework Selection**: Choose between LangGraph, CrewAI, etc.
+2. **Pattern Selection**: Select the architectural pattern (e.g., Supervisor, Swarm).
+3. **Agent Configuration**:
+   - Define single or multiple agents.
+   - Configure **LLM Models** (Claude, Llama, etc.) and AWS Regions.
+   - Enable **Tools**, **MCP Servers**, **Memory**, and **Knowledge Bases**.
+   - Set up **System Prompts** and **Guardrails**.
 
-**Next Steps for Agents:**
-- Implement your agent logic in `agentic_registry_agents/agents/<agent_name>/agent.py`.
-- Update the agent configuration in `agentic_registry_agents/agents_config/<agent_name>.yaml`.
-- Run your agent server: `python -m agentic_registry_agents.server`
-
-## 🛠 MCP Project Setup
-
-When creating an **MCP** project, the tool will:
-1. Ask for a list of MCP servers.
-2. Scaffold each server with its own `server.py` and `<server_name>.yaml` config.
-
-**Next Steps for MCP:**
-- Add necessary utility files in `mcp_registry_servers/utils/`.
-- Test your MCP server using the MCP Inspector or by running: `python -m mcp_registry_servers.server`
-
-## 📂 Project Structure
-
-The generated project will follow a standardized structure:
-
+**Generated Structure:**
 ```text
-my_project/
-├── pyproject.toml
-├── requirements.txt
-├── .venv/
-├── .gitignore
-├── agentic_registry_agents/ (for Agent projects)
+ptr_agent_servers_my_project/
+├── agentic_registry_agents/
 │   ├── agents/
-│   │   └── <agent_name>/
+│   │   └── my_agent/
 │   │       ├── agent.py
 │   │       └── server.py
-│   └── agents_config/
-│       └── <agent_name>.yaml
-└── mcp_registry_servers/ (for MCP projects)
-    ├── servers/
-    │   └── <server_name>/
-    │       └── server.py
-    └── servers_config/
-        └── <server_name>.yaml
+│   ├── agents_config/
+│   │   └── my_agent.yaml      # Full configuration (Model, Tools, KB, etc.)
+│   └── utils/
+│       └── my_agent_utils.py  # Scaffolded tool functions
+├── pyproject.toml             # Dependencies updated based on framework
+├── requirements.txt
+└── .venv/
+```
+
+### 🛠 MCP Project
+For MCP servers, the CLI will ask for:
+1. **Server List**: Define one or multiple servers.
+2. **Configuration**: Set ports, descriptions, and environment variables.
+3. **Tool Class Name**: Define the class name for your tool logic.
+
+**Generated Structure:**
+```text
+ptr_mcp_servers_my_project/
+├── mcp_registry_servers/
+│   ├── servers/
+│   │   └── my_server/
+│   │       └── server.py      # Entry point
+│   ├── servers_config/
+│   │   └── my_server.yaml     # Server configuration
+│   └── tools/
+│       └── my_server.py       # Tool implementation class
+├── pyproject.toml
+└── .venv/
+```
+
+## 📝 Configuration Details
+
+### Knowledge Base (RAG)
+You can configure knowledge bases at both the **Global** (shared) and **Agent** levels. Supported backends:
+- **Chroma**: Local vector store.
+- **Postgres**: Connection placeholders for pgvector.
+- **S3**: Bucket and region placeholders.
+
+### Guardrails
+If enabled, a `guardrails` section is added to your agent config with sample validators like `competitor_check`, `DetectPII`, and `profanity_free`.
+
+## 🤝 Contributing
+
+Contributions are welcome! Please ensure you run tests before submitting a PR.
+
+```bash
+# Run tests
+pytest
 ```
 
 ## 📄 License
