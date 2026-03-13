@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch
 from oai_template_generator.prompts import _slugify, prompt_project_details
 
 def test_slugify():
@@ -8,7 +9,7 @@ def test_slugify():
     assert _slugify("  My Project  ") == "my_project"
     assert _slugify("123MyProject") == "myproject"
 
-def test_prompt_project_details_mcp(mocker):
+def test_prompt_project_details_mcp():
     # Mock inputs for prompt_project_details
     # Structure of inputs based on prompts.py logic:
     # 1. Project name
@@ -25,7 +26,7 @@ def test_prompt_project_details_mcp(mocker):
     # 11. Source
     # 12. Add env vars? (n)
     
-    mocker.patch("builtins.input", side_effect=[
+    with patch("builtins.input", side_effect=[
         "mcp_test",             # 1. Project Name
         "Author Name",          # 2. Author
         "test@capgemini.com",   # 3. Email
@@ -38,27 +39,27 @@ def test_prompt_project_details_mcp(mocker):
         "weather, api",         # 10. Tags
         "http://source",        # 11. Source
         "n",                    # 12. Env vars
-    ])
+    ]):
     
-    template, slug, author, email, output_dir, description, items, framework = prompt_project_details(
-        template="mcp",
-        name=None,
-        author=None,
-        email=None,
-        output_dir=None,
-        description=None
-    )
-    
-    assert template == "mcp"
-    assert slug == "ptr_mcp_servers_mcp_test"
-    assert len(items) == 1
-    item = items[0]
-    assert item["name"] == "weather_server"
-    assert item["class_name"] == "WeatherTools"
-    assert item["port"] == "8080"
-    assert item["tags"] == ["weather", "api"]
+        template, slug, author, email, output_dir, description, items, framework = prompt_project_details(
+            template="mcp",
+            name=None,
+            author=None,
+            email=None,
+            output_dir=None,
+            description=None
+        )
+        
+        assert template == "mcp"
+        assert slug == "ptr_mcp_servers_mcp_test"
+        assert len(items) == 1
+        item = items[0]
+        assert item["name"] == "weather_server"
+        assert item["class_name"] == "WeatherTools"
+        assert item["port"] == "8080"
+        assert item["tags"] == ["weather", "api"]
 
-def test_prompt_project_details_agent(mocker):
+def test_prompt_project_details_agent():
     # Mock inputs for prompt_project_details
     # 1. Project name
     # 2. Author
@@ -87,7 +88,7 @@ def test_prompt_project_details_agent(mocker):
     # 24. Add prompts? (n)
     # 25. Env vars? (n)
 
-    mocker.patch("builtins.input", side_effect=[
+    with patch("builtins.input", side_effect=[
         "agent_test",           # 1
         "Author Name",          # 2
         "test@capgemini.com",   # 3
@@ -113,23 +114,23 @@ def test_prompt_project_details_agent(mocker):
         "research, ai",         # 23 (Tags)
         "n",                    # 24 (Prompts)
         "n"                     # 25 (Env)
-    ])
+    ]):
     
-    template, slug, author, email, output_dir, description, items, framework = prompt_project_details(
-        template="agent",
-        name=None,
-        author=None,
-        email=None,
-        output_dir=None,
-        description=None
-    )
-    
-    assert template == "agent"
-    assert slug == "ptr_agent_servers_agent_test"
-    assert framework == "langgraph"
-    assert len(items) == 1
-    item = items[0]
-    assert item["name"] == "research_agent"
-    assert item["model_id"] == "my-custom-model"
-    assert item["use_tools"] is True
-    assert item["tool_list"] == ["search_tool"]
+        template, slug, author, email, output_dir, description, items, framework = prompt_project_details(
+            template="agent",
+            name=None,
+            author=None,
+            email=None,
+            output_dir=None,
+            description=None
+        )
+        
+        assert template == "agent"
+        assert slug == "ptr_agent_servers_agent_test"
+        assert framework == "langgraph"
+        assert len(items) == 1
+        item = items[0]
+        assert item["name"] == "research_agent"
+        assert item["model_id"] == "my-custom-model"
+        assert item["use_tools"] is True
+        assert item["tool_list"] == ["search_tool"]

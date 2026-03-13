@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch
 from click.testing import CliRunner
 from oai_template_generator.cli import main
 
@@ -16,19 +17,17 @@ def test_cli_new_help():
     assert result.exit_code == 0
     assert "Create a new project from a template" in result.output
 
-def test_cli_new_interactive_abort(mocker):
+def test_cli_new_interactive_abort():
     # Mock prompt_project_details to simulate user abort or just return values
     # But easier to mock the confirm if directory exists
     runner = CliRunner()
     
     # Mocking the prompt_project_details to avoid actual input
-    mocker.patch("oai_template_generator.cli.prompt_project_details", return_value=(
+    with patch("oai_template_generator.cli.prompt_project_details", return_value=(
         "mcp", "ptr_mcp_servers_test", "Author", "test@capgemini.com", ".", "Desc", ["srv"], None
-    ))
+    )), \
+         patch("oai_template_generator.cli.ProjectBuilder.build"):
     
-    # Mock ProjectBuilder.build to do nothing
-    mocker.patch("oai_template_generator.cli.ProjectBuilder.build")
-    
-    result = runner.invoke(main, ["new", "mcp", "test"])
-    assert result.exit_code == 0
-    assert "ptr_mcp_servers_test" in str(result.output) or result.exit_code == 0
+        result = runner.invoke(main, ["new", "mcp", "test"])
+        assert result.exit_code == 0
+        assert "ptr_mcp_servers_test" in str(result.output) or result.exit_code == 0
