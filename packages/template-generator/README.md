@@ -173,19 +173,3 @@ When adding MCPs to an agent, you can specify the type:
 
 ### Guardrails
 If enabled, a `guardrails` section is added to your agent config with sample validators like `competitor_check`, `DetectPII`, and `profanity_free`.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please ensure you run tests before submitting a PR.
-
-```bash
-# Install test dependencies
-pip install -e ".[test]"
-
-# Run tests
-pytest
-```
-
-## 📄 License
-
-This project is licensed under the MIT License.
