@@ -24,10 +24,40 @@ A powerful, YAML-based configuration system for building multi-agent AI workflow
 - [Observability](#observability)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
+- [API Reference](#api-reference)
 
 ## Overview
 
 The CrewAI Multi-Agent Framework enables you to create sophisticated agent orchestrations through simple YAML configuration files. Built on CrewAI and LangChain, it provides a declarative way to define multi-agent systems with support for various orchestration patterns.
+
+### High-Level Architecture
+
+The framework operates on a simple principle: your YAML configuration is the single source of truth that defines the entire system. The `CrewAIAgent` class reads this configuration and dynamically constructs the agent or team of agents at runtime.
+
+```text
+┌───────────────────┐
+│   YAML Config     │
+│ (Your Definition) │
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│    CrewAIAgent    │
+│ (Framework Core)  │
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│  Orchestrator &   │
+│      Agents       │
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│    Tools, KB,     │
+│      Memory       │
+└───────────────────┘
+```
 
 ### What Can You Build?
 
@@ -310,7 +340,32 @@ Real-time streaming of agent outputs and task handoffs.
 
 ## Configuration
 
-The entire behavior of your agent is defined in a single, powerful YAML file located in `src/ptr_agent_servers_{agent_name}/agents_config/`. This declarative approach allows you to build and modify complex agent systems without writing extensive boilerplate code.
+The entire behavior of your agent is defined in a single, powerful YAML file. This declarative approach allows you to build and modify complex agent systems without writing extensive boilerplate code.
+
+### Minimal Example
+
+For a simple, single-agent system, your configuration can be very concise.
+
+```yaml
+# 1. Define the model
+model:
+  model_id: "gpt-4o"
+  cloud_provider: "openai"
+
+# 2. Define the agent
+agent_list:
+  - researcher:
+      role: "Researcher"
+      goal: "Research topics"
+      backstory: "An expert researcher."
+
+# 3. Define the task
+task_list:
+  - research_task:
+      description: "Research the topic: {topic}"
+      expected_output: "A summary of the topic."
+      agent: "researcher"
+```
 
 ### Complete YAML Template
 
@@ -947,6 +1002,8 @@ tools:
 
 ### CrewAIAgent Class
 
+The main class for creating and managing CrewAI agents.
+
 ```python
 class CrewAIAgent:
     def __init__(
@@ -955,12 +1012,50 @@ class CrewAIAgent:
         session_id: str = "default",
         user_id: str = "default",
         config_root: Optional[str] = None
-    )
+    ):
+        """
+        Initializes the agent.
+        - agent_name: A unique name for this agent instance.
+        - agent_config: The dictionary loaded from your YAML configuration file.
+        - session_id: An identifier for the current conversation session.
+        - user_id: An identifier for the user interacting with the agent.
+        - config_root: The root directory for configuration files.
+        """
     
-    async def initialize() -> None
-    async def ainvoke(message: Dict[str, Any]) -> Dict
-    def invoke(message: Dict[str, Any]) -> Dict
-    async def astream(message: Dict[str, Any]) -> AsyncGenerator
-    def validate_tasks() -> Dict[str, Any]
-    def get_agent_info() -> Dict[str, Any]
+    async def initialize() -> None:
+        """
+        Sets up the agent, tools, and orchestration pattern based on the YAML config.
+        Must be called before invoking the agent.
+        """
+
+    async def ainvoke(message: Dict[str, Any]) -> Dict:
+        """
+        Asynchronously invokes the agent with a dictionary of inputs.
+        - message: A dictionary where keys match the {variables} in your task descriptions.
+        Returns: A dictionary containing the agent's final response.
+        """
+
+    def invoke(message: Dict[str, Any]) -> Dict:
+        """
+        Synchronously invokes the agent.
+        (See ainvoke for parameter details.)
+        """
+
+    async def astream(message: Dict[str, Any]) -> AsyncGenerator:
+        """
+        Streams the agent's output as it's generated.
+        Yields: Chunks of the response.
+        """
+
+    def validate_tasks() -> Dict[str, Any]:
+        """
+        Analyzes the configuration to identify agents, tools, and input variables.
+        Returns: A dictionary with details about the configured tasks.
+        """
+
+    def get_agent_info() -> Dict[str, Any]:
+        """
+        Retrieves summary information about the agent's current state and configuration.
+        Returns: A dictionary containing agent metadata.
+        """
 ```

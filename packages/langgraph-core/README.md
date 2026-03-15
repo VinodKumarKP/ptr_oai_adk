@@ -25,10 +25,40 @@ A powerful, YAML-based configuration system for building multi-agent AI workflow
 - [Observability](#observability)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
+- [API Reference](#api-reference)
 
 ## Overview
 
 The LangGraph Multi-Agent Framework enables you to create sophisticated agent orchestrations through simple YAML configuration files. Built on LangGraph and LangChain, it provides a declarative way to define multi-agent systems with support for various orchestration patterns.
+
+### High-Level Architecture
+
+The framework operates on a simple principle: your YAML configuration is the single source of truth that defines the entire system. The `LangGraphAgent` class reads this configuration and dynamically constructs the agent or team of agents at runtime.
+
+```text
+┌───────────────────┐
+│   YAML Config     │
+│ (Your Definition) │
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│   LangGraphAgent  │
+│ (Framework Core)  │
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│  Orchestrator &   │
+│      Agents       │
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│    Tools, KB,     │
+│      Memory       │
+└───────────────────┘
+```
 
 ### What Can You Build?
 
@@ -301,7 +331,29 @@ Real-time streaming of agent outputs and task handoffs.
 
 ## Configuration
 
-The entire behavior of your agent is defined in a single, powerful YAML file located in `src/ptr_agent_servers_{agent_name}/agents_config/`. This declarative approach allows you to build and modify complex agent systems without writing extensive boilerplate code.
+The entire behavior of your agent is defined in a single, powerful YAML file. This declarative approach allows you to build and modify complex agent systems without writing extensive boilerplate code.
+
+### Minimal Example
+
+For a simple, single-agent system, your configuration can be very concise.
+
+```yaml
+# 1. Define the model
+model:
+  model_id: "gpt-4o"
+  cloud_provider: "openai"
+
+# 2. Define the agent
+agent_list:
+  - researcher:
+      system_prompt: "You are a helpful research assistant."
+
+# 3. (Optional) Define a tool
+tools:
+  search:
+    module: "langchain_community.tools"
+    class: "DuckDuckGoSearchRun"
+```
 
 ### Complete YAML Template
 
