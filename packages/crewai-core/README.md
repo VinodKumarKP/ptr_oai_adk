@@ -1,15 +1,17 @@
 # CrewAI Multi-Agent Framework
 
-A powerful, YAML-based configuration system for building multi-agent AI workflows with CrewAI. Build complex agent orchestrations without writing code—just configure and run.
+A powerful, YAML-based configuration system for building multi-agent AI workflows with CrewAI and LangChain. Build complex agent orchestrations without writing code—just configure and run.
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
+- [Project Structure](#project-structure)
 - [Key Features](#key-features)
-- [Configuration Structure](#configuration-structure)
+- [Configuration](#configuration)
 - [Orchestration Patterns](#orchestration-patterns)
-- [Agents Configuration](#agents-configuration)
+- [Agents and Tasks](#agents-and-tasks)
 - [Tools System](#tools-system)
 - [Knowledge Base Integration](#knowledge-base-integration)
 - [Data Sources](#data-sources)
@@ -25,7 +27,7 @@ A powerful, YAML-based configuration system for building multi-agent AI workflow
 
 ## Overview
 
-The CrewAI Multi-Agent Framework enables you to create sophisticated agent orchestrations through simple YAML configuration files. Built on CrewAI, it provides a declarative way to define multi-agent systems with support for various orchestration patterns.
+The CrewAI Multi-Agent Framework enables you to create sophisticated agent orchestrations through simple YAML configuration files. Built on CrewAI and LangChain, it provides a declarative way to define multi-agent systems with support for various orchestration patterns.
 
 ### What Can You Build?
 
@@ -35,9 +37,119 @@ The CrewAI Multi-Agent Framework enables you to create sophisticated agent orche
 - Autonomous agent systems with dynamic collaboration
 - Enterprise-grade AI applications
 
+## Prerequisites
+
+Before running the agent, ensure you have the necessary API keys set as environment variables based on your chosen `cloud_provider`:
+
+```bash
+# For OpenAI models
+export OPENAI_API_KEY="sk-..."
+
+# For Anthropic models
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# For AWS Bedrock
+export AWS_ACCESS_KEY_ID="..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_DEFAULT_REGION="us-west-2"
+```
+
+You must also install the specific LangChain provider package for the model you intend to use:
+
+```bash
+pip install langchain-openai      # If using cloud_provider: openai
+pip install langchain-anthropic   # If using cloud_provider: anthropic
+pip install langchain-aws         # If using cloud_provider: aws
+```
+
 ## Quick Start
 
-### 1. Installation
+There are two ways to get started: using the interactive project generator for a guided setup, or manually configuring your project.
+
+### Option 1: Use the Project Generator (Recommended)
+
+The `oai-gen` CLI tool scaffolds a complete, production-ready project with all the necessary configurations, including multi-agent setups, knowledge bases, and more.
+
+**1. Install the Generator**
+
+First, install the template generator tool:
+```bash
+mkdir agent_development
+cd agent_development
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install uv
+
+uv pip install 'oai-template-generator @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit@main#subdirectory=packages/template-generator'
+```
+
+**2. Create a New Agent Project**
+
+Run the interactive wizard to create a new agent. It will guide you through selecting the framework, orchestration pattern, models, tools, and other settings.
+```bash
+oai-gen new agent
+```
+Or provide arguments directly to skip initial prompts:
+
+```bash
+oai-gen new agent my_agent_project --author "Jane Doe" --email "jane.doe@capgemini.com"
+```
+
+
+The wizard will ask you to choose a framework. Select **CrewAI**. It will then generate a complete project structure, including a pre-filled YAML configuration file, ready for you to customize and run.
+
+### Knowledge Base (RAG)
+You can configure knowledge bases at both the **Global** (shared) and **Agent** levels. Supported backends:
+- **Chroma**: Local vector store.
+- **Postgres**: Connection placeholders for pgvector.
+- **S3**: Bucket and region placeholders.
+
+### MCP Servers
+When adding MCPs to an agent, you can specify the type:
+- **`stdio`**: For local command-line servers. The config will include `command`, `args`, and `env`.
+- **`remote`**: For servers accessible via HTTP. The config will include `url` and `headers`.
+
+### Guardrails
+If enabled, a `guardrails` section is added to your agent config with sample validators like `competitor_check`, `DetectPII`, and `profanity_free`.
+
+### Getting Started & Next Steps
+
+The template generator automatically initializes a Git repository and creates a Python virtual environment (`.venv`) for you.
+
+To get started with your new project, follow these steps:
+
+1.  **Navigate into your project directory:**
+    ```bash
+    cd <your_project_name>
+    ```
+
+2.  **Activate the virtual environment:**
+    ```bash
+    source .venv/bin/activate
+    ```
+    *(On Windows, use `.venv\Scripts\activate`)*
+
+3.  **Install `uv`, a high-performance package manager:**
+    ```bash
+    pip install uv
+    ```
+
+4.  **Install project dependencies using `uv`:**
+    ```bash
+    uv pip install -r requirements.txt
+    ```
+
+5.  **(Optional) Add More Dependencies:**
+    If your project requires additional packages, add them to `pyproject.toml` and/or `requirements.txt`, then re-run the install command.
+
+6.  **Review Your Configuration:**
+    Open the generated `.../agents_config/<agent_name>.yaml` or `.../servers_config/<server_name>.yaml` file and review the settings, updating them as necessary for your specific use case.
+
+### Option 2: Manual Setup
+
+If you prefer to build your project from scratch, follow these steps.
+
+**1. Installation**
 
 ```bash
 pip install oai-crewai-agent-core
@@ -62,7 +174,7 @@ pip install "oai-crewai-agent-core[s3]"
 pip install "oai-crewai-agent-core[all]"
 ```
 
-### 2. Create Your Configuration File
+**2. Create Your Configuration File**
 
 Create a YAML file (e.g., `research_agent.yaml`):
 
@@ -78,35 +190,33 @@ tools:
 
 agent_list:
   - researcher:
-      role: Researcher
-      goal: Research topics and gather information.
-      backstory: You are an expert researcher.
+      role: "Researcher"
+      goal: "Research topics and gather information"
+      backstory: "You are an expert researcher."
       tools:
         - calculator
   - analyst:
-      role: Analyst
-      goal: Analyze information and identify key insights.
-      backstory: You are a data analyst.
-      tools:
-        - calculator
+      role: "Analyst"
+      goal: "Analyze information and identify key insights"
+      backstory: "You are a data analyst."
 
 task_list:
   - research_task:
-      description: Research the latest trends in {topic}.
-      expected_output: A summary of trends.
-      agent: researcher
+      description: "Research the latest trends in {topic}."
+      expected_output: "A summary of the top 5 trends."
+      agent: "researcher"
   - analysis_task:
-      description: Analyze the research findings.
-      expected_output: An analysis report.
-      agent: analyst
+      description: "Analyze the research findings and provide a report."
+      expected_output: "A detailed analysis report with charts."
+      agent: "analyst"
       context:
-        - research_task
+        - "research_task"
 
 crew_config:
-  process: sequential
+  process: "sequential"
 ```
 
-### 3. Initialize and Run
+**3. Initialize and Run**
 
 ```python
 import yaml
@@ -125,17 +235,54 @@ agent = CrewAIAgent(
 await agent.initialize()
 
 # Execute
-result = await agent.ainvoke("Research the latest trends in quantum computing")
+result = await agent.ainvoke({"topic": "Quantum Computing"})
 print(result)
 ```
 
+## Project Structure
+
+When you use the `oai-gen` tool to create a new CrewAI agent project, it generates a standardized, production-ready directory structure. This ensures consistency and makes it easy to locate and manage different parts of your agent.
+
+Here is the typical structure of a generated project:
+
+```text
+ptr_agent_servers_my_project/
+├── agentic_registry_agents/
+│   ├── agents/
+│   │   └── my_agent/
+│   │       ├── agent.py
+│   │       └── server.py
+│   ├── agents_config/
+│   │   └── my_agent.yaml      # Full configuration (Model, Tools, KB, etc.)
+│   └── utils/
+│       └── my_agent_utils.py  # Scaffolded tool functions
+├── .gitignore
+├── docker-compose.yaml          # Docker Compose file for containerization
+├── Makefile
+├── Dockerfile
+├── pyproject.toml               # Project metadata and dependencies
+├── README.md
+└── tests/                       # Unit and integration tests
+```
+
+### Key Directories and Files
+
+-   **`ptr_agent_servers_{agent_name}/`**: The main source code directory for your agent package.
+-   **`agents/my_agent/agent.py`**: This is where the core `CrewAIAgent` class is instantiated. You typically don't need to modify this file unless you are customizing the agent's fundamental behavior.
+-   **`agents/my_agent/server.py`**: A pre-configured FastAPI server that exposes your agent's endpoints, enabling it to be used as a microservice.
+-   **`agents_config/my_agent.yaml`**: The heart of your project. This YAML file is where you define everything about your agent—its model, tools, knowledge base, memory, and orchestration patterns.
+-   **`global_config/`**: Contains default model parameters for different cloud providers. The settings here are automatically merged with your agent's configuration.
+-   **`utils/my_agent_utils.py`**: If you define custom tools, this is where you'll write the Python functions that implement their logic.
+-   **`pyproject.toml`**: Managed by Poetry, this file lists all project dependencies. The generator automatically adds the required packages based on your framework and feature selections.
+-   **`docker-compose.yaml`**: Allows you to run your agent and any dependent services (like a Postgres database for memory) in containers.
+
 ## Key Features
 
-### 🤖 CrewAI Integration
-Built on the robust CrewAI ecosystem, leveraging its powerful agent orchestration capabilities.
+### 🤖 CrewAI Native Integration
+Built on the robust CrewAI framework, leveraging its powerful agent and task orchestration capabilities.
 
 ### 🔄 Flexible Orchestration
-Support for both sequential and hierarchical process patterns.
+Support for both sequential and hierarchical process patterns to fit your workflow needs.
 
 ### 🛠️ Extensible Tools System
 Integrate LangChain community tools, custom tools, and MCP servers seamlessly.
@@ -161,131 +308,97 @@ Optional Langfuse integration for tracing, monitoring, and debugging.
 ### ⚡ Streaming Support
 Real-time streaming of agent outputs and task handoffs.
 
-## Configuration Structure
+## Configuration
+
+The entire behavior of your agent is defined in a single, powerful YAML file located in `src/ptr_agent_servers_{agent_name}/agents_config/`. This declarative approach allows you to build and modify complex agent systems without writing extensive boilerplate code.
 
 ### Complete YAML Template
 
+This template shows all the possible configuration options available. You can mix and match sections based on your needs.
+
 ```yaml
-# Model Configuration
+# 1. Model Configuration: Defines the LLM to be used.
 model:
-  model_id: gpt-4o
-  cloud_provider: openai # openai, anthropic, aws, etc.
-  params:  # Optional
+  model_id: "gpt-4o"
+  cloud_provider: "openai" # Options: openai, anthropic, aws, etc.
+  params:  # Optional: Override default model parameters
     temperature: 0.7
     max_tokens: 4096
 
-# Tools Definition
-tools:
-  tool_name:
-    module: "module_name"
-    class: "ToolClassName"  # Optional
-    function_list:  # Optional: load specific functions
-      - function_name
-    base_path: "./path"  # Optional
+# 2. Crew Configuration: Defines the multi-agent process.
+crew_config:
+  process: "sequential" # or "hierarchical"
+  manager_llm: "gpt-4o" # Optional: Specify a different model for the manager in hierarchical mode.
 
-# Knowledge Base Definition (Optional)
+# 3. Tools Definition: A global registry of tools available to agents.
+tools:
+  my_tool:
+    module: "my_tool_module"
+    class: "MyToolClass"
+
+# 4. Knowledge Base: Provides documents for Retrieval-Augmented Generation (RAG).
 knowledge_base:
-  - name: company_policies
-    description:  "Search company policies, HR guidelines, and internal procedures"
+  - name: "company_docs"
+    description: "Search company policies and internal procedures."
     vector_store:
-      type: chroma
+      type: "chroma"
       settings:
-        collection_name: "company policies"
+        collection_name: "company_docs_collection"
         persist_directory: "./rag_db"
-    embedding:
-      model_id: "bedrock/amazon.titan-embed-text-v1"
-      region_name: "us-west-2"
     data_sources:
       - type: "file"
-        path: "docs/sample_policy.pdf"
-      - type: "s3"
-        bucket: "my-docs-bucket"
-        prefix: "policies/"
-    text_splitter:
-      type: "recursive_character"
-      chunk_size: 1000
-      chunk_overlap: 200
-    retrieval_settings:
-        top_k: 5
-        score_threshold: 0.7
+        path: "docs/policy.pdf"
 
-# Memory Configuration (Optional)
+# 5. Memory: Enables the agent to remember past conversations.
 memory:
   vector_store:
-    type: chroma # Options: chroma, postgres, s3
+    type: "chroma"
     settings:
       collection_name: "chat_memory"
       persist_directory: "./memory_db"
-  embedding:
-    model_id: "bedrock/amazon.titan-embed-text-v1"
-    region_name: "us-west-2"
   settings:
     max_recent_turns: 5
     max_relevant_turns: 3
-    similarity_threshold: 0.6
 
-# MCP Servers (Optional)
+# 6. MCP Servers: Connects to external tools via the Model Context Protocol.
 mcps:
-  server_name:
-    command: "server_command"
-    args: ["arg1", "arg2"]
-    env:
-      KEY: "value"
+  filesystem_server:
+    command: "mcp-server-filesystem"
+    args: ["/data"]
 
-# Guardrails Configuration (Optional)
+# 7. Guardrails: Adds input and output validation.
 guardrails:
-  enable_agent_validation: false
-  custom_validators_dir: "custom_guardrails"
   validators:
-    - name: competitor_check
-      full_name: guardrails/competitor_check
-      parameters:
-        competitors: [ "Apple", "Samsung" ]
+    - name: "profanity_check"
+      full_name: "guardrails/profanity_free"
       on_fail: "fix"
-    - name: json_validator
-      full_name: ValidJson
-      module: valid_json
-      on_fail: "noop"
-  input:
-    validators:
-      - ref: competitor_check
   output:
     validators:
-      - ref: json_validator
+      - ref: "profanity_check"
 
-# Agent Definitions
+# 8. Agent Definitions: The list of agents in the system.
 agent_list:
-  - agent_key:
-      role: "Agent Role"
-      goal: "Agent Goal"
-      backstory: "Agent Backstory"
-      tools:  # Optional: tools available to this agent
-        - tool_name
-      knowledge_base: # Optional: assign specific KB to agent
-        - name: "company_policies"
-          description: "Search company policies"
-          vector_store: ...
+  - researcher:
+      role: "Researcher"
+      goal: "To find the most relevant and up-to-date information."
+      backstory: "An expert in web scraping and data collection."
+      tools: ["my_tool"] # Assign tools from the global registry.
+      knowledge_base: ["company_docs"] # Assign a knowledge base.
 
-# Task Definitions
+# 9. Task Definitions: The list of tasks to be executed by the agents.
 task_list:
-  - task_key:
-      description: "Task description"
-      expected_output: "Expected output"
-      agent: "agent_key"
-      context:  # Optional: tasks this task depends on
-        - other_task_key
-
-# Crew Configuration
-crew_config:
-  process: "sequential" # or "hierarchical"
-  verbose: true
+  - research_task:
+      description: "Research the impact of AI on the job market."
+      expected_output: "A detailed report summarizing the key findings."
+      agent: "researcher"
+      context: [] # Optional: List of other task keys this task depends on.
 ```
 
 ## Orchestration Patterns
 
 ### 1. Sequential Process
 
-**When to use:** Tasks need to be executed in a specific order.
+**When to use:** For workflows where tasks must be executed in a specific, linear order. Each task is completed before the next one begins.
 
 ```yaml
 crew_config:
@@ -294,25 +407,48 @@ crew_config:
 
 ### 2. Hierarchical Process
 
-**When to use:** A manager agent delegates tasks to other agents.
+**When to use:** For complex workflows that require a manager to coordinate the work of other agents. The manager agent breaks down the problem, delegates tasks, and synthesizes the final output.
 
 ```yaml
 crew_config:
   process: hierarchical
-  manager_llm: gpt-4o
+  manager_llm: gpt-4o # Optional: Use a more powerful model for the manager.
 ```
 
-## Agents Configuration
+## Agents and Tasks
+
+In CrewAI, the system is defined by **Agents** (the workers) and **Tasks** (the work to be done).
 
 ### Agent Properties
+
+Each agent is defined by its role, goal, and backstory, which helps the LLM understand its purpose.
 
 ```yaml
 agent_list:
   - researcher:
-      role: Researcher
-      goal: Conduct thorough research
-      backstory: You are an experienced researcher.
-      tools: [web_search]
+      role: "Expert Research Analyst"
+      goal: "Uncover cutting-edge developments in AI and data science."
+      backstory: "You are a renowned researcher with a knack for finding hidden gems of information."
+      tools: [web_search] # Assign specific tools to this agent.
+```
+
+### Task Properties
+
+Each task defines a unit of work, what is expected as an output, and which agent should perform it.
+
+```yaml
+task_list:
+  - research_task:
+      description: "Investigate the latest advancements in AI for financial forecasting."
+      expected_output: "A comprehensive report with at least 5 key findings and their potential impact."
+      agent: "researcher"
+      context: [] # This task has no dependencies.
+
+  - writing_task:
+      description: "Write a blog post based on the research findings."
+      expected_output: "An engaging 500-word blog post."
+      agent: "writer"
+      context: [research_task] # This task depends on the output of the research_task.
 ```
 
 ## Tools System
@@ -355,157 +491,121 @@ tools:
 
 ## Knowledge Base Integration
 
-You can equip your agents with a custom knowledge base (RAG) to answer questions based on specific documents.
+Give your agents access to custom information by setting up a knowledge base. This allows them to answer questions about specific documents or data you provide.
 
-### Common Configuration
+### How It Works
 
-All knowledge base configurations share these common settings, which are optional and configurable:
+1.  **You provide documents**: Point the system to local files or S3 buckets.
+2.  **Indexing**: The system reads, splits, and stores the content in a vector database, making it searchable.
+3.  **Retrieval**: When a user asks a question, the system finds the most relevant information from the knowledge base.
+4.  **Answering**: This information is given to the agent, who uses it to form a complete and accurate answer.
+
+### Configuration Explained
+
+Here’s a breakdown of the settings you can use to configure a knowledge base.
 
 ```yaml
 knowledge_base:
-  - name: my_kb
-    description: "Description of the knowledge base"
-    # ... vector_store config ...
+  - name: "company_policies_kb"
+    description: "Use this to answer questions about our company's HR policies and internal procedures."
     
-    # Optional: Configure embedding model
+    # --- Where to store the indexed data ---
+    vector_store:
+      type: "chroma"  # The database type. "chroma" is great for local use.
+      settings:
+        collection_name: "company_policies"
+        persist_directory: "./rag_db"  # Folder to save the database on your computer.
+
+    # --- How to understand your documents ---
     embedding:
-      model_id: "text-embedding-3-small"
-      region_name: "us-west-2" # Optional
-      
-    # Optional: List of documents to index
+      model_id: "bedrock/amazon.titan-embed-text-v1" # The AI model that converts text into searchable vectors.
+      region_name: "us-west-2" # Required for some cloud providers like AWS.
+
+    # --- Where to find your documents ---
     data_sources:
       - type: "file"
-        path: "docs/document.pdf"
-      
-    # Optional: Configure text splitting strategy
+        path: "docs/hr_policy.pdf" # A local file.
+      - type: "s3"
+        bucket: "my-company-docs" # An AWS S3 bucket.
+        prefix: "policies/" # A specific folder within the bucket.
+
+    # --- How to break down your documents ---
     text_splitter:
-      type: "recursive_character"
-      chunk_size: 1000
-      chunk_overlap: 200
-      
-    # Optional: Configure retrieval parameters
+      type: "recursive_character" # A smart way to split text while keeping sentences together.
+      chunk_size: 1000 # The maximum size of each text chunk (in characters).
+      chunk_overlap: 200 # How many characters to overlap between chunks to maintain context.
+
+    # --- How to search for information ---
     retrieval_settings:
-      top_k: 5
-      score_threshold: 0.7
+      top_k: 5 # The number of relevant chunks to retrieve for a given question.
+      score_threshold: 0.7 # Only return chunks with a similarity score above this value (0.0 to 1.0).
 ```
 
-### Vector Store Configuration
+### Vector Store Options
 
-The framework supports multiple vector store backends. Choose the one that fits your needs.
+You can choose from several types of vector stores to save your indexed data.
 
 #### 1. ChromaDB (Default)
-Good for local development and simple deployments.
-
+**Best for:** Local development and quick setups.
 ```yaml
-knowledge_base:
-  - name: local_kb
-    description: "Local document search"
-    vector_store:
-      type: chroma
-      settings:
-        collection_name: "my_collection"
-        persist_directory: "./data/chroma"
-    # ... common settings ...
+vector_store:
+  type: chroma
+  settings:
+    collection_name: "my_local_kb"
+    persist_directory: "./data/chroma_db"
 ```
 
-#### 2. Postgres (pgvector)
-Ideal for production environments using PostgreSQL.
-
+#### 2. Postgres (using `pgvector`)
+**Best for:** Production systems that already use PostgreSQL.
 ```yaml
-knowledge_base:
-  - name: postgres_kb
-    description: "Enterprise document search"
-    vector_store:
-      type: postgres
-      settings:
-        collection_name: "enterprise_docs"
-        # Option 1: Connection String (Not recommended for passwords)
-        # connection_string: "postgresql://user:pass@localhost:5432/mydb"
-        
-        # Option 2: Individual Parameters (Recommended)
-        db_host: "localhost"
-        db_port: "5432"
-        db_user: "user"
-        db_name: "mydb"
-        # Note: db_password should NOT be in YAML.
-        # Use environment variables with DB_NAME suffix:
-        # DB_HOST_MYDB, DB_PORT_MYDB, DB_USER_MYDB, DB_PASSWORD_MYDB
-    # ... common settings ...
+vector_store:
+  type: postgres
+  settings:
+    collection_name: "my_production_kb"
+    db_host: "localhost"
+    db_port: "5432"
+    db_user: "myuser"
+    db_name: "mydatabase"
+    # IMPORTANT: Do not write your password here.
+    # Set it as an environment variable: DB_PASSWORD_MYDATABASE
 ```
 
-#### 3. S3 (Simple Vector Store)
-Lightweight, serverless option storing index in S3. Good for read-heavy, low-write scenarios.
-
+#### 3. S3 (Simple, Serverless)
+**Best for:** Read-heavy use cases where you want a lightweight, cloud-based solution without managing a database.
 ```yaml
-knowledge_base:
-  - name: s3_kb
-    description: "Cloud document search"
-    vector_store:
-      type: s3
-      settings:
-        collection_name: "cloud_docs"
-        bucket_name: "my-vector-store-bucket"
-        prefix: "indexes" # Optional
-    # ... common settings ...
+vector_store:
+  type: s3
+  settings:
+    collection_name: "my_s3_kb"
+    bucket_name: "my-vector-data-bucket"
+    prefix: "indexes/" # Optional folder inside the bucket.
 ```
 
-### Global Knowledge Base
+### Two Ways to Use a Knowledge Base
 
-A global knowledge base is automatically queried and the relevant context is appended to the user's message before it reaches the agent.
+#### 1. Global Knowledge Base
+A global knowledge base is automatically searched for every user query. The relevant context is added to the prompt before the agent sees it. This is useful for providing general context that should always be available.
 
 ```yaml
+# This knowledge base will be used for all agents
 knowledge_base:
-  - name: company_policies
-    description:  "Search company policies, HR guidelines, and internal procedures"
-    vector_store:
-      type: chroma
-      settings:
-        collection_name: "policies"
-        persist_directory: "./rag_db"
-    embedding:
-      model_id: "text-embedding-3-small"
-    data_sources:
-      - type: "file"
-        path: "docs/hr_policy.pdf"
-    text_splitter:
-      type: "recursive_character"
-      chunk_size: 1000
-      chunk_overlap: 200
-    retrieval_settings:
-        top_k: 5
-        score_threshold: 0.7
+  - name: "company_wide_info"
+    # ... other settings ...
 ```
 
-### Agent-Specific Knowledge Base
-
-You can also assign a knowledge base as a tool to a specific agent. This allows the agent to decide when to query the knowledge base.
+#### 2. Agent-Specific Knowledge Base (as a Tool)
+You can also give a knowledge base to a specific agent as a tool. This lets the agent decide *when* to search for information, which is more efficient for specialized tasks.
 
 ```yaml
 agent_list:
   - policy_expert:
-      role: Policy Expert
-      goal: Answer policy questions
-      backstory: You are an HR expert.
+      role: "Policy Expert"
+      goal: "Answer questions about company policies."
+      backstory: "An expert on the company handbook."
       knowledge_base:
-        - name: "company_policies"
-          description: "Search company policies"
-          vector_store:
-            type: chroma
-            settings:
-              collection_name: "policies"
-              persist_directory: "./rag_db"
-          embedding:
-            model_id: "text-embedding-3-small"
-          data_sources:
-            - type: "file"
-              path: "docs/policy.pdf"
-          text_splitter:
-            type: "recursive_character"
-            chunk_size: 1000
-            chunk_overlap: 200
-          retrieval_settings:
-              top_k: 5
-              score_threshold: 0.7
+        - name: "company_policies_kb"
+          description: "Search for company policies and procedures."
+          # ... other settings ...
 ```
 
 ## Data Sources
@@ -538,55 +638,88 @@ knowledge_base:
 
 ## Memory Management
 
-The framework supports persistent memory to maintain context across sessions. This allows agents to recall previous interactions and provide more personalized responses.
-
-### Memory Configuration
-
-Add a `memory` section to your YAML configuration. The vector store is configurable (Chroma, Postgres, S3). Please refer to the respective vector store configuration sections above for details on settings.
-
-```yaml
-memory:
-  vector_store:
-    type: chroma # Options: chroma, postgres, s3
-    settings:
-      collection_name: "chat_memory"
-      persist_directory: "./memory_db"
-  embedding:
-    model_id: "bedrock/amazon.titan-embed-text-v1"
-    region_name: "us-west-2"
-  settings:
-    max_recent_turns: 5       # Number of recent turns to include
-    max_relevant_turns: 3     # Number of semantically relevant past turns to include
-    similarity_threshold: 0.6 # Threshold for semantic relevance (0.0 to 1.0)
-```
+Enable your agents to remember past conversations and learn from interactions over time. The framework's memory management system provides both short-term and long-term memory, ensuring conversations are coherent and context-aware.
 
 ### How It Works
 
-1. **Storage**: Every interaction (user query + agent response) is stored in a vector database.
-2. **Retrieval**: Before processing a new query, the system retrieves:
-   - The most recent conversation turns (short-term memory)
-   - Semantically relevant past interactions (long-term memory)
-3. **Augmentation**: This context is automatically appended to the user's prompt, allowing the agent to "remember" past details.
+When memory is enabled, the system automatically saves each user query and agent response. Before the agent processes a new query, the memory system retrieves relevant history and adds it to the prompt. This gives the agent a "memory" of the conversation so far.
+
+The retrieval process combines two types of memory:
+1.  **Short-Term Memory**: The most recent turns of the conversation are always included. This keeps the immediate context fresh.
+2.  **Long-Term Memory**: The system performs a semantic search over the entire conversation history to find past interactions that are most relevant to the current query. This allows the agent to recall details from much earlier in the conversation.
+
+### Configuration Explained
+
+To enable memory, add a `memory` section to your configuration file.
+
+```yaml
+memory:
+  # --- Where to store conversation history ---
+  vector_store:
+    type: "chroma"  # Options: "chroma", "postgres", "s3".
+    settings:
+      collection_name: "chat_history_db"
+      persist_directory: "./memory_db" # Folder to save the memory database.
+
+  # --- How to understand the conversation for searching ---
+  embedding:
+    model_id: "bedrock/amazon.titan-embed-text-v1" # The AI model for vectorizing text.
+    region_name: "us-west-2" # Optional, for cloud providers like AWS.
+
+  # --- How to retrieve and use memory ---
+  settings:
+    # The number of the most recent conversation turns to always include.
+    # This provides immediate, short-term context.
+    max_recent_turns: 5
+
+    # The maximum number of older, semantically relevant turns to retrieve.
+    # This provides long-term memory by searching the history.
+    max_relevant_turns: 3
+
+    # The similarity score required for a past turn to be considered "relevant".
+    # A lower value (e.g., 0.5) finds more, broader matches.
+    # A higher value (e.g., 0.8) finds more specific, direct matches.
+    similarity_threshold: 0.6
+```
+
+### Vector Store Options
+
+The memory system uses the same vector store options as the Knowledge Base. You can choose between `chroma`, `postgres`, and `s3`. Please refer to the **Vector Store Options** section under [Knowledge Base Integration](#knowledge-base-integration) for detailed configuration examples for each type.
 
 ## MCP Integration
 
-Model Context Protocol (MCP) servers provide enhanced capabilities like filesystem access, database queries, and more.
+Model Context Protocol (MCP) provides a powerful way to extend your agents' capabilities by connecting them to external tools and services. Think of MCP servers as providers of "super-tools" that can give your agents the ability to interact with filesystems, databases, or any other external API.
 
-### MCP Configuration
+### How It Works
+
+When you configure an MCP server, the framework automatically discovers the tools it offers and makes them available to your agents. The agent can then intelligently decide when to use these tools to accomplish a task. Once configured, the tools from all MCP servers are added to the agent's list of available tools, and the agent can use them just like any other tool.
+
+### Configuration Explained
+
+You can configure MCP servers in two ways: by running a local process or by connecting to a remote URL.
 
 ```yaml
 mcps:
-  filesystem:
-    command: "mcp-server-filesystem"
-    args: ["/data"]
-  
-  environment:
-    command: "uv"
-    args:
-      - "run"
-      - "--with"
-      - "mcp-env-server"
-      - "env_lookup_server"
+  # --- Method 1: Running a Local MCP Server ---
+  # Use this to run a command-line tool or script as a managed process.
+  # The framework will start and stop the server for you.
+  filesystem_access:
+    # The command to execute to start the server.
+    command: "mcp-server-filesystem" 
+    # Optional arguments to pass to the command.
+    args: ["/path/to/allowed/directory"]
+
+  # --- Method 2: Connecting to a Remote MCP Server ---
+  # Use this to connect to an existing server that is already running.
+  # This is common for connecting to microservices or third-party APIs.
+  remote_database_api:
+    # The URL of the remote MCP server.
+    # It can be a standard HTTP endpoint or a Server-Sent Events (SSE) stream.
+    url: "http://api.internal.mycompany.com/mcp"
+    # Optional headers to include with the request, useful for authentication.
+    headers:
+      # You can use environment variables for sensitive data like API keys.
+      Authorization: "Bearer ${DATABASE_API_KEY}" 
 ```
 
 ## Guardrails Integration
@@ -639,29 +772,19 @@ Use `{variable_name}` in task descriptions:
 ```yaml
 task_list:
   - research_task:
-      description: Research the topic: {topic}
-      expected_output: A summary of {topic}.
-      agent: researcher
+      description: "Research the topic: {topic}"
+      expected_output: "A summary of {topic}."
+      agent: "researcher"
 ```
 
 ### Providing Inputs
 
-**Method 1: Configuration Object**
+Pass the variables as a dictionary when you invoke the agent.
+
 ```python
 result = await agent.ainvoke(
-    "Research quantum computing",
-    config={
-        'inputs': {
-            'topic': 'Quantum Computing'
-        }
-    }
+    {"topic": "Quantum Computing"}
 )
-```
-
-**Method 2: Simple Message**
-```python
-# System auto-detects and maps variables
-result = await agent.ainvoke("Quantum Computing")
 ```
 
 ## Usage Examples
@@ -675,9 +798,15 @@ model:
 
 agent_list:
   - researcher:
-      role: Researcher
-      goal: Research topics
-      backstory: Expert researcher
+      role: "Researcher"
+      goal: "Research topics"
+      backstory: "Expert researcher"
+
+task_list:
+  - research_task:
+      description: "Research the topic: {topic}"
+      expected_output: "A summary of the topic."
+      agent: "researcher"
 ```
 
 ### Example 2: Multi-Agent Research Team
@@ -694,25 +823,25 @@ tools:
 
 agent_list:
   - researcher:
-      role: Researcher
-      goal: Find information
-      backstory: Expert researcher
+      role: "Researcher"
+      goal: "Find information"
+      backstory: "Expert researcher"
       tools: [search]
   
   - writer:
-      role: Writer
-      goal: Write articles
-      backstory: Expert writer
+      role: "Writer"
+      goal: "Write articles"
+      backstory: "Expert writer"
 
 task_list:
   - research:
-      description: Research {topic}
-      expected_output: Research notes
-      agent: researcher
+      description: "Research {topic}"
+      expected_output: "Research notes"
+      agent: "researcher"
   - write:
-      description: Write article about {topic}
-      expected_output: Article
-      agent: writer
+      description: "Write an engaging article about {topic} based on the research."
+      expected_output: "A 500-word article."
+      agent: "writer"
       context: [research]
 
 crew_config:
@@ -724,7 +853,7 @@ crew_config:
 ### Async Streaming
 
 ```python
-async for chunk in agent.astream("Research quantum computing"):
+async for chunk in agent.astream({"topic": "Quantum Computing"}):
     if 'content' in chunk:
         print(chunk['content'], end='', flush=True)
 ```
@@ -756,9 +885,9 @@ agent = CrewAIAgent(
 
 ## Best Practices
 
-1. **Clear Agent Roles**: Define specific responsibilities for each agent to avoid confusion.
-2. **Tool Scoping**: Assign only necessary tools to each agent to reduce hallucination risks.
-3. **Task Dependencies**: Use `context` to define dependencies between tasks.
+1. **Clear Agent Roles and Goals**: Define specific and distinct responsibilities for each agent.
+2. **Well-Defined Tasks**: Ensure each task has a clear description and expected output.
+3. **Tool Scoping**: Assign only necessary tools to each agent to reduce complexity and improve performance.
 4. **Security**: Use environment variables for API keys and sensitive data.
 
 ## Troubleshooting
@@ -772,7 +901,7 @@ await agent.initialize()
 **Issue: "Tool not found"**
 ```yaml
 # Problem: Tool referenced but not defined
-# Solution: Define tool in tools section
+# Solution: Define tool in the top-level 'tools' section.
 tools:
   missing_tool:
     module: tool_module
@@ -793,9 +922,9 @@ class CrewAIAgent:
     )
     
     async def initialize() -> None
-    async def ainvoke(message: str, config: Dict = None) -> Dict
-    def invoke(message: str, config: Dict = None) -> Dict
-    async def astream(message: str, config: Dict = None) -> AsyncGenerator
+    async def ainvoke(message: Dict[str, Any]) -> Dict
+    def invoke(message: Dict[str, Any]) -> Dict
+    async def astream(message: Dict[str, Any]) -> AsyncGenerator
     def validate_tasks() -> Dict[str, Any]
     def get_agent_info() -> Dict[str, Any]
 ```

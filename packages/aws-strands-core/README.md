@@ -1,13 +1,15 @@
 # AWS Strands Multi-Agent Framework
 
-A powerful, YAML-based configuration system for building multi-agent AI workflows with AWS Strands SDK. Build complex agent orchestrations on AWS Bedrock without writing code—just configure and run.
+A powerful, YAML-based configuration system for building multi-agent AI workflows with AWS Strands and LangChain. Build complex agent orchestrations without writing code—just configure and run.
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
+- [Project Structure](#project-structure)
 - [Key Features](#key-features)
-- [Configuration Structure](#configuration-structure)
+- [Configuration](#configuration)
 - [Orchestration Patterns](#orchestration-patterns)
 - [Agents Configuration](#agents-configuration)
 - [Tools System](#tools-system)
@@ -26,7 +28,7 @@ A powerful, YAML-based configuration system for building multi-agent AI workflow
 
 ## Overview
 
-The AWS Strands Multi-Agent Framework enables you to create sophisticated agent orchestrations on AWS Bedrock through simple YAML configuration files. Built on the official AWS Strands SDK, it provides a declarative way to define multi-agent systems with support for various orchestration patterns.
+The AWS Strands Multi-Agent Framework enables you to create sophisticated agent orchestrations through simple YAML configuration files. Built on AWS Strands and LangChain, it provides a declarative way to define multi-agent systems with support for various orchestration patterns.
 
 ### What Can You Build?
 
@@ -34,14 +36,124 @@ The AWS Strands Multi-Agent Framework enables you to create sophisticated agent 
 - Complex decision-making systems with multiple specialists
 - Data processing workflows with parallel execution
 - Autonomous agent systems with dynamic collaboration
-- Enterprise-grade AI applications on AWS infrastructure
+- Enterprise-grade AI applications
+
+## Prerequisites
+
+Before running the agent, ensure you have the necessary API keys set as environment variables based on your chosen `cloud_provider`:
+
+```bash
+# For OpenAI models
+export OPENAI_API_KEY="sk-..."
+
+# For Anthropic models
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# For AWS Bedrock
+export AWS_ACCESS_KEY_ID="..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_DEFAULT_REGION="us-west-2"
+```
+
+You must also install the specific LangChain provider package for the model you intend to use:
+
+```bash
+pip install langchain-openai      # If using cloud_provider: openai
+pip install langchain-anthropic   # If using cloud_provider: anthropic
+pip install langchain-aws         # If using cloud_provider: aws
+```
 
 ## Quick Start
 
-### 1. Installation
+There are two ways to get started: using the interactive project generator for a guided setup, or manually configuring your project.
+
+### Option 1: Use the Project Generator (Recommended)
+
+The `oai-gen` CLI tool scaffolds a complete, production-ready project with all the necessary configurations, including multi-agent setups, knowledge bases, and more.
+
+**1. Install the Generator**
+
+First, install the template generator tool:
+```bash
+mkdir agent_development
+cd agent_development
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install uv
+
+uv pip install 'oai-template-generator @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit@main#subdirectory=packages/template-generator'
+```
+
+**2. Create a New Agent Project**
+
+Run the interactive wizard to create a new agent. It will guide you through selecting the framework, orchestration pattern, models, tools, and other settings.
+```bash
+oai-gen new agent
+```
+Or provide arguments directly to skip initial prompts:
 
 ```bash
-pip install strands-agents strands-agents-tools
+oai-gen new agent my_agent_project --author "Jane Doe" --email "jane.doe@capgemini.com"
+```
+
+
+The wizard will ask you to choose a framework. Select **AWS Strands**. It will then generate a complete project structure, including a pre-filled YAML configuration file, ready for you to customize and run.
+
+### Knowledge Base (RAG)
+You can configure knowledge bases at both the **Global** (shared) and **Agent** levels. Supported backends:
+- **Chroma**: Local vector store.
+- **Postgres**: Connection placeholders for pgvector.
+- **S3**: Bucket and region placeholders.
+
+### MCP Servers
+When adding MCPs to an agent, you can specify the type:
+- **`stdio`**: For local command-line servers. The config will include `command`, `args`, and `env`.
+- **`remote`**: For servers accessible via HTTP. The config will include `url` and `headers`.
+
+### Guardrails
+If enabled, a `guardrails` section is added to your agent config with sample validators like `competitor_check`, `DetectPII`, and `profanity_free`.
+
+### Getting Started & Next Steps
+
+The template generator automatically initializes a Git repository and creates a Python virtual environment (`.venv`) for you.
+
+To get started with your new project, follow these steps:
+
+1.  **Navigate into your project directory:**
+    ```bash
+    cd <your_project_name>
+    ```
+
+2.  **Activate the virtual environment:**
+    ```bash
+    source .venv/bin/activate
+    ```
+    *(On Windows, use `.venv\Scripts\activate`)*
+
+3.  **Install `uv`, a high-performance package manager:**
+    ```bash
+    pip install uv
+    ```
+
+4.  **Install project dependencies using `uv`:**
+    ```bash
+    uv pip install -r requirements.txt
+    ```
+
+5.  **(Optional) Add More Dependencies:**
+    If your project requires additional packages, add them to `pyproject.toml` and/or `requirements.txt`, then re-run the install command.
+
+6.  **Review Your Configuration:**
+    Open the generated `.../agents_config/<agent_name>.yaml` or `.../servers_config/<server_name>.yaml` file and review the settings, updating them as necessary for your specific use case.
+
+### Option 2: Manual Setup
+
+If you prefer to build your project from scratch, follow these steps.
+
+**1. Installation**
+
+```bash
+pip install oai-aws-strands-agent-core
 ```
 
 To install with specific optional dependencies:
@@ -63,22 +175,25 @@ pip install "oai-aws-strands-agent-core[s3]"
 pip install "oai-aws-strands-agent-core[all]"
 ```
 
-### 2. Create Your Configuration File
+**2. Create Your Configuration File**
 
 Create a YAML file (e.g., `research_agent.yaml`):
 
 ```yaml
 model:
-  model_id: us.anthropic.claude-sonnet-4-20250514-v1:0
-  region_name: us-west-2
+  model_id: anthropic.claude-3-sonnet-20240229-v1:0
+  cloud_provider: aws
 
 tools:
   calculator:
-    module: strands_tools
+    module: langchain_community.tools
+    class: Calculator
 
 agent_list:
   - researcher:
       system_prompt: You research topics and gather information. Hand off to analyst when you have findings.
+      tools:
+        - calculator
   - analyst:
       system_prompt: You analyze information and identify key insights. Hand off to writer for final output.
       context:
@@ -89,21 +204,22 @@ agent_list:
         - researcher
         - analyst
 
-crew_config:
-  pattern: graph  # Agents autonomously hand off tasks
-  entry_agent: researcher
-  verbose: true
+system_prompt: You are a supervisor managing a team of agents.
 ```
 
-### 3. Initialize and Run
+**3. Initialize and Run**
 
 ```python
-from aws_strands_agent import StrandsAgent
+import yaml
+from oai_aws_strands_agent_core.agents.strands_agent import StrandsAgent
 
 # Load configuration
+with open("research_agent.yaml", "r") as f:
+    config = yaml.safe_load(f)
+
 agent = StrandsAgent(
     agent_name="research_crew",
-    agent_config=yaml.safe_load(open("research_agent.yaml"))
+    agent_config=config
 )
 
 # Initialize
@@ -114,19 +230,53 @@ result = await agent.ainvoke("Research the latest trends in quantum computing")
 print(result)
 ```
 
+## Project Structure
+
+When you use the `oai-gen` tool to create a new AWS Strands agent project, it generates a standardized, production-ready directory structure. This ensures consistency and makes it easy to locate and manage different parts of your agent.
+
+Here is the typical structure of a generated project:
+
+```text
+ptr_agent_servers_my_project/
+├── agentic_registry_agents/
+│   ├── agents/
+│   │   └── my_agent/
+│   │       ├── agent.py
+│   │       └── server.py
+│   ├── agents_config/
+│   │   └── my_agent.yaml      # Full configuration (Model, Tools, KB, etc.)
+│   └── utils/
+│       └── my_agent_utils.py  # Scaffolded tool functions
+├── .gitignore
+├── docker-compose.yaml          # Docker Compose file for containerization
+├── Makefile
+├── Dockerfile
+├── pyproject.toml               # Project metadata and dependencies
+├── README.md
+└── tests/                       # Unit and integration tests
+```
+
+### Key Directories and Files
+
+-   **`ptr_agent_servers_{agent_name}/`**: The main source code directory for your agent package.
+-   **`agents/my_agent/agent.py`**: This is where the core `StrandsAgent` class is instantiated. You typically don't need to modify this file unless you are customizing the agent's fundamental behavior.
+-   **`agents/my_agent/server.py`**: A pre-configured FastAPI server that exposes your agent's endpoints, enabling it to be used as a microservice.
+-   **`agents_config/my_agent.yaml`**: The heart of your project. This YAML file is where you define everything about your agent—its model, tools, knowledge base, memory, and orchestration patterns.
+-   **`global_config/`**: Contains default model parameters for different cloud providers. The settings here are automatically merged with your agent's configuration.
+-   **`utils/my_agent_utils.py`**: If you define custom tools, this is where you'll write the Python functions that implement their logic.
+-   **`pyproject.toml`**: Managed by Poetry, this file lists all project dependencies. The generator automatically adds the required packages based on your framework and feature selections.
+-   **`docker-compose.yaml`**: Allows you to run your agent and any dependent services (like a Postgres database for memory) in containers.
+
 ## Key Features
 
-### ☁️ AWS Bedrock Integration
-Built on AWS Bedrock Claude models with full support for the latest Sonnet 4 models.
+### ☁️ AWS Bedrock Native Integration
+Built on the official AWS Strands SDK for robust, scalable, and secure agent orchestration on AWS.
 
-### 🔄 Multiple Orchestration Patterns
-Support for Graph, Swarm, Sequential, and Agents-as-Tools patterns.
-
-### 🎯 Autonomous Agent Handoffs
-Agents can intelligently hand off tasks to each other based on expertise.
+### 🔄 Flexible Orchestration
+Support for various patterns including Graph, Swarm, and Sequential execution.
 
 ### 🛠️ Extensible Tools System
-Integrate Strands tools, custom tools, and MCP servers seamlessly.
+Integrate LangChain community tools, custom tools, and MCP servers seamlessly.
 
 ### 📚 Knowledge Base Support
 Easily integrate custom knowledge bases (RAG) for agents to access domain-specific information.
@@ -149,119 +299,85 @@ Optional Langfuse integration for tracing, monitoring, and debugging.
 ### ⚡ Streaming Support
 Real-time streaming of agent outputs and task handoffs.
 
-## Configuration Structure
+## Configuration
+
+The entire behavior of your agent is defined in a single, powerful YAML file located in `src/ptr_agent_servers_{agent_name}/agents_config/`. This declarative approach allows you to build and modify complex agent systems without writing extensive boilerplate code.
 
 ### Complete YAML Template
 
+This template shows all the possible configuration options available. You can mix and match sections based on your needs.
+
 ```yaml
-# Model Configuration
+# 1. Model Configuration: Defines the LLM to be used.
 model:
-  model_id: us.anthropic.claude-sonnet-4-20250514-v1:0
-  region_name: us-west-2
-  params:  # Optional
+  model_id: "anthropic.claude-3-sonnet-20240229-v1:0"
+  cloud_provider: "aws" # Options: openai, anthropic, aws, etc.
+  params:  # Optional: Override default model parameters
     temperature: 0.7
     max_tokens: 4096
 
-# Tools Definition
-tools:
-  tool_name:
-    module: "module_name"
-    class: "ToolClassName"  # Optional
-    function_list:  # Optional: load specific functions
-      - function_name
-    base_path: "./path"  # Optional
+# 2. Architecture Configuration: Defines the multi-agent pattern.
+crew_config:
+  pattern: "graph" # Options: graph, swarm, sequential, agents-as-tools
 
-# Knowledge Base Definition (Optional)
+# 3. Tools Definition: A global registry of tools available to agents.
+tools:
+  my_tool:
+    module: "my_tool_module"
+    class: "MyToolClass"
+
+# 4. Knowledge Base: Provides documents for Retrieval-Augmented Generation (RAG).
 knowledge_base:
-  - name: company_policies
-    description:  "Search company policies, HR guidelines, and internal procedures"
+  - name: "company_docs"
+    description: "Search company policies and internal procedures."
     vector_store:
-      type: chroma
+      type: "chroma"
       settings:
-        collection_name: "company policies"
+        collection_name: "company_docs_collection"
         persist_directory: "./rag_db"
-    embedding:
-      model_id: "bedrock/amazon.titan-embed-text-v1"
-      region_name: "us-west-2"
     data_sources:
       - type: "file"
-        path: "docs/sample_policy.pdf"
-      - type: "s3"
-        bucket: "my-docs-bucket"
-        prefix: "policies/"
-    text_splitter:
-      type: "recursive_character"
-      chunk_size: 1000
-      chunk_overlap: 200
-    retrieval_settings:
-        top_k: 5
-        score_threshold: 0.7
+        path: "docs/policy.pdf"
 
-# Memory Configuration (Optional)
+# 5. Memory: Enables the agent to remember past conversations.
 memory:
   vector_store:
-    type: chroma # Options: chroma, postgres, s3
+    type: "chroma"
     settings:
       collection_name: "chat_memory"
       persist_directory: "./memory_db"
-  embedding:
-    model_id: "bedrock/amazon.titan-embed-text-v1"
-    region_name: "us-west-2"
   settings:
     max_recent_turns: 5
     max_relevant_turns: 3
-    similarity_threshold: 0.6
 
-# MCP Servers (Optional)
+# 6. MCP Servers: Connects to external tools via the Model Context Protocol.
 mcps:
-  server_name:
-    command: "server_command"
-    args: ["arg1", "arg2"]
+  filesystem_server:
+    command: "mcp-server-filesystem"
+    args: ["/data"]
 
-# Guardrails Configuration (Optional)
+# 7. Guardrails: Adds input and output validation.
 guardrails:
-  enable_agent_validation: false
-  custom_validators_dir: "custom_guardrails"
   validators:
-    - name: competitor_check
-      full_name: guardrails/competitor_check
-      parameters:
-        competitors: [ "Apple", "Samsung" ]
+    - name: "profanity_check"
+      full_name: "guardrails/profanity_free"
       on_fail: "fix"
-    - name: json_validator
-      full_name: ValidJson
-      module: valid_json
-      on_fail: "noop"
-  input:
-    validators:
-      - ref: competitor_check
   output:
     validators:
-      - ref: json_validator
+      - ref: "profanity_check"
 
-# Agent Definitions
+# 8. Agent Definitions: The list of agents in the system.
 agent_list:
-  - agent_key:
-      system_prompt: "Detailed instructions for the agent"
-      context:  # Optional: agents this agent can see
-        - other_agent_key
-      tools:  # Optional: tools available to this agent
-        - tool_name
-      knowledge_base: # Optional: assign specific KB to agent
-        - name: "company_policies"
-          description: "Search company policies"
-          vector_store: ...
+  - researcher:
+      system_prompt: "You are a research assistant."
+      tools: ["my_tool"] # Assign tools from the global registry.
+      knowledge_base: ["company_docs"] # Assign a knowledge base.
 
-# Orchestration Configuration
-crew_config:
-  pattern: "graph"  # graph, swarm, sequential, agents_as_tools
-  entry_agent: "agent_key"  # Required for graph/swarm
-  verbose: true
+# 9. Entry Agent (for Graph/Swarm patterns)
+entry_agent: "researcher"
 ```
 
 ## Orchestration Patterns
-
-AWS Strands supports multiple orchestration patterns for different use cases:
 
 ### 1. Graph Pattern
 
@@ -271,7 +387,6 @@ AWS Strands supports multiple orchestration patterns for different use cases:
 crew_config:
   pattern: graph
   entry_agent: researcher
-  verbose: true
 
 agent_list:
   - researcher:
@@ -294,21 +409,14 @@ User Input → Researcher → Analyst → Writer → Final Output
         (Can hand back if needed)
 ```
 
-**Advantages:**
-- Autonomous decision-making
-- Dynamic collaboration
-- Flexible handoffs
-- Context-aware routing
-
 ### 2. Swarm Pattern
 
-**When to use:** Similar to Graph but with different execution characteristics.
+**When to use:** Similar to Graph but with different execution characteristics, often involving a coordinator.
 
 ```yaml
 crew_config:
   pattern: swarm
   entry_agent: coordinator
-  verbose: true
 
 agent_list:
   - coordinator:
@@ -323,11 +431,6 @@ agent_list:
         - coordinator
 ```
 
-**Advantages:**
-- Parallel processing capabilities
-- Coordinator-worker pattern
-- Efficient resource utilization
-
 ### 3. Sequential Pattern
 
 **When to use:** Simple linear workflows where each agent processes in order.
@@ -339,15 +442,7 @@ crew_config:
 agent_list:
   - assistant:
       system_prompt: You are a helpful assistant.
-      tools:
-        - calculator
-        - current_time
 ```
-
-**Advantages:**
-- Simple and predictable
-- Easy to debug
-- Good for single-agent systems
 
 ### 4. Agents-as-Tools Pattern
 
@@ -356,21 +451,14 @@ agent_list:
 ```yaml
 crew_config:
   pattern: agents_as_tools
+
+agent_list:
+  - coordinator:
+      system_prompt: You are the main coordinator.
+  - math_expert:
+      system_prompt: You solve math problems.
+      description: "Tool to solve math problems."
 ```
-
-**Advantages:**
-- Clear hierarchy
-- Tool-like agent invocation
-- Centralized coordination
-
-### Pattern Comparison
-
-| Pattern | Complexity | Autonomy | Best For |
-|---------|-----------|----------|----------|
-| Graph | High | High | Complex multi-agent collaboration |
-| Swarm | Medium | Medium | Coordinator-worker systems |
-| Sequential | Low | Low | Simple linear workflows |
-| Agents-as-Tools | Medium | Medium | Hierarchical systems |
 
 ## Agents Configuration
 
@@ -380,36 +468,14 @@ crew_config:
 agent_list:
   - agent_key:
       system_prompt: "Detailed instructions"  # Required
-      context: [other_agent]  # Optional: which agents this agent can see
       tools: [tool_name]  # Optional: tools available to agent
-```
-
-### Context Mechanism
-
-The `context` field defines which agents an agent can "see" and receive outputs from:
-
-```yaml
-agent_list:
-  - researcher:
-      system_prompt: You research topics.
-      # No context - starts fresh
-  
-  - analyst:
-      system_prompt: You analyze research findings.
-      context:
-        - researcher  # Can see researcher's output
-  
-  - writer:
-      system_prompt: You write final reports.
-      context:
-        - researcher  # Can see both outputs
-        - analyst
+      context: [other_agent_key] # Optional: agents this agent can see
 ```
 
 ### System Prompt Best Practices
 
 ```yaml
-# ✅ Good - Clear role and handoff instructions
+# ✅ Good - Clear role and instructions
 system_prompt: |
   You are a research analyst who gathers information from reliable sources.
   
@@ -417,9 +483,6 @@ system_prompt: |
   - Search for relevant information on the given topic
   - Verify source credibility
   - Summarize key findings
-  
-  When you have gathered sufficient information, hand off to the analyst
-  for deeper analysis.
 
 # ❌ Bad - Vague instructions
 system_prompt: You help with research.
@@ -429,407 +492,155 @@ system_prompt: You help with research.
 
 ### Defining Tools
 
-#### Load All Functions from Module
+#### Load Class-Based Tools (LangChain Community)
 
 ```yaml
 tools:
-  random_generator:
-    module: random_generator
-    base_path: ./../utils
+  web_search:
+    module: langchain_community.tools
+    class: DuckDuckGoSearchRun
 ```
 
-#### Load Specific Functions
+#### Load Custom Module Tools
 
 ```yaml
 tools:
-  random_generator:
-    module: random_generator
+  my_custom_tool:
+    module: my_tools
     function_list:
-      - generate_random_number
-      - generate_random_string
-    base_path: ./../utils
-```
-
-#### Load Class-Based Tools
-
-```yaml
-tools:
-  calculator:
-    module: strands_tools
-    class: calculator
-  
-  current_time:
-    module: strands_tools
-    class: current_time
+      - my_function
+    base_path: ./src
 ```
 
 ### Setting Default Parameter Values
 
-You can configure default parameter values for tool functions using the `function_params` field. This is useful for pre-configuring tools with specific settings or constraints.
-
-#### Basic Default Parameters
+You can configure default parameter values for tool functions using the `function_params` field.
 
 ```yaml
 tools:
   random_generator:
     module: random_generator
-    base_path: ./../utils
     function_params:
       generate_random_number:
         lower: 10
         upper: 100
-      generate_random_string:
-        length: 16
-        charset: "alphanumeric"
 ```
-
-#### Multiple Functions with Defaults
-
-```yaml
-tools:
-  data_processor:
-    module: data_tools
-    base_path: ./tools
-    function_params:
-      process_data:
-        max_records: 1000
-        format: "json"
-      validate_data:
-        strict_mode: true
-        schema_version: "2.0"
-```
-
-#### Combining with Specific Function Lists
-
-```yaml
-tools:
-  api_client:
-    module: api_tools
-    function_list:
-      - fetch_data
-      - post_data
-    base_path: ./integrations
-    function_params:
-      fetch_data:
-        timeout: 30
-        retry_count: 3
-      post_data:
-        timeout: 60
-        verify_ssl: true
-```
-
-**How It Works:**
-- Default parameters are applied when the tool is initialized
-- Agents can still override these defaults when calling the function
-- Useful for:
-  - Setting consistent behavior across all tool calls
-  - Configuring API endpoints, timeouts, or rate limits
-  - Establishing validation rules or data constraints
-  - Pre-setting environment-specific values
-
-**Example Use Case:**
-
-```yaml
-tools:
-  database_client:
-    module: db_tools
-    base_path: ./database
-    function_params:
-      query_data:
-        connection_string: "postgresql://localhost:5432/mydb"
-        pool_size: 10
-        timeout: 30
-      insert_data:
-        batch_size: 500
-        validate: true
-```
-
-### Built-in Strands Tools
-
-```yaml
-tools:
-  # Math operations
-  calculator:
-    module: strands_tools
-    class: calculator
-  
-  # Time utilities
-  current_time:
-    module: strands_tools
-    class: current_time
-  
-  # Swarm coordination
-  swarm:
-    module: strands_tools
-    class: swarm
-```
-
-### Custom Tools
-
-Create a Python file with your tool:
-
-```python
-# my_tools/data_processor.py
-def process_data(data: str, max_records: int = 100, format: str = "json") -> str:
-    """Process and clean data.
-    
-    Args:
-        data: Raw data to process
-        max_records: Maximum number of records to process (default: 100)
-        format: Output format - 'json' or 'csv' (default: 'json')
-    """
-    # Your implementation
-    return processed_data
-
-def analyze_data(data: str, threshold: float = 0.5) -> dict:
-    """Analyze data and return insights.
-    
-    Args:
-        data: Data to analyze
-        threshold: Confidence threshold for insights (default: 0.5)
-    """
-    # Your implementation
-    return {"insights": results}
-```
-
-Configure in YAML with default parameters:
-
-```yaml
-tools:
-  data_tools:
-    module: data_processor
-    function_list:
-      - process_data
-      - analyze_data
-    base_path: ./my_tools
-    function_params:
-      process_data:
-        max_records: 500
-        format: "csv"
-      analyze_data:
-        threshold: 0.75
-```
-
-### Assigning Tools to Agents
-
-```yaml
-agent_list:
-  - analyst:
-      system_prompt: You analyze data using available tools.
-      tools:
-        - calculator
-        - data_tools
-        - current_time
-  
-  - researcher:
-      system_prompt: You research topics and generate reports.
-      tools:
-        - random_generator
-        - current_time
-```
-
-### Tool Configuration Best Practices
-
-1. **Use Meaningful Default Values**
-   ```yaml
-   # ✅ Good - Sensible defaults for production
-   function_params:
-     api_call:
-       timeout: 30
-       retry_count: 3
-       backoff_factor: 2
-   
-   # ❌ Bad - Extreme or unrealistic defaults
-   function_params:
-     api_call:
-       timeout: 1
-       retry_count: 100
-   ```
-
-2. **Document Parameter Purposes**
-   - Ensure tool functions have clear docstrings
-   - Include parameter descriptions and valid ranges
-   - Specify default behavior when parameters are omitted
-
-3. **Environment-Specific Configuration**
-   ```yaml
-   # Development environment
-   function_params:
-     database_query:
-       connection_string: "postgresql://localhost:5432/dev_db"
-       timeout: 10
-   
-   # Production environment
-   function_params:
-     database_query:
-       connection_string: "postgresql://prod-server:5432/prod_db"
-       timeout: 60
-   ```
-
-4. **Security Considerations**
-   - Avoid hardcoding sensitive values in YAML
-   - Use environment variables for credentials
-   - Set safe defaults for potentially dangerous operations
-   ```yaml
-   # ✅ Good - Safe defaults
-   function_params:
-     file_operations:
-       max_file_size: 10485760  # 10MB
-       allowed_extensions: [".txt", ".json", ".csv"]
-   ```
 
 ## Knowledge Base Integration
 
-You can equip your agents with a custom knowledge base (RAG) to answer questions based on specific documents.
+Give your agents access to custom information by setting up a knowledge base. This allows them to answer questions about specific documents or data you provide.
 
-### Common Configuration
+### How It Works
 
-All knowledge base configurations share these common settings, which are optional and configurable:
+1.  **You provide documents**: Point the system to local files or S3 buckets.
+2.  **Indexing**: The system reads, splits, and stores the content in a vector database, making it searchable.
+3.  **Retrieval**: When a user asks a question, the system finds the most relevant information from the knowledge base.
+4.  **Answering**: This information is given to the agent, who uses it to form a complete and accurate answer.
+
+### Configuration Explained
+
+Here’s a breakdown of the settings you can use to configure a knowledge base.
 
 ```yaml
 knowledge_base:
-  - name: my_kb
-    description: "Description of the knowledge base"
-    # ... vector_store config ...
+  - name: "company_policies_kb"
+    description: "Use this to answer questions about our company's HR policies and internal procedures."
     
-    # Optional: Configure embedding model
+    # --- Where to store the indexed data ---
+    vector_store:
+      type: "chroma"  # The database type. "chroma" is great for local use.
+      settings:
+        collection_name: "company_policies"
+        persist_directory: "./rag_db"  # Folder to save the database on your computer.
+
+    # --- How to understand your documents ---
     embedding:
-      model_id: "amazon.titan-embed-text-v1"
-      region_name: "us-west-2" # Optional
-      
-    # Optional: List of documents to index
+      model_id: "bedrock/amazon.titan-embed-text-v1" # The AI model that converts text into searchable vectors.
+      region_name: "us-west-2" # Required for some cloud providers like AWS.
+
+    # --- Where to find your documents ---
     data_sources:
       - type: "file"
-        path: "docs/document.pdf"
-      
-    # Optional: Configure text splitting strategy
+        path: "docs/hr_policy.pdf" # A local file.
+      - type: "s3"
+        bucket: "my-company-docs" # An AWS S3 bucket.
+        prefix: "policies/" # A specific folder within the bucket.
+
+    # --- How to break down your documents ---
     text_splitter:
-      type: "recursive_character"
-      chunk_size: 1000
-      chunk_overlap: 200
-      
-    # Optional: Configure retrieval parameters
+      type: "recursive_character" # A smart way to split text while keeping sentences together.
+      chunk_size: 1000 # The maximum size of each text chunk (in characters).
+      chunk_overlap: 200 # How many characters to overlap between chunks to maintain context.
+
+    # --- How to search for information ---
     retrieval_settings:
-      top_k: 5
-      score_threshold: 0.7
+      top_k: 5 # The number of relevant chunks to retrieve for a given question.
+      score_threshold: 0.7 # Only return chunks with a similarity score above this value (0.0 to 1.0).
 ```
 
-### Vector Store Configuration
+### Vector Store Options
 
-The framework supports multiple vector store backends. Choose the one that fits your needs.
+You can choose from several types of vector stores to save your indexed data.
 
 #### 1. ChromaDB (Default)
-Good for local development and simple deployments.
-
+**Best for:** Local development and quick setups.
 ```yaml
-knowledge_base:
-  - name: local_kb
-    description: "Local document search"
-    vector_store:
-      type: chroma
-      settings:
-        collection_name: "my_collection"
-        persist_directory: "./data/chroma"
-    # ... common settings ...
+vector_store:
+  type: chroma
+  settings:
+    collection_name: "my_local_kb"
+    persist_directory: "./data/chroma_db"
 ```
 
-#### 2. Postgres (pgvector)
-Ideal for production environments using PostgreSQL.
-
+#### 2. Postgres (using `pgvector`)
+**Best for:** Production systems that already use PostgreSQL.
 ```yaml
-knowledge_base:
-  - name: postgres_kb
-    description: "Enterprise document search"
-    vector_store:
-      type: postgres
-      settings:
-        collection_name: "enterprise_docs"
-        # Option 1: Connection String (Not recommended for passwords)
-        # connection_string: "postgresql://user:pass@localhost:5432/mydb"
-        
-        # Option 2: Individual Parameters (Recommended)
-        db_host: "localhost"
-        db_port: "5432"
-        db_user: "user"
-        db_name: "mydb"
-        # Note: db_password should NOT be in YAML.
-        # Use environment variables with DB_NAME suffix:
-        # DB_HOST_MYDB, DB_PORT_MYDB, DB_USER_MYDB, DB_PASSWORD_MYDB
-    # ... common settings ...
+vector_store:
+  type: postgres
+  settings:
+    collection_name: "my_production_kb"
+    db_host: "localhost"
+    db_port: "5432"
+    db_user: "myuser"
+    db_name: "mydatabase"
+    # IMPORTANT: Do not write your password here.
+    # Set it as an environment variable: DB_PASSWORD_MYDATABASE
 ```
 
-#### 3. S3 (Simple Vector Store)
-Lightweight, serverless option storing index in S3. Good for read-heavy, low-write scenarios.
-
+#### 3. S3 (Simple, Serverless)
+**Best for:** Read-heavy use cases where you want a lightweight, cloud-based solution without managing a database.
 ```yaml
-knowledge_base:
-  - name: s3_kb
-    description: "Cloud document search"
-    vector_store:
-      type: s3
-      settings:
-        collection_name: "cloud_docs"
-        bucket_name: "my-vector-store-bucket"
-        prefix: "indexes" # Optional
-    # ... common settings ...
+vector_store:
+  type: s3
+  settings:
+    collection_name: "my_s3_kb"
+    bucket_name: "my-vector-data-bucket"
+    prefix: "indexes/" # Optional folder inside the bucket.
 ```
 
-### Global Knowledge Base
+### Two Ways to Use a Knowledge Base
 
-A global knowledge base is automatically queried and the relevant context is appended to the user's message before it reaches the agent.
+#### 1. Global Knowledge Base
+A global knowledge base is automatically searched for every user query. The relevant context is added to the prompt before the agent sees it. This is useful for providing general context that should always be available.
 
 ```yaml
+# This knowledge base will be used for all agents
 knowledge_base:
-  - name: company_policies
-    description:  "Search company policies, HR guidelines, and internal procedures"
-    vector_store:
-      type: chroma
-      settings:
-        collection_name: "company policies"
-        persist_directory: "./rag_db"
-    embedding:
-      model_id: "amazon.titan-embed-text-v1"
-      region_name: "us-west-2"
-    data_sources:
-      - type: "file"
-        path: "docs/sample_policy.pdf"
-    text_splitter:
-      type: "recursive_character"
-      chunk_size: 1000
-      chunk_overlap: 200
-    retrieval_settings:
-        top_k: 5
-        score_threshold: 0.7
+  - name: "company_wide_info"
+    # ... other settings ...
 ```
 
-### Agent-Specific Knowledge Base
-
-You can also assign a knowledge base as a tool to a specific agent. This allows the agent to decide when to query the knowledge base.
+#### 2. Agent-Specific Knowledge Base (as a Tool)
+You can also give a knowledge base to a specific agent as a tool. This lets the agent decide *when* to search for information, which is more efficient for specialized tasks.
 
 ```yaml
 agent_list:
   - policy_expert:
-      system_prompt: You answer questions about company policies. Use the search_knowledge_base tool.
+      system_prompt: "You are an expert on company policies. Use the 'search_company_policies_kb' tool to find information."
       knowledge_base:
-        - name: "company_policies"
-          description: "Search company policies"
-          vector_store:
-            type: chroma
-            settings:
-              collection_name: "policies"
-              persist_directory: "./rag_db"
-          embedding:
-            model_id: "amazon.titan-embed-text-v1"
-          data_sources:
-            - type: "file"
-              path: "docs/policy.pdf"
-          text_splitter:
-            type: "recursive_character"
-            chunk_size: 1000
-            chunk_overlap: 200
-          retrieval_settings:
-              top_k: 5
-              score_threshold: 0.7
+        - name: "company_policies_kb"
+          description: "Search for company policies and procedures."
+          # ... other settings ...
 ```
 
 ## Data Sources
@@ -862,69 +673,91 @@ knowledge_base:
 
 ## Memory Management
 
-The framework supports persistent memory to maintain context across sessions. This allows agents to recall previous interactions and provide more personalized responses.
-
-### Memory Configuration
-
-Add a `memory` section to your YAML configuration. The vector store is configurable (Chroma, Postgres, S3). Please refer to the respective vector store configuration sections above for details on settings.
-
-```yaml
-memory:
-  vector_store:
-    type: chroma # Options: chroma, postgres, s3
-    settings:
-      collection_name: "chat_memory"
-      persist_directory: "./memory_db"
-  embedding:
-    model_id: "bedrock/amazon.titan-embed-text-v1"
-    region_name: "us-west-2"
-  settings:
-    max_recent_turns: 5       # Number of recent turns to include
-    max_relevant_turns: 3     # Number of semantically relevant past turns to include
-    similarity_threshold: 0.6 # Threshold for semantic relevance (0.0 to 1.0)
-```
+Enable your agents to remember past conversations and learn from interactions over time. The framework's memory management system provides both short-term and long-term memory, ensuring conversations are coherent and context-aware.
 
 ### How It Works
 
-1. **Storage**: Every interaction (user query + agent response) is stored in a vector database.
-2. **Retrieval**: Before processing a new query, the system retrieves:
-   - The most recent conversation turns (short-term memory)
-   - Semantically relevant past interactions (long-term memory)
-3. **Augmentation**: This context is automatically appended to the user's prompt, allowing the agent to "remember" past details.
+When memory is enabled, the system automatically saves each user query and agent response. Before the agent processes a new query, the memory system retrieves relevant history and adds it to the prompt. This gives the agent a "memory" of the conversation so far.
+
+The retrieval process combines two types of memory:
+1.  **Short-Term Memory**: The most recent turns of the conversation are always included. This keeps the immediate context fresh.
+2.  **Long-Term Memory**: The system performs a semantic search over the entire conversation history to find past interactions that are most relevant to the current query. This allows the agent to recall details from much earlier in the conversation.
+
+### Configuration Explained
+
+To enable memory, add a `memory` section to your configuration file.
+
+```yaml
+memory:
+  # --- Where to store conversation history ---
+  vector_store:
+    type: "chroma"  # Options: "chroma", "postgres", "s3".
+    settings:
+      collection_name: "chat_history_db"
+      persist_directory: "./memory_db" # Folder to save the memory database.
+
+  # --- How to understand the conversation for searching ---
+  embedding:
+    model_id: "bedrock/amazon.titan-embed-text-v1" # The AI model for vectorizing text.
+    region_name: "us-west-2" # Optional, for cloud providers like AWS.
+
+  # --- How to retrieve and use memory ---
+  settings:
+    # The number of the most recent conversation turns to always include.
+    # This provides immediate, short-term context.
+    max_recent_turns: 5
+
+    # The maximum number of older, semantically relevant turns to retrieve.
+    # This provides long-term memory by searching the history.
+    max_relevant_turns: 3
+
+    # The similarity score required for a past turn to be considered "relevant".
+    # A lower value (e.g., 0.5) finds more, broader matches.
+    # A higher value (e.g., 0.8) finds more specific, direct matches.
+    similarity_threshold: 0.6
+```
+
+### Vector Store Options
+
+The memory system uses the same vector store options as the Knowledge Base. You can choose between `chroma`, `postgres`, and `s3`. Please refer to the **Vector Store Options** section under [Knowledge Base Integration](#knowledge-base-integration) for detailed configuration examples for each type.
 
 ## MCP Integration
 
-Model Context Protocol (MCP) servers provide enhanced capabilities like filesystem access, database queries, and more.
+Model Context Protocol (MCP) provides a powerful way to extend your agents' capabilities by connecting them to external tools and services. Think of MCP servers as providers of "super-tools" that can give your agents the ability to interact with filesystems, databases, or any other external API.
 
-### MCP Configuration
+### How It Works
+
+When you configure an MCP server, the framework automatically discovers the tools it offers and makes them available to your agents. The agent can then intelligently decide when to use these tools to accomplish a task. Once configured, the tools from all MCP servers are added to the agent's list of available tools, and the agent can use them just like any other tool.
+
+### Configuration Explained
+
+You can configure MCP servers in two ways: by running a local process or by connecting to a remote URL.
 
 ```yaml
 mcps:
-  filesystem:
-    command: "mcp-server-filesystem"
-    args: ["/data"]
-  
-  environment:
-    command: "uv"
-    args:
-      - "run"
-      - "--with"
-      - "mcp-env-server"
-      - "env_lookup_server"
+  # --- Method 1: Running a Local MCP Server ---
+  # Use this to run a command-line tool or script as a managed process.
+  # The framework will start and stop the server for you.
+  filesystem_access:
+    # The command to execute to start the server.
+    command: "mcp-server-filesystem" 
+    # Optional arguments to pass to the command.
+    args: ["/path/to/allowed/directory"]
+
+  # --- Method 2: Connecting to a Remote MCP Server ---
+  # Use this to connect to an existing server that is already running.
+  # This is common for connecting to microservices or third-party APIs.
+  remote_database_api:
+    # The URL of the remote MCP server.
+    # It can be a standard HTTP endpoint or a Server-Sent Events (SSE) stream.
+    url: "http://api.internal.mycompany.com/mcp"
+    # Optional headers to include with the request, useful for authentication.
+    headers:
+      # You can use environment variables for sensitive data like API keys.
+      Authorization: "Bearer ${DATABASE_API_KEY}" 
 ```
 
-### Using MCP Servers
-
-Agents automatically get access to MCP tools defined in the configuration:
-
-```yaml
-agent_list:
-  - system_agent:
-      system_prompt: |
-        You can access the filesystem and environment variables
-        using your available tools.
-      # MCP tools automatically available
-```
+For systems with many MCP tools, this can increase startup time. To optimize this, the framework also supports lazy loading. See the next section for details.
 
 ## Lazy MCP Loading
 
@@ -1025,110 +858,42 @@ result = await agent.ainvoke(
 result = await agent.ainvoke("Quantum Computing")
 ```
 
-### Variable Detection
-
-View detected variables:
-
-```python
-info = agent.validate_tasks()
-print(info['input_variables'])
-# Output: ['topic', 'aspect', 'industry']
-```
-
 ## Usage Examples
 
 ### Example 1: Simple Research Agent
 
 ```yaml
 model:
-  model_id: us.anthropic.claude-sonnet-4-20250514-v1:0
-  region_name: us-west-2
+  model_id: anthropic.claude-3-sonnet-20240229-v1:0
+  cloud_provider: aws
 
 agent_list:
   - research_agent:
       system_prompt: You help with researching on a topic.
-
-crew_config:
-  pattern: sequential
 ```
 
-**Usage:**
-```python
-agent = StrandsAgent(
-    agent_name="research_agent",
-    agent_config=config
-)
-await agent.initialize()
-result = await agent.ainvoke("Tell me about AI trends")
-```
-
-### Example 2: Multi-Agent Research Pipeline
+### Example 2: Multi-Agent Research Team
 
 ```yaml
 model:
-  model_id: us.anthropic.claude-sonnet-4-20250514-v1:0
-  region_name: us-west-2
+  model_id: anthropic.claude-3-sonnet-20240229-v1:0
+  cloud_provider: aws
 
 tools:
-  calculator:
-    module: strands_tools
+  search:
+    module: langchain_community.tools
+    class: DuckDuckGoSearchRun
 
 agent_list:
   - researcher:
-      system_prompt: |
-        You research topics and gather information.
-        Hand off to analyst when you have findings.
-  
-  - analyst:
-      system_prompt: |
-        You analyze information and identify key insights.
-        Hand off to writer for final output.
-      context:
-        - researcher
+      system_prompt: You research topics using the search tool.
+      tools:
+        - search
   
   - writer:
-      system_prompt: |
-        You write clear, engaging summaries of analyzed information.
-      context:
-        - researcher
-        - analyst
+      system_prompt: You write engaging articles based on provided research.
 
-crew_config:
-  pattern: graph
-  entry_agent: researcher
-  verbose: true
-```
-
-### Example 3: Tool-Enabled Assistant
-
-```yaml
-model:
-  model_id: us.anthropic.claude-sonnet-4-20250514-v1:0
-  region_name: us-west-2
-
-tools:
-  random_generator:
-    module: random_generator
-    base_path: ./../utils
-  calculator:
-    module: strands_tools
-    class: calculator
-  current_time:
-    module: strands_tools
-    class: current_time
-
-agent_list:
-  - assistant:
-      system_prompt: |
-        You are a helpful assistant that can do math, tell time,
-        and generate random numbers.
-      tools:
-        - random_generator
-        - calculator
-        - current_time
-
-crew_config:
-  pattern: sequential
+system_prompt: You are an editor. Coordinate the research and writing process.
 ```
 
 ## Streaming Support
@@ -1137,34 +902,8 @@ crew_config:
 
 ```python
 async for chunk in agent.astream("Research quantum computing"):
-    if chunk.get('type') == 'text_delta':
+    if 'content' in chunk:
         print(chunk['content'], end='', flush=True)
-    elif chunk.get('type') == 'agent_complete':
-        print(f"\n[{chunk['agent']} completed]")
-    elif chunk.get('type') == 'handoff':
-        print(f"\n{chunk['content']}")
-```
-
-### Stream Event Types
-
-- `text_delta`: Incremental text output
-- `agent_complete`: Agent finished its task
-- `handoff`: Task handed off to another agent
-- `tool_use`: Tool invocation
-- `status`: Status updates
-
-### Multi-Agent Streaming
-
-For graph and swarm patterns, streaming provides visibility into agent handoffs:
-
-```python
-async for event in agent.astream("Analyze market trends"):
-    if event.get('type') == 'handoff':
-        print(f"Handoff: {event['content']}")
-    elif event.get('type') == 'agent_complete':
-        agent_name = event.get('agent')
-        output = event.get('content')
-        print(f"\n{agent_name} output:\n{output}\n")
 ```
 
 ## Observability
@@ -1190,236 +929,30 @@ agent = StrandsAgent(
     session_id="user-session-123",
     user_id="user-456"
 )
-
-# Output is automatically tracked per session
-result = await agent.ainvoke("Query")
-```
-
-### Session Output Files
-
-Session outputs are automatically saved to:
-```
-output/{session_id}/output.jsonl
-```
-
-Each line contains:
-```json
-{
-  "agent": "researcher",
-  "type": "text_delta",
-  "content": "Research findings...",
-  "timestamp": "2025-01-15T10:30:00Z"
-}
-```
-
-### Agent Information
-
-Get detailed agent information:
-
-```python
-info = agent.get_agent_info()
-print(info)
-```
-
-Output:
-```python
-{
-    'agent_name': 'research_crew',
-    'session_id': 'session-123',
-    'initialized': True,
-    'has_observability': True,
-    'region': 'us-west-2',
-    'model_info': {
-        'model_id': 'us.anthropic.claude-sonnet-4-20250514-v1:0',
-        'region': 'us-west-2'
-    },
-    'orchestration': {
-        'pattern': 'graph',
-        'agent_count': 3,
-        'entry_agent': 'researcher'
-    },
-    'config_summary': {
-        'agent_count': 3,
-        'tool_count': 1,
-        'agents': ['researcher', 'analyst', 'writer'],
-        'tools': ['calculator']
-    }
-}
 ```
 
 ## Best Practices
 
-### Configuration Design
-
-1. **Clear Agent Roles**
-   ```yaml
-   # ✅ Good - Specific role and handoff instructions
-   - researcher:
-       system_prompt: |
-         Research topics thoroughly using credible sources.
-         When done, hand off to analyst for deeper analysis.
-   
-   # ❌ Bad - Vague role
-   - agent1:
-       system_prompt: Help with tasks.
-   ```
-
-2. **Meaningful Context**
-   ```yaml
-   # ✅ Good - Analyst needs researcher's output
-   - analyst:
-       context: [researcher]
-   
-   # ❌ Bad - Unnecessary context
-   - analyst:
-       context: [researcher, writer, coordinator]  # Too many
-   ```
-
-3. **Tool Assignment**
-   ```yaml
-   # ✅ Good - Only assign needed tools
-   - data_analyst:
-       tools: [calculator]
-   
-   # ❌ Bad - All agents get all tools
-   tools:
-     - calculator
-     - file_reader
-     - web_scraper
-     # All agents get everything
-   ```
-
-### Security
-
-1. **Use Environment Variables**
-   ```yaml
-   # ✅ Good
-   model:
-     model_id: us.anthropic.claude-sonnet-4-20250514-v1:0
-     # AWS credentials from environment
-   
-   # ❌ Bad
-   model:
-     api_key: "hardcoded-key"  # Never do this
-   ```
-
-2. **Validate Tool Access**
-   - Only assign tools that agents need
-   - Use MCP servers with appropriate permissions
-   - Implement proper error handling
-
-### Performance
-
-1. **Choose the Right Pattern**
-   - Use `sequential` for simple single-agent tasks
-   - Use `graph` for complex multi-agent collaboration
-   - Use `swarm` for parallel processing needs
-
-2. **Model Selection**
-   ```yaml
-   # For complex reasoning
-   model:
-     model_id: us.anthropic.claude-sonnet-4-20250514-v1:0
-   
-   # For faster, simpler tasks
-   model:
-     model_id: us.anthropic.claude-3-haiku-20240307-v1:0
-   ```
-
-3. **Session Management**
-   - Use consistent session IDs for related queries
-   - Clean up old session files periodically
-   - Monitor session output sizes
+1. **Clear Agent Roles**: Define specific responsibilities for each agent to avoid confusion.
+2. **Tool Scoping**: Assign only necessary tools to each agent to reduce hallucination risks.
+3. **Supervisor Prompts**: For multi-agent systems, ensure the supervisor's prompt clearly defines the workflow and delegation strategy.
+4. **Security**: Use environment variables for API keys and sensitive data.
 
 ## Troubleshooting
-
-### Common Issues
 
 **Issue: "Agent not initialized"**
 ```python
 # Solution: Always call initialize() before use
 await agent.initialize()
-result = await agent.ainvoke("Query")
 ```
 
 **Issue: "Tool not found"**
 ```yaml
 # Problem: Tool referenced but not defined
 # Solution: Define tool in tools section
-
 tools:
   missing_tool:
     module: tool_module
-```
-
-**Issue: "Context agent not found"**
-```yaml
-# Problem: Context references non-existent agent
-context:
-  - nonexistent_agent  # Agent doesn't exist
-
-# Solution: Verify agent key matches
-agent_list:
-  - actual_agent_name:  # Use this in context
-      system_prompt: "..."
-```
-
-**Issue: "AWS credentials not found"**
-```bash
-# Solution: Configure AWS credentials
-aws configure
-# Or set environment variables
-export AWS_ACCESS_KEY_ID=xxx
-export AWS_SECRET_ACCESS_KEY=xxx
-export AWS_DEFAULT_REGION=us-west-2
-```
-
-### Debugging
-
-1. **Enable Verbose Logging**
-   ```yaml
-   crew_config:
-     verbose: true
-   ```
-
-2. **Check Agent Information**
-   ```python
-   info = agent.get_agent_info()
-   print(f"Initialized: {info['initialized']}")
-   print(f"Pattern: {info['orchestration']['pattern']}")
-   ```
-
-3. **Validate Configuration**
-   ```python
-   diagnostics = agent.validate_tasks()
-   print(f"Agents: {diagnostics['agents']}")
-   print(f"Tools: {diagnostics['tools']}")
-   print(f"Variables: {diagnostics['input_variables']}")
-   ```
-
-4. **Monitor Session Output**
-   ```python
-   # Check session output file
-   session_file = f"output/{agent.session_id}/output.jsonl"
-   with open(session_file) as f:
-       for line in f:
-           print(json.loads(line))
-   ```
-
-### AWS Bedrock Issues
-
-**Issue: Model not available in region**
-```yaml
-# Solution: Check model availability and update region
-model:
-  model_id: us.anthropic.claude-sonnet-4-20250514-v1:0
-  region_name: us-east-1  # Try different region
-```
-
-**Issue: Throttling errors**
-```python
-# Solution: Implement retry logic or request quota increase
-# Contact AWS support for increased limits
 ```
 
 ## API Reference
@@ -1433,24 +966,13 @@ class StrandsAgent:
         agent_config: Dict[str, Any],
         session_id: str = "default",
         user_id: str = "default",
-        region_name: str = "us-west-2"
+        config_root: Optional[str] = None
     )
     
-    async def initialize() -> Any
+    async def initialize() -> None
     async def ainvoke(message: str, config: Dict = None) -> Dict
     def invoke(message: str, config: Dict = None) -> Dict
     async def astream(message: str, config: Dict = None) -> AsyncGenerator
     def validate_tasks() -> Dict[str, Any]
     def get_agent_info() -> Dict[str, Any]
 ```
-
-## Additional Resources
-
-- [AWS Strands SDK Documentation](https://docs.aws.amazon.com/bedrock/)
-- [AWS Bedrock Documentation](https://docs.aws.amazon.com/bedrock/)
-- [Anthropic Claude Models](https://www.anthropic.com/claude)
-- [MCP Documentation](https://modelcontextprotocol.io/)
-
----
-
-**Need help?** Open an issue or check AWS Bedrock support channels.
