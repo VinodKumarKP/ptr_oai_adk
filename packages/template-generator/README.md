@@ -31,6 +31,101 @@ A powerful, interactive CLI tool designed to instantly scaffold production-ready
 
 ## 🚀 Getting Started & Next Steps
 
+### Installation
+
+Install the template generator tool:
+
+```bash
+mkdir agent_development
+cd agent_development
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install uv
+
+uv pip install 'oai-template-generator @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit@main#subdirectory=packages/template-generator'
+```
+
+### Usage
+
+#### 1. List Available Templates
+
+View the types of projects you can create:
+
+```bash
+oai-gen list
+```
+
+#### 2. Create a New Project
+
+Start the interactive wizard for a fully guided experience:
+
+```bash
+oai-gen new
+```
+
+Or provide arguments directly to skip initial prompts:
+
+Agent Project
+```bash
+oai-gen new agent my_agent_project --author "Jane Doe" --email "jane.doe@capgemini.com"
+```
+
+MCP Project
+```bash
+oai-gen new mcp my_agent_project --author "Jane Doe" --email "jane.doe@capgemini.com"
+```
+
+## 🏗 Project Types & Workflows
+
+### 🤖 Agent Project
+When creating an agent, the CLI will guide you through:
+1. **Framework & Pattern Selection**: Choose your framework and its corresponding orchestration pattern.
+2. **Agent Configuration**:
+   - Define single or multiple agents. For multi-agent setups, specify the `entry_agent`.
+   - Configure **LLM Models** (e.g., Claude, Llama) and AWS Regions.
+   - Enable and define **Tools**, **MCP Servers**, **Memory**, and **Knowledge Bases**.
+   - Set up **System Prompts** and enable **Guardrails**.
+
+**Generated Structure:**
+```text
+ptr_agent_servers_my_project/
+├── agentic_registry_agents/
+│   ├── agents/
+│   │   └── my_agent/
+│   │       ├── agent.py
+│   │       └── server.py
+│   ├── agents_config/
+│   │   └── my_agent.yaml      # Full configuration (Model, Tools, KB, etc.)
+│   └── utils/
+│       └── my_agent_utils.py  # Scaffolded tool functions
+├── pyproject.toml             # Dependencies updated based on framework
+├── requirements.txt
+└── .venv/
+```
+
+### 🛠 MCP Project
+For MCP servers, the CLI will ask for:
+1. **Server List**: Define one or multiple servers.
+2. **Configuration**: Set ports, descriptions, and environment variables.
+3. **Tool Class Name**: Define the class name for your tool logic, which will be auto-generated.
+
+**Generated Structure:**
+```text
+ptr_mcp_servers_my_project/
+├── mcp_registry_servers/
+│   ├── servers/
+│   │   └── my_server/
+│   │       └── server.py      # Entry point
+│   ├── servers_config/
+│   │   └── my_server.yaml     # Server configuration
+│   └── tools/
+│       └── my_server.py       # Tool implementation class
+├── pyproject.toml
+└── .venv/
+```
+
+## Development
+
 The template generator automatically initializes a Git repository and creates a Python virtual environment (`.venv`) for you.
 
 To get started with your new project, follow these steps:
@@ -62,14 +157,6 @@ To get started with your new project, follow these steps:
 6.  **Review Your Configuration:**
     Open the generated `.../agents_config/<agent_name>.yaml` or `.../servers_config/<server_name>.yaml` file and review the settings, updating them as necessary for your specific use case.
 
-7.  **Run your server!**
-    ```bash
-    # For Agent projects
-    python -m agentic_registry_agents.server
-
-    # For MCP projects
-    python -m mcp_registry_servers.server
-    ```
 
 ## 📝 Configuration Details
 
