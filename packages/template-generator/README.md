@@ -29,88 +29,47 @@ A powerful, interactive CLI tool designed to instantly scaffold production-ready
     - Auto-generates `pyproject.toml` and `requirements.txt` with optional dependencies based on selected features.
     - Initializes a **Git** repository and creates a **Virtual Environment** (`.venv`).
 
-## 🚀 Getting Started
+## 🚀 Getting Started & Next Steps
 
-### Installation
+The template generator automatically initializes a Git repository and creates a Python virtual environment (`.venv`) for you.
 
-Install the tool in editable mode from the source:
+To get started with your new project, follow these steps:
 
-```bash
-pip install -e .
-```
+1.  **Navigate into your project directory:**
+    ```bash
+    cd <your_project_name>
+    ```
 
-### Usage
+2.  **Activate the virtual environment:**
+    ```bash
+    source .venv/bin/activate
+    ```
+    *(On Windows, use `.venv\Scripts\activate`)*
 
-#### 1. List Available Templates
+3.  **Install `uv`, a high-performance package manager:**
+    ```bash
+    pip install uv
+    ```
 
-View the types of projects you can create:
+4.  **Install project dependencies using `uv`:**
+    ```bash
+    uv pip install -r requirements.txt
+    ```
 
-```bash
-oai-gen list
-```
+5.  **(Optional) Add More Dependencies:**
+    If your project requires additional packages, add them to `pyproject.toml` and/or `requirements.txt`, then re-run the install command.
 
-#### 2. Create a New Project
+6.  **Review Your Configuration:**
+    Open the generated `.../agents_config/<agent_name>.yaml` or `.../servers_config/<server_name>.yaml` file and review the settings, updating them as necessary for your specific use case.
 
-Start the interactive wizard for a fully guided experience:
+7.  **Run your server!**
+    ```bash
+    # For Agent projects
+    python -m agentic_registry_agents.server
 
-```bash
-oai-gen new
-```
-
-Or provide arguments directly to skip initial prompts:
-
-```bash
-oai-gen new agent my_agent_project --author "Jane Doe" --email "jane.doe@capgemini.com"
-```
-
-## 🏗 Project Types & Workflows
-
-### 🤖 Agent Project
-When creating an agent, the CLI will guide you through:
-1. **Framework & Pattern Selection**: Choose your framework and its corresponding orchestration pattern.
-2. **Agent Configuration**:
-   - Define single or multiple agents. For multi-agent setups, specify the `entry_agent`.
-   - Configure **LLM Models** (e.g., Claude, Llama) and AWS Regions.
-   - Enable and define **Tools**, **MCP Servers**, **Memory**, and **Knowledge Bases**.
-   - Set up **System Prompts** and enable **Guardrails**.
-
-**Generated Structure:**
-```text
-ptr_agent_servers_my_project/
-├── agentic_registry_agents/
-│   ├── agents/
-│   │   └── my_agent/
-│   │       ├── agent.py
-│   │       └── server.py
-│   ├── agents_config/
-│   │   └── my_agent.yaml      # Full configuration (Model, Tools, KB, etc.)
-│   └── utils/
-│       └── my_agent_utils.py  # Scaffolded tool functions
-├── pyproject.toml             # Dependencies updated based on framework
-├── requirements.txt
-└── .venv/
-```
-
-### 🛠 MCP Project
-For MCP servers, the CLI will ask for:
-1. **Server List**: Define one or multiple servers.
-2. **Configuration**: Set ports, descriptions, and environment variables.
-3. **Tool Class Name**: Define the class name for your tool logic, which will be auto-generated.
-
-**Generated Structure:**
-```text
-ptr_mcp_servers_my_project/
-├── mcp_registry_servers/
-│   ├── servers/
-│   │   └── my_server/
-│   │       └── server.py      # Entry point
-│   ├── servers_config/
-│   │   └── my_server.yaml     # Server configuration
-│   └── tools/
-│       └── my_server.py       # Tool implementation class
-├── pyproject.toml
-└── .venv/
-```
+    # For MCP projects
+    python -m mcp_registry_servers.server
+    ```
 
 ## 📝 Configuration Details
 
