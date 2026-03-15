@@ -35,29 +35,11 @@ The OpenAI Multi-Agent Framework enables you to create sophisticated agent orche
 
 The framework operates on a simple principle: your YAML configuration is the single source of truth that defines the entire system. The `OpenAIAgent` class reads this configuration and dynamically constructs the agent or team of agents at runtime.
 
-```text
-┌───────────────────┐
-│   YAML Config     │
-│ (Your Definition) │
-└────────┬──────────┘
-         │
-         ▼
-┌───────────────────┐
-│   OpenAIAgent     │
-│ (Framework Core)  │
-└────────┬──────────┘
-         │
-         ▼
-┌───────────────────┐
-│  Orchestrator &   │
-│      Agents       │
-└────────┬──────────┘
-         │
-         ▼
-┌───────────────────┐
-│    Tools, KB,     │
-│      Memory       │
-└───────────────────┘
+```mermaid
+    graph TD
+        A[YAML Config<br>] --> B(OpenAIAgent<br>Framework Core);
+        B --> C{Orchestrator & Agents};
+        C --> D[Tools, KB, Memory];
 ```
 
 ### What Can You Build?
