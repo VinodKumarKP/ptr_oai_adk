@@ -37,7 +37,7 @@ The framework operates on a simple principle: your YAML configuration is the sin
 
 ```mermaid
     graph TD
-        A[YAML Config<br>] --> B(OpenAIAgent<br>Framework Core);
+        A[YAML Config<br>] --> B(StrandsAgent<br>Framework Core);
         B --> C{Orchestrator & Agents};
         C --> D[Tools, KB, Memory];
 ```
