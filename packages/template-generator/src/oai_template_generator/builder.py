@@ -17,6 +17,11 @@ from oai_template_generator.constants import (
     TOKEN_DESCRIPTION,
     TOKEN_TITLE,
     FRAMEWORK_INFO,
+    AGENT_CORE_DEPS,
+    AGENT_CORE_SUBDIRS,
+    VECTOR_STORE_EXTRAS,
+    TOKEN_AGENT_CORE_PYPROJECT,
+    TOKEN_AGENT_CORE_REQUIREMENTS,
 )
 
 # Configure logging
@@ -208,8 +213,9 @@ class {tools_class_name}:
                 if server_config["source"]:
                     yaml_content.append(f"source: {server_config['source']}")
                     
-                if server_config["env"]:
-                    yaml_content.append("env:")
+                yaml_content.append("env: {}")
+                if server_config.get("env"):
+                    yaml_content[-1] = "env:"
                     for k, v in server_config["env"].items():
                         yaml_content.append(f"  {k}: {v}")
                 
@@ -386,7 +392,7 @@ def {tool}():
                 if mcp_servers:
                     yaml_content.append("      mcps:")
                     for ms in mcp_servers:
-                        yaml_content.append(f"        - {ms}")
+                        yaml_content.append(f"        - {ms['name']}")
                 else:
                     yaml_content.append("      mcps: []")
                 
@@ -432,7 +438,7 @@ def {tool}():
                  if mcp_servers:
                     yaml_content.append("      mcps:")
                     for ms in mcp_servers:
-                        yaml_content.append(f"        - {ms}")
+                        yaml_content.append(f"        - {ms['name']}")
                  else:
                     yaml_content.append("      mcps: []")
                  
@@ -467,19 +473,21 @@ def {tool}():
             yaml_content.append("# tools: {}")
             yaml_content.append("")
 
+        yaml_content.append("# For MCP type agents")
+        yaml_content.append("mcps: {}")
         if mcp_servers:
-            yaml_content.append("# For MCP type agents")
-            yaml_content.append("mcps:")
+            yaml_content[-1] = "mcps:"
             for srv in mcp_servers:
-                yaml_content.append(f"  {srv}:")
-                yaml_content.append("    command: python")
-                yaml_content.append("    args: []")
-                yaml_content.append(f"    description: MCP server {srv}")
-                yaml_content.append(f"    title: {srv.replace('_', ' ').title()}")
-                yaml_content.append("    env: {}")
-            yaml_content.append("")
-        else:
-            yaml_content.append("# mcps: {}")
+                srv_name = srv["name"]
+                srv_type = srv["type"]
+                yaml_content.append(f"  {srv_name}:")
+                if srv_type == "stdio":
+                    yaml_content.append(f"    command: {srv['command']}")
+                    yaml_content.append(f"    args: {srv['args']}")
+                    yaml_content.append(f"    env: {srv.get('env', '{}')}")
+                else: # remote
+                    yaml_content.append(f"    url: {srv['url']}")
+                    yaml_content.append(f"    headers: {srv.get('headers', '{}')}")
             yaml_content.append("")
         
         # Memory
@@ -560,9 +568,10 @@ def {tool}():
             for tag in config['tags']:
                 yaml_content.append(f"  - {tag}")
         
-        if config['env']:
-            yaml_content.append("env:")
-            for k, v in config['env'].items():
+        yaml_content.append("env: {}")
+        if config.get("env"):
+            yaml_content[-1] = "env:"
+            for k, v in config["env"].items():
                 yaml_content.append(f"  {k}: {v}")
         
         if config['prompts']:
@@ -579,45 +588,63 @@ def {tool}():
         new_yaml = config_dir / f"{agent_name}.yaml"
         new_yaml.write_text("\n".join(yaml_content) + "\n", encoding="utf-8")
 
-    def _update_dependencies(self):
+    def _update_dependencies(self) -> None:
         """Uncomment framework-specific dependencies in pyproject.toml and requirements.txt."""
         if not self.framework:
             return
 
-        # Mapping is in constants now, but we kept logic locally or can use constants
-        from oai_template_generator.constants import FRAMEWORK_INFO
-        
-        # Determine dependency name from framework
-        dep_name = None
-        if self.framework == "langgraph":
-            dep_name = "oai-langgraph-core"
-        elif self.framework == "crewai":
-            dep_name = "oai-crewai-core"
-        elif self.framework == "strands":
-            dep_name = "oai-aws-strands-core"
-        elif self.framework == "openai":
-            dep_name = "oai-openai-core"
-            
-        if not dep_name:
+        base_dep = AGENT_CORE_DEPS.get(self.framework)
+        if not base_dep:
             return
+
+        extras = set()
+        for item in self.items:
+            if not isinstance(item, dict):
+                continue
+            
+            if item.get("memory_config"):
+                extras.add("vector-required")
+                mem_type = item["memory_config"].get("type")
+                if mem_type in VECTOR_STORE_EXTRAS:
+                    extras.add(VECTOR_STORE_EXTRAS[mem_type])
+            
+            if item.get("global_kb"):
+                extras.add("vector-required")
+                for kb in item["global_kb"]:
+                    kb_type = kb.get("type")
+                    if kb_type in VECTOR_STORE_EXTRAS:
+                        extras.add(VECTOR_STORE_EXTRAS[kb_type])
+            
+            for sub in item.get("sub_agents", []):
+                if sub.get("knowledge_base"):
+                    extras.add("vector-required")
+                    for kb in sub["knowledge_base"]:
+                        kb_type = kb.get("type")
+                        if kb_type in VECTOR_STORE_EXTRAS:
+                            extras.add(VECTOR_STORE_EXTRAS[kb_type])
+            
+            if item.get("use_guardrails"):
+                extras.add("guardrails")
+
+        # Build dependency strings
+        extras_str = ",".join(sorted(list(extras)))
+        pyproject_dep = f'"{base_dep}[{extras_str}]"' if extras else f'"{base_dep}"'
+        
+        subdir = AGENT_CORE_SUBDIRS.get(self.framework)
+        req_dep = f"{base_dep}[{extras_str}] @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit.git@main#subdirectory={subdir}" if extras else f"{base_dep} @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit.git@main#subdirectory={subdir}"
 
         # Update pyproject.toml
         pyproject_path = self.project_dir / "pyproject.toml"
         if pyproject_path.exists():
             content = pyproject_path.read_text(encoding="utf-8")
-            pattern = rf'#\s*"{dep_name}",'
-            if dep_name == "oai-langgraph-core":
-                content = re.sub(r'#\s*"oai-langraph-core",', f'"{dep_name}",', content)
-            
-            content = re.sub(pattern, f'"{dep_name}",', content)
+            content = content.replace(f'"{TOKEN_AGENT_CORE_PYPROJECT}"', pyproject_dep)
             pyproject_path.write_text(content, encoding="utf-8")
 
         # Update requirements.txt
         req_path = self.project_dir / "requirements.txt"
         if req_path.exists():
             content = req_path.read_text(encoding="utf-8")
-            pattern = rf'#\s*({dep_name}\s*@\s*git\+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit)'
-            content = re.sub(pattern, r'\1', content)
+            content = content.replace(TOKEN_AGENT_CORE_REQUIREMENTS, req_dep)
             req_path.write_text(content, encoding="utf-8")
 
     def _render_files(self):

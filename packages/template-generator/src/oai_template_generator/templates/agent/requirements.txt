@@ -1,11 +1,4 @@
 oai-agent-server @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit.git@main#subdirectory=packages/agent-server
-# langgraph framework -- Uncomment for langgraph agent else remove it
-# oai-langgraph-core @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit@main#subdirectory=packages/langgraph-core
-# crewai framework  -- Uncomment for crewai agent else remove it
-# oai-crewai-core @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit@main#subdirectory=packages/crewai-core
-# strands framework -- Uncomment for strands agent else remove it
-# oai-aws-strands-core @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit@main#subdirectory=packages/aws-strands-core
-# openai framework -- Uncomment for openai agen else remove it
-# oai-openai-core @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit@main#subdirectory=packages/openai-core
+{{AGENT_CORE_REQUIREMENTS_PLACEHOLDER}}
 # agent evaluator -- Uncomment for running agent evaluator
 # oai-agent-evaluator @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit@main#subdirectory=packages/agent-evaluator

@@ -8,26 +8,26 @@ A powerful, interactive CLI tool designed to instantly scaffold production-ready
 ## ✨ Features
 
 - **🤖 Advanced Agent Scaffolding**:
-  - Support for leading frameworks: **LangGraph**, **CrewAI**, **AWS Strands**, and **OpenAI Swarm**.
-  - **Pattern Selection**: Choose from predefined patterns like *Supervisor*, *Agent-as-Tool*, *Swarm*, *Flow*, etc.
-  - **Multi-Agent Orchestration**: Easily configure supervisors and sub-agents with context-aware communication.
+  - **Frameworks**: Support for **LangGraph**, **CrewAI**, **AWS Strands**, and **OpenAI**.
+  - **Orchestration Patterns**: Select framework-specific patterns like `supervisor`, `swarm`, `flow`, or `sequential`.
+  - **Multi-Agent & Entry Points**: Easily configure supervisors, sub-agents with context, and define the `entry_agent` for complex interactions.
   - **Tool Integration**: Automatically scaffolds tool directories and utility scripts.
-  - **Knowledge Base (RAG)**: Built-in support for configuring **Chroma**, **Postgres (pgvector)**, and **S3** based knowledge bases.
-  - **Memory**: Configure global conversation history using vector stores.
+  - **Knowledge Base (RAG)**: Built-in support for configuring **Chroma**, **Postgres (pgvector)**, and **S3** vector stores at both global and agent-specific levels.
+  - **Conversational Memory**: Configure global conversation history using a vector store.
   - **Guardrails**: Integrated placeholder support for **Guardrails AI** validators.
 
 - **🛠 MCP Server Scaffolding**:
-  - Quickly create MCP server projects with standardized directory structures.
-  - Automated `Tools` class generation with dummy implementations.
-  - Dynamic configuration for ports, tags, and environment variables.
+  - **Dynamic Configuration**: Interactively configure `stdio` (command-line) or `remote` (URL-based) MCP servers.
+  - **Automated Tools**: `Tools` class generation with dummy implementations for each server.
+  - **Standardized Structure**: Creates a clean, maintainable structure for server logic, tools, and configuration.
 
 - **⚡ Developer Experience**:
-  - **Interactive CLI**: A guided wizard prompts for all necessary details (models, regions, tools, etc.).
+  - **Interactive CLI**: A guided wizard prompts for all necessary details, from project metadata to advanced agent capabilities.
   - **Automated Setup**:
     - Validates organizational email domains (`@capgemini.com`).
     - Prefixes project names (`ptr_agent_servers_` or `ptr_mcp_servers_`).
-    - Auto-generates `pyproject.toml`, `requirements.txt`, and `docker-compose` configurations.
-    - Initializes **Git** and creates a **Virtual Environment** (`.venv`).
+    - Auto-generates `pyproject.toml` and `requirements.txt` with optional dependencies based on selected features.
+    - Initializes a **Git** repository and creates a **Virtual Environment** (`.venv`).
 
 ## 🚀 Getting Started
 
@@ -51,7 +51,7 @@ oai-gen list
 
 #### 2. Create a New Project
 
-Start the interactive wizard:
+Start the interactive wizard for a fully guided experience:
 
 ```bash
 oai-gen new
@@ -67,13 +67,12 @@ oai-gen new agent my_agent_project --author "Jane Doe" --email "jane.doe@capgemi
 
 ### 🤖 Agent Project
 When creating an agent, the CLI will guide you through:
-1. **Framework Selection**: Choose between LangGraph, CrewAI, etc.
-2. **Pattern Selection**: Select the architectural pattern (e.g., Supervisor, Swarm).
-3. **Agent Configuration**:
-   - Define single or multiple agents.
-   - Configure **LLM Models** (Claude, Llama, etc.) and AWS Regions.
-   - Enable **Tools**, **MCP Servers**, **Memory**, and **Knowledge Bases**.
-   - Set up **System Prompts** and **Guardrails**.
+1. **Framework & Pattern Selection**: Choose your framework and its corresponding orchestration pattern.
+2. **Agent Configuration**:
+   - Define single or multiple agents. For multi-agent setups, specify the `entry_agent`.
+   - Configure **LLM Models** (e.g., Claude, Llama) and AWS Regions.
+   - Enable and define **Tools**, **MCP Servers**, **Memory**, and **Knowledge Bases**.
+   - Set up **System Prompts** and enable **Guardrails**.
 
 **Generated Structure:**
 ```text
@@ -96,7 +95,7 @@ ptr_agent_servers_my_project/
 For MCP servers, the CLI will ask for:
 1. **Server List**: Define one or multiple servers.
 2. **Configuration**: Set ports, descriptions, and environment variables.
-3. **Tool Class Name**: Define the class name for your tool logic.
+3. **Tool Class Name**: Define the class name for your tool logic, which will be auto-generated.
 
 **Generated Structure:**
 ```text
@@ -121,6 +120,11 @@ You can configure knowledge bases at both the **Global** (shared) and **Agent** 
 - **Postgres**: Connection placeholders for pgvector.
 - **S3**: Bucket and region placeholders.
 
+### MCP Servers
+When adding MCPs to an agent, you can specify the type:
+- **`stdio`**: For local command-line servers. The config will include `command`, `args`, and `env`.
+- **`remote`**: For servers accessible via HTTP. The config will include `url` and `headers`.
+
 ### Guardrails
 If enabled, a `guardrails` section is added to your agent config with sample validators like `competitor_check`, `DetectPII`, and `profanity_free`.
 
@@ -129,6 +133,9 @@ If enabled, a `guardrails` section is added to your agent config with sample val
 Contributions are welcome! Please ensure you run tests before submitting a PR.
 
 ```bash
+# Install test dependencies
+pip install -e ".[test]"
+
 # Run tests
 pytest
 ```

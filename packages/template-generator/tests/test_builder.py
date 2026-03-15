@@ -64,7 +64,7 @@ def test_mcp_build(temp_output_dir):
     tools_content = (builder.project_dir / "mcp_registry_servers" / "tools" / "weather_server.py").read_text()
     assert "class WeatherTools" in tools_content
 
-def test_agent_build(temp_output_dir):
+def test_agent_build_simple(temp_output_dir):
     items = [{
         "name": "research_agent",
         "port": "9000",
@@ -74,7 +74,7 @@ def test_agent_build(temp_output_dir):
         "region": "us-east-1",
         "use_tools": True,
         "tool_list": ["google_search"],
-        "mcp_servers": [],
+        "mcp_servers": [{"name": "test_mcp", "type": "stdio", "command": "echo", "args": [], "env": {}}],
         "sub_agents": [],
         "global_kb": [],
         "memory_config": {},
@@ -109,6 +109,7 @@ def test_agent_build(temp_output_dir):
     assert "port: 9000" in yaml_content
     assert "guardrails:" in yaml_content
     assert "research_agent_utils" in yaml_content 
+    assert "test_mcp" in yaml_content
     
     # Verify tools file
     utils_content = (builder.project_dir / "agentic_registry_agents" / "utils" / "research_agent_utils.py").read_text()
@@ -123,7 +124,6 @@ def test_builder_validate_missing_template(temp_output_dir):
         description="D",
         output_dir=temp_output_dir
     )
-    # The new implementation raises FileNotFoundError instead of SystemExit
     with pytest.raises(FileNotFoundError):
         builder._validate()
 
@@ -156,7 +156,8 @@ def test_builder_overwrite(temp_output_dir):
         output_dir=temp_output_dir,
         overwrite=True,
         init_git=False,
-        create_venv=False
+        create_venv=False,
+        items=[{"name": "test_server", "port": "8001", "description": "d", "tags": [], "source": "", "env": {}}]
     )
     builder.build()
     assert not (project_dir / "old_file.txt").exists()
@@ -172,7 +173,8 @@ def test_git_init(temp_output_dir):
             description="D",
             output_dir=temp_output_dir,
             init_git=True,
-            create_venv=False
+            create_venv=False,
+            items=[{"name": "test_server", "port": "8001", "description": "d", "tags": [], "source": "", "env": {}}]
         )
         builder.build()
         assert mock_run.call_count >= 3 # init, add, commit
@@ -187,7 +189,8 @@ def test_venv_create(temp_output_dir):
             description="D",
             output_dir=temp_output_dir,
             init_git=False,
-            create_venv=True
+            create_venv=True,
+            items=[{"name": "test_server", "port": "8001", "description": "d", "tags": [], "source": "", "env": {}}]
         )
         builder.build()
         # Check if venv creation was called
@@ -282,7 +285,7 @@ def test_agent_build_complex(temp_output_dir):
         "global_kb": [{"name": "gkb", "type": "s3", "description": "gd"}],
         "memory_config": {"type": "postgres", "collection_name": "mem"},
         "use_guardrails": False,
-        "mcp_servers": ["mcp1"],
+        "mcp_servers": [{"name": "mcp1", "type": "stdio", "command": "echo", "args": [], "env": {}}],
         "tool_list": [], # No tools covers 'else' branch
         "tags": ["t1"],
         "prompts": ["p1"],
@@ -323,9 +326,7 @@ def test_agent_build_complex(temp_output_dir):
     
     # Check pyproject.toml update
     pyproject_content = (builder.project_dir / "pyproject.toml").read_text()
-    # Assuming template has commented out dependency. If not, this check might fail if not replaced or already present.
-    # But code only replaces if commented out.
-    # assert "oai-openai-core" in pyproject_content
+    assert "oai-openai-agent-core" in pyproject_content
 
 def test_binary_file_copy(temp_output_dir):
     """Test that binary files are skipped during rendering."""
@@ -337,7 +338,8 @@ def test_binary_file_copy(temp_output_dir):
         description="D",
         output_dir=temp_output_dir,
         init_git=False,
-        create_venv=False
+        create_venv=False,
+        items=[{"name": "test_server", "port": "8001", "description": "d", "tags": [], "source": "", "env": {}}]
     )
     
     # Mock project_dir to control rglob and avoid file system issues
@@ -387,7 +389,8 @@ def test_git_init_failure(temp_output_dir):
         description="D",
         output_dir=temp_output_dir,
         init_git=True,
-        create_venv=False
+        create_venv=False,
+        items=[{"name": "test_server", "port": "8001", "description": "d", "tags": [], "source": "", "env": {}}]
     )
     
     with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "git")):
@@ -404,7 +407,8 @@ def test_venv_create_failure(temp_output_dir):
         description="D",
         output_dir=temp_output_dir,
         init_git=False,
-        create_venv=True
+        create_venv=True,
+        items=[{"name": "test_server", "port": "8001", "description": "d", "tags": [], "source": "", "env": {}}]
     )
     
     with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "python")):

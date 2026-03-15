@@ -2,7 +2,7 @@
 
 import re
 import sys
-from oai_template_generator.constants import FRAMEWORK_PATTERNS
+from oai_template_generator.constants import FRAMEWORK_PATTERNS, MODEL_OPTIONS
 
 
 def _ask(prompt: str, default: str = "") -> str:
@@ -215,14 +215,7 @@ def prompt_project_details(
             # Model configuration
             print("  Model Configuration:")
             # Guided Model Selection
-            model_options = [
-                "anthropic.claude-3-5-sonnet-20240620-v1:0",
-                "anthropic.claude-3-sonnet-20240229-v1:0",
-                "anthropic.claude-3-haiku-20240307-v1:0",
-                "meta.llama3-70b-instruct-v1:0",
-                "Custom..."
-            ]
-            model_choice = _choose("    Select a Model ID", model_options)
+            model_choice = _choose("    Select a Model ID", MODEL_OPTIONS)
             if model_choice == "Custom...":
                 model_id = _ask("    Enter Custom Model ID")
             else:
@@ -241,8 +234,35 @@ def prompt_project_details(
             mcp_servers = []
             if confirm("  Will this agent use MCP servers?", default=False):
                 mcp_input = _ask("    List of MCP servers (comma-separated)")
-                mcp_servers = [s.strip() for s in mcp_input.split(",") if s.strip()]
-            
+                mcp_names = [s.strip() for s in mcp_input.split(",") if s.strip()]
+                for mcp_name in mcp_names:
+                    print(f"      Configuration for MCP '{mcp_name}':")
+                    mcp_type = _choose("      Type", ["stdio", "remote"])
+                    mcp_config = {"name": mcp_name, "type": mcp_type}
+                    if mcp_type == "stdio":
+                        mcp_config["command"] = _ask("        Command", default="python")
+                        args_input = _ask("        Args (comma-separated)", default="")
+                        mcp_config["args"] = [a.strip() for a in args_input.split(',')] if args_input else []
+                        env_input = _ask("        Env Vars (key=value, comma-separated)", default="")
+                        env_dict = {}
+                        if env_input:
+                            for pair in env_input.split(','):
+                                if '=' in pair:
+                                    key, value = pair.split('=', 1)
+                                    env_dict[key.strip()] = value.strip()
+                        mcp_config["env"] = env_dict
+                    else: # remote
+                        mcp_config["url"] = _ask("        URL")
+                        headers_input = _ask("        Headers (key=value, comma-separated)", default="")
+                        headers_dict = {}
+                        if headers_input:
+                            for pair in headers_input.split(','):
+                                if '=' in pair:
+                                    key, value = pair.split('=', 1)
+                                    headers_dict[key.strip()] = value.strip()
+                        mcp_config["headers"] = headers_dict
+                    mcp_servers.append(mcp_config)
+
             # Global Memory
             memory_config = {}
             if confirm("  Enable Memory (Conversation History)?", default=False):

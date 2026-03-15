@@ -101,7 +101,7 @@ def test_prompt_project_details_agent():
         "1",                    # 10 (Pattern: supervisor)
         "",                     # 11 (Sub-agents empty)
         "You are a researcher", # 12 (Instructions)
-        "5",                    # 13 (Model - Custom)
+        "8",                    # 13 (Model - Custom)
         "my-custom-model",      # 14
         "us-west-2",            # 15
         "y",                    # 16 (Tools)

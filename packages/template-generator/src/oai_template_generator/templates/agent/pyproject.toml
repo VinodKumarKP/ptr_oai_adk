@@ -1,7 +1,7 @@
 # pyproject.toml
 [build-system]
-requires = ["setuptools>=61.0", "wheel", "ruamel.yaml", "setuptools_scm>=8"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
 
 [project]
 name = "{{PROJECT_NAME}}"
@@ -22,15 +22,7 @@ classifiers = [
 
 dependencies = [
     "oai-agent-server",
-    # Add other dependencies here
-    # langgraph framework -- Uncomment for langgraph agent else remove it
-    # "oai-langgraph-core",
-    # crewai framework  -- Uncomment for crewai agent else remove it
-    # "oai-crewai-core",
-    # strands framework -- Uncomment for strands agent else remove it
-    # "oai-aws-strands-core",
-    # openai framework -- Uncomment for openai agen else remove it
-    # "oai-openai-core",
+    "{{AGENT_CORE_PYPROJECT_PLACEHOLDER}}"
 ]
 
 [tool.uv.sources]
