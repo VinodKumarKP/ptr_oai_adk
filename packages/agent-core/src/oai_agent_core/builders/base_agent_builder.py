@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Tuple
 
 from oai_agent_core.components.configuration.model_config import ConfigManager
+from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.base_knowledge_base_factory import BaseKnowledgeBaseFactory
 from oai_agent_core.core.base_agent import BaseAgent
 from oai_agent_core.core.constants import Constants
@@ -30,6 +31,7 @@ class BaseAgentBuilder(ABC):
             logger: Optional[logging.Logger] = None,
             document_loader: Optional[Any] = None,
             vector_store: Optional[Any] = None,
+            skill_registry: Optional[SkillRegistry] = None,
     ):
         """Initialize the base agent builder.
 
@@ -53,6 +55,7 @@ class BaseAgentBuilder(ABC):
         # Locks to prevent race conditions during concurrent creation
         self._tool_lock = asyncio.Lock()
         self._kb_lock = asyncio.Lock()
+        self.skill_registry = skill_registry
 
     async def create_single_agent(
             self,

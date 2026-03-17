@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional, Type
 from oai_agent_core.components.configuration.model_config import ConfigManager
 from oai_agent_core.components.configuration.model_config import config_manager
 from oai_agent_core.components.observability.langfuse_observability_manager import LangfuseObservabilityManager
+from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.base_model_configuration_manager import BaseModelConfigurationManager
 
 
@@ -88,6 +89,8 @@ class BaseAgent(ABC):
         self.global_kb_factory = None
         self.tool_registry = None
         self.guardrails_manager = None
+        self.skill_registry = SkillRegistry(logger=self.logger,
+                                            project_root=config_root)
 
     def assign_llm(self, model_config: Dict):
         """
@@ -189,11 +192,17 @@ class BaseAgent(ABC):
             for k, v in resolved_env.items():
                 os.environ[k] = v
 
+        async def _init_agent_skills():
+            agent_skills_props = self.agent_config.get("skills", {})
+            if len(agent_skills_props) > 0:
+                self.skill_registry.discover_skills(skills_dir=agent_skills_props.get('skill_dir'))
+
         await asyncio.gather(_load_tools_and_mcp(),
                              _init_global_kb(),
                              _init_memory_store(),
                              _init_guardrails(),
-                             _init_environment_vars())
+                             _init_environment_vars(),
+                             _init_agent_skills())
 
     def _get_conversation_context(self, current_message: str) -> str:
         """Retrieve and format conversation context for the current message.

@@ -150,7 +150,8 @@ class StrandsAgent(BaseAgent):
             tool_registry=self.tool_registry,
             logger=self.logger,
             document_loader=self.document_loader,
-            vector_store=self.vector_store
+            vector_store=self.vector_store,
+            skill_registry=self.skill_registry
         )
 
         crew_config = self.agent_config.get('crew_config', {})

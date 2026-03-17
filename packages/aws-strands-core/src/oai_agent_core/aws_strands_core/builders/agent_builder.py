@@ -5,6 +5,7 @@ import logging
 from typing import Dict, Any, List, Optional, Callable
 
 from oai_agent_core.builders.base_agent_builder import BaseAgentBuilder
+from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.constants import Constants
 
 try:
@@ -42,6 +43,7 @@ class AgentBuilder(BaseAgentBuilder):
             logger: Optional[logging.Logger] = None,
             document_loader: Optional[Any] = None,
             vector_store: Optional[Any] = None,
+            skill_registry: Optional[SkillRegistry] = None
     ):
         """Initialize the agent builder.
 
@@ -58,7 +60,8 @@ class AgentBuilder(BaseAgentBuilder):
             llm=llm,
             logger=logger,
             document_loader=document_loader,
-            vector_store=vector_store
+            vector_store=vector_store,
+            skill_registry=skill_registry
         )
 
     async def create_agent(
@@ -101,6 +104,16 @@ class AgentBuilder(BaseAgentBuilder):
                             """
         else:
             system_prompt = agent_config.get('system_prompt', "Use MCP tools when they help.")
+
+        skills = agent_config.get('skills', [])
+        if skills:
+            skill_list = self.skill_registry.get_skills(skills)
+            system_prompt = f"{system_prompt}\n{self.skill_registry.generate_skills_prompt(skill_list)}"
+            from strands_tools import file_read,file_write,shell
+            tools.append(file_read)
+            tools.append(file_write)
+            tools.append(shell)
+
 
         # Create agent instance with correct parameter names
         strands_agent = Agent(
