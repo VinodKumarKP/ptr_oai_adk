@@ -148,7 +148,8 @@ class LangGraphAgent(BaseAgent):
             config_root=self.config_root,
             logger=self.logger,
             document_loader=self.document_loader,
-            vector_store=self.vector_store
+            vector_store=self.vector_store,
+            skill_registry=self.skill_registry
         )
 
         # Step 4: Determine mode and create agent(s)

@@ -9,6 +9,7 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph_supervisor import create_supervisor
 from oai_agent_core.builders.base_agent_builder import BaseAgentBuilder
+from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.constants import Constants
 
 from oai_agent_core.langgraph_core.components.configuration.model_config import \
@@ -42,6 +43,7 @@ class AgentBuilder(BaseAgentBuilder):
             logger: Optional[logging.Logger] = None,
             document_loader: Optional[Any] = None,
             vector_store: Optional[Any] = None,
+            skill_registry: Optional[SkillRegistry] = None
     ):
         """Initialize the agent builder.
 
@@ -52,6 +54,7 @@ class AgentBuilder(BaseAgentBuilder):
             logger: Optional logger instance
             document_loader: Optional document loader instance
             vector_store: Optional vector store instance
+            skill_registry: Optional skill registry instance
         """
         super().__init__(
             model_manager=model_manager,
@@ -60,7 +63,8 @@ class AgentBuilder(BaseAgentBuilder):
             config_root=config_root,
             logger=logger,
             document_loader=document_loader,
-            vector_store=vector_store
+            vector_store=vector_store,
+            skill_registry=skill_registry
         )
 
     def _create_agent_instance(
@@ -91,6 +95,17 @@ class AgentBuilder(BaseAgentBuilder):
                                     """
         else:
             system_prompt = agent_config.get('system_prompt', "Use MCP tools when they help.")
+
+        skills = agent_config.get('skills', [])
+        if skills:
+            skill_list = self.skill_registry.get_skills(skills)
+            system_prompt = f"{system_prompt}\n{self.skill_registry.generate_skills_prompt(skill_list)}"
+            from langchain_community.tools.shell.tool import ShellTool
+            from tempfile import TemporaryDirectory
+            from langchain_community.tools.file_management import ReadFileTool, WriteFileTool
+            tools.append(ReadFileTool())
+            tools.append(WriteFileTool())
+            tools.append(ShellTool())
 
         # Create the agent
         agent = create_agent(
