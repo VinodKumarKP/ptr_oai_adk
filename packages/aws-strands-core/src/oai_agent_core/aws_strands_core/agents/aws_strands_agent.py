@@ -151,7 +151,8 @@ class StrandsAgent(BaseAgent):
             logger=self.logger,
             document_loader=self.document_loader,
             vector_store=self.vector_store,
-            skill_registry=self.skill_registry
+            skill_registry=self.skill_registry,
+            structured_output_model_registry=self.output_model_registry
         )
 
         crew_config = self.agent_config.get('crew_config', {})
@@ -171,13 +172,14 @@ class StrandsAgent(BaseAgent):
         self.context_map = self.agent_builder.extract_context_map(agent_configs)
 
         # Create orchestration system
-        self.orchestration_builder = OrchestrationBuilder(logger=self.logger, llm=self.llm)
+        self.orchestration_builder = OrchestrationBuilder(logger=self.logger,
+                                                          llm=self.llm,
+                                                          structured_output_model_registry=self.output_model_registry)
 
         self.multi_agent_system = self.orchestration_builder.build_orchestration(
             agent_map=self.agent_map,
             context_map=self.context_map,
-            pattern=pattern,
-            entry_agent_key=entry_agent,
+            crew_config=crew_config,
             system_prompt=system_prompt
         )
 
