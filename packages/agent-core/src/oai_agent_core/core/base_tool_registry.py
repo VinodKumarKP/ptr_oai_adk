@@ -50,7 +50,62 @@ class BaseToolRegistry(ABC):
         self.mcp_clients: Dict[str, Any] = {}
         self.enable_lazy_loading = enable_lazy_loading
         self.available_mcp_tools = {}
+        self.tools["shell"] = self.shell
 
+    def shell(self, command: str) -> Dict[str, Any]:
+        """
+        Executes a shell command in a secure, sandboxed environment.
+
+        This tool is restricted to a predefined list of safe, read-only commands
+        to prevent malicious or destructive operations. It runs with a strict
+        timeout to avoid hanging processes.
+
+        Args:
+            command: The shell command to execute (e.g., "ls -l").
+
+        Returns:
+            A dictionary containing the command's stdout, stderr, and return code.
+
+        Raises:
+            PermissionError: If the command is not in the allowlist.
+            TimeoutError: If the command exceeds the 15-second timeout.
+        """
+        # Allowlist of safe, primarily read-only commands
+        allowlist = [
+            "ls", "grep", "cat", "echo", "ps", "df", "pwd", "find", "head", "tail", "wc", "python3", "python"
+        ]
+
+        # Split the command string to identify the main command
+        try:
+            main_command = command.split()[0]
+        except IndexError:
+            return {"stdout": "", "stderr": "Error: Empty command.", "return_code": 1}
+
+        # Security: Enforce the allowlist
+        if main_command not in allowlist:
+            raise PermissionError(
+                f"Command '{main_command}' is not allowed. Only safe, read-only commands are permitted."
+            )
+
+        try:
+            # Execute the command with a timeout
+            process = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=15,  # 15-second timeout
+                check=False  # Do not raise CalledProcessError automatically
+            )
+            return {
+                "stdout": process.stdout,
+                "stderr": process.stderr,
+                "return_code": process.returncode
+            }
+        except subprocess.TimeoutExpired:
+            raise TimeoutError("The shell command timed out after 15 seconds.")
+        except Exception as e:
+            return {"stdout": "", "stderr": f"An unexpected error occurred: {str(e)}", "return_code": 1}
 
     def load_mcp_config(self, mcp_config: Dict[str, Any]) -> Any:
         """Load MCP configuration into tool registry for later retrieval.

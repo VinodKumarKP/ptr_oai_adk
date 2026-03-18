@@ -1,9 +1,11 @@
 """Builder for creating OpenAI Agents."""
 import logging
+import subprocess
 from typing import Dict, Any, Optional, List
 
 from agents import Agent, ModelSettings, function_tool
 from oai_agent_core.builders.base_agent_builder import BaseAgentBuilder
+from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.base_knowledge_base_factory import BaseKnowledgeBaseFactory
 from oai_agent_core.core.constants import Constants
 
@@ -29,6 +31,7 @@ class AgentBuilder(BaseAgentBuilder):
             logger: Optional[logging.Logger] = None,
             document_loader: Optional[Any] = None,
             vector_store: Optional[Any] = None,
+            skill_registry: Optional[SkillRegistry] = None
     ):
         """Initialize the agent builder.
 
@@ -48,7 +51,8 @@ class AgentBuilder(BaseAgentBuilder):
             config_root=config_root,
             logger=logger,
             document_loader=document_loader,
-            vector_store=vector_store
+            vector_store=vector_store,
+            skill_registry=skill_registry
         )
 
     def _create_agent_instance(
@@ -82,6 +86,13 @@ class AgentBuilder(BaseAgentBuilder):
                             """
         else:
             system_prompt = agent_config.get('system_prompt', "Use MCP tools when they help.")
+
+        skills = agent_config.get('skills', [])
+        if skills:
+            skill_list = self.skill_registry.get_skills(skills)
+            system_prompt = f"{system_prompt}\n{self.skill_registry.generate_skills_prompt(skill_list)}"
+            shell = function_tool(self.tool_registry.shell)
+            tools.append(shell)
 
         oai_agent = Agent(
             model=self.llm,
@@ -184,3 +195,5 @@ class AgentBuilder(BaseAgentBuilder):
         """Get the knowledge base factory class."""
         from oai_agent_core.openai_core.components.knowledge.knowledge_base_factory import KnowledgeBaseFactory
         return KnowledgeBaseFactory
+
+
