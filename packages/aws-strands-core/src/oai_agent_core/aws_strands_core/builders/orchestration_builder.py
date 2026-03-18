@@ -3,6 +3,7 @@
 import logging
 from typing import Dict, Any, List, Optional, Union
 
+from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.core.constants import Constants
 
 try:
@@ -31,7 +32,9 @@ class OrchestrationBuilder:
     PATTERN_HIERARCHICAL = Constants.PATTERN_HIERARCHICAL
     PATTERN_AGENT_AS_TOOL = Constants.PATTERN_AGENT_AS_TOOL
 
-    def __init__(self, logger: Optional[logging.Logger] = None, llm: Optional[Any] = None):
+    def __init__(self, logger: Optional[logging.Logger] = None,
+                 llm: Optional[Any] = None,
+                 structured_output_model_registry: Optional[OutputModelRegistry] = None,):
         """Initialize the orchestration builder.
 
         Args:
@@ -40,13 +43,14 @@ class OrchestrationBuilder:
         """
         self.logger = logger or logging.getLogger(__name__)
         self.llm = llm
+        self.structured_output_model_registry = structured_output_model_registry
+
 
     def build_orchestration(
             self,
             agent_map: Dict[str, Agent],
             context_map: Dict[str, List[str]],
-            pattern: str,
-            entry_agent_key: Optional[str] = None,
+            crew_config: Dict[str, Any] = None,
             system_prompt: Optional[str] = None
     ) -> Union[Agent, Any]:
         """Build orchestration system based on pattern and agents.
@@ -54,8 +58,8 @@ class OrchestrationBuilder:
         Args:
             agent_map: Dictionary of agent_key -> Agent instance
             context_map: Dictionary of agent_key -> context dependencies
-            pattern: Orchestration pattern ('graph', 'swarm', 'sequential', etc.)
-            entry_agent_key: Optional key for entry point agent
+            crew_config: Dictionary of crew config
+            system_prompt: System prompt
 
         Returns:
             Orchestration system (Graph, Swarm, or single Agent)
@@ -66,11 +70,17 @@ class OrchestrationBuilder:
         if not agent_map:
             raise ValueError("Cannot build orchestration with no agents")
 
+        pattern = crew_config.get('pattern', crew_config.get('process', 'sequential'))
+        entry_agent_key = crew_config.get('entry_agent')
+        structured_output_model = crew_config.get('structured_output_model')
         pattern_lower = pattern.lower()
 
         # Agent as Tool pattern - construct a supervisor agent with other agents as tools
         if pattern_lower == self.PATTERN_AGENT_AS_TOOL:
-            return self._build_agent_as_tool(agent_map, entry_agent_key, system_prompt)
+            return self._build_agent_as_tool(agent_map,
+                                             entry_agent_key,
+                                             system_prompt,
+                                             structured_output_model)
 
         # Single agent - no orchestration needed
         if len(agent_map) == 1:
@@ -95,7 +105,8 @@ class OrchestrationBuilder:
             self,
             agent_map: Dict[str, Any],
             entry_agent_key: Optional[str],
-            system_prompt: Optional[str]=None
+            system_prompt: Optional[str]=None,
+            structured_output_model: Optional[str]=None
     ) -> Agent:
         """Build an Agent-as-Tool orchestration system.
 
@@ -122,7 +133,8 @@ class OrchestrationBuilder:
             name="Supervisor",
             model=self.llm,
             system_prompt=system_prompt or "You are a supervisor agent. Use the available tools to answer the user's request.",
-            tools=sub_agent_tools
+            tools=sub_agent_tools,
+            structured_output_model=self.structured_output_model_registry.get_model(structured_output_model)
         )
         
         self.logger.info(f"Created Supervisor agent with {len(sub_agent_tools)} agent-tools")

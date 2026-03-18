@@ -5,6 +5,7 @@ import logging
 from typing import Dict, Any, List, Optional, Callable
 
 from oai_agent_core.builders.base_agent_builder import BaseAgentBuilder
+from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.constants import Constants
 
@@ -43,7 +44,8 @@ class AgentBuilder(BaseAgentBuilder):
             logger: Optional[logging.Logger] = None,
             document_loader: Optional[Any] = None,
             vector_store: Optional[Any] = None,
-            skill_registry: Optional[SkillRegistry] = None
+            skill_registry: Optional[SkillRegistry] = None,
+            structured_output_model_registry: Optional[OutputModelRegistry] = None,
     ):
         """Initialize the agent builder.
 
@@ -61,7 +63,8 @@ class AgentBuilder(BaseAgentBuilder):
             logger=logger,
             document_loader=document_loader,
             vector_store=vector_store,
-            skill_registry=skill_registry
+            skill_registry=skill_registry,
+            structured_output_model_registry=structured_output_model_registry
         )
 
     async def create_agent(
@@ -120,7 +123,8 @@ class AgentBuilder(BaseAgentBuilder):
             name=agent_name,
             model=self.llm,
             system_prompt=system_prompt,  # Correct parameter name
-            tools=tools if tools else None  # Correct parameter name
+            tools=tools if tools else None,  # Correct parameter name
+            structured_output_model=self.structured_output_model_registry.get_model(agent_config.get('structured_output_model', None))
         )
 
         return strands_agent

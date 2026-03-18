@@ -101,7 +101,11 @@ class ResultExtractor(BaseResultExtractor):
         """Extract text from AgentResult."""
         try:
             # Try standard path
-            content = self._safe_get(result, 'message.content')
+            if hasattr(result, 'structured_output'):
+                content = self._safe_get(result, 'structured_output')
+                return content.model_dump()
+            else:
+                content = self._safe_get(result, 'message.content')
             if content:
                 return self._extract_from_content(content)
                 
@@ -115,6 +119,11 @@ class ResultExtractor(BaseResultExtractor):
         try:
             if hasattr(result, 'execution_order') and result.execution_order:
                 last_execution = result.execution_order[-1]
+
+                # Check for structured output
+                structured_output = self._safe_get(last_execution, 'result.result.structured_output')
+                if structured_output:
+                    return structured_output.model_dump_json()
 
                 # Try multiple potential paths for the message
                 paths = [
@@ -144,6 +153,19 @@ class ResultExtractor(BaseResultExtractor):
     def _extract_from_swarm_result(self, result: SwarmResult) -> str:
         """Extract text from SwarmResult."""
         try:
+            # Safely check for structured output in the first result item.
+            if hasattr(result, 'results') and result.results:
+                # Safely get the first key without assuming the dictionary is non-empty
+                first_key = next(iter(result.results), None)
+                if first_key:
+                    first_result_item = result.results.get(first_key)
+                    # Now, safely traverse the attributes of the item
+                    structured_output = self._safe_get(first_result_item, "result.structured_output")
+                    if structured_output:
+                        # A Pydantic model's dump method is the expected way to get a dict
+                        return str(structured_output.model_dump())
+
+            # Fallback to node history if structured output is not found
             if hasattr(result, 'node_history') and result.node_history:
                 last_node = result.node_history[-1]
 
