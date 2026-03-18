@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Tuple
 
 from oai_agent_core.components.configuration.model_config import ConfigManager
+from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.base_knowledge_base_factory import BaseKnowledgeBaseFactory
 from oai_agent_core.core.base_agent import BaseAgent
@@ -32,6 +33,7 @@ class BaseAgentBuilder(ABC):
             document_loader: Optional[Any] = None,
             vector_store: Optional[Any] = None,
             skill_registry: Optional[SkillRegistry] = None,
+            structured_output_model_registry: Optional[OutputModelRegistry] = None,
     ):
         """Initialize the base agent builder.
 
@@ -56,6 +58,7 @@ class BaseAgentBuilder(ABC):
         self._tool_lock = asyncio.Lock()
         self._kb_lock = asyncio.Lock()
         self.skill_registry = skill_registry
+        self.structured_output_model_registry = structured_output_model_registry
 
     async def create_single_agent(
             self,

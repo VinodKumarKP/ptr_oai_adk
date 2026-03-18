@@ -3,9 +3,12 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, Type
 
+from langgraph_supervisor.supervisor import OutputMode
+
 from oai_agent_core.components.configuration.model_config import ConfigManager
 from oai_agent_core.components.configuration.model_config import config_manager
 from oai_agent_core.components.observability.langfuse_observability_manager import LangfuseObservabilityManager
+from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.base_model_configuration_manager import BaseModelConfigurationManager
 
@@ -91,6 +94,8 @@ class BaseAgent(ABC):
         self.guardrails_manager = None
         self.skill_registry = SkillRegistry(logger=self.logger,
                                             project_root=config_root)
+        self.output_model_registry =  OutputModelRegistry(logger=self.logger,
+                                                          project_root=config_root)
 
     def assign_llm(self, model_config: Dict):
         """
@@ -197,12 +202,20 @@ class BaseAgent(ABC):
             if len(agent_skills_props) > 0:
                 self.skill_registry.discover_skills(skills_dir=agent_skills_props.get('skill_dir'))
 
+
+        async def _init_structured_output_models():
+            structured_output_models_props = self.agent_config.get("structured_output", {})
+            if len(structured_output_models_props) > 0:
+                self.output_model_registry.discover_output_models(output_model_dir=structured_output_models_props.get('script_dir'))
+
+
         await asyncio.gather(_load_tools_and_mcp(),
                              _init_global_kb(),
                              _init_memory_store(),
                              _init_guardrails(),
                              _init_environment_vars(),
-                             _init_agent_skills())
+                             _init_agent_skills(),
+                             _init_structured_output_models())
 
     def _get_conversation_context(self, current_message: str) -> str:
         """Retrieve and format conversation context for the current message.
