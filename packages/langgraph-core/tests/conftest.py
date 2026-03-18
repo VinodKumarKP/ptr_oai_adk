@@ -4,10 +4,15 @@ import os
 from typing import Dict, Any
 from unittest.mock import MagicMock
 
-# Add src to sys.path to ensure local packages are discoverable
-src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
+# Add src directories to sys.path to ensure local packages are discoverable
+current_dir = os.path.dirname(__file__)
+langgraph_src_path = os.path.abspath(os.path.join(current_dir, "..", "src"))
+agent_core_src_path = os.path.abspath(os.path.join(current_dir, "..", "..", "agent-core", "src"))
+
+if langgraph_src_path not in sys.path:
+    sys.path.insert(0, langgraph_src_path)
+if agent_core_src_path not in sys.path:
+    sys.path.insert(0, agent_core_src_path)
 
 # Define Mock Classes
 class MockBaseToolRegistry:
@@ -68,6 +73,8 @@ class MockBaseAgent:
         self.langfuse_manager.callback_handler = None
         self._initialized = False
         self.global_kb_factory = None
+        self.skill_registry = None
+        self.output_model_registry = None
 
     async def _ensure_initialized(self):
         pass
@@ -252,7 +259,7 @@ try:
 except ImportError:
     # If it can't be imported, create it as a namespace package pointing to local src
     oai_agent_core = types.ModuleType('oai_agent_core')
-    oai_agent_core.__path__ = [os.path.join(src_path, 'oai_agent_core')]
+    oai_agent_core.__path__ = [os.path.join(langgraph_src_path, 'oai_agent_core'), os.path.join(agent_core_src_path, 'oai_agent_core')]
     sys.modules['oai_agent_core'] = oai_agent_core
 
 # Patch missing submodules of oai_agent_core (those from agent-core package)
@@ -291,7 +298,6 @@ oai_agent_core.core.Constants = MockConstants
 # Patch other modules
 sys.modules['oai_agent_core.manager'] = MagicMock()
 sys.modules['oai_agent_core.manager.config_manager'] = config_manager_module
-sys.modules['oai_agent_core.components'] = MagicMock()
 sys.modules['oai_agent_core.components.configuration'] = MagicMock()
 sys.modules['oai_agent_core.components.configuration.model_config'] = config_manager_module
 sys.modules['oai_agent_core.utils'] = MagicMock()
