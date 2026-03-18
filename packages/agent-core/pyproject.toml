@@ -24,7 +24,8 @@ dependencies = [
     "ruamel.yaml",
     "requests",
     "aiohttp",
-    "langfuse==3.10.1"
+    "langfuse==3.10.1",
+    "strictyaml"
 ]
 
 # Optional dependencies
