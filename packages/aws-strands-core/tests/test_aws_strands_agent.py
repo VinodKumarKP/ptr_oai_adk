@@ -4,41 +4,54 @@ from unittest.mock import MagicMock, patch, AsyncMock, call
 import sys
 import types
 
-# Robust mocking of oai_agent_core package structure
-if 'oai_agent_core' not in sys.modules:
-    oai_agent_core = types.ModuleType('oai_agent_core')
-    oai_agent_core.__path__ = []
-    sys.modules['oai_agent_core'] = oai_agent_core
+# Mock the entire module path before it's imported
+mock_output_parser = MagicMock()
+mock_output_parser.output_model_registry.OutputModelRegistry = MagicMock()
 
-if 'oai_agent_core.core' not in sys.modules:
-    core_pkg = types.ModuleType('oai_agent_core.core')
-    core_pkg.__path__ = []
-    sys.modules['oai_agent_core.core'] = core_pkg
-    sys.modules['oai_agent_core'].core = core_pkg
+mock_skills = MagicMock()
+mock_skills.skill_registry.SkillRegistry = MagicMock()
 
-if 'oai_agent_core.processing' not in sys.modules:
-    proc_pkg = types.ModuleType('oai_agent_core.processing')
-    proc_pkg.__path__ = []
-    sys.modules['oai_agent_core.processing'] = proc_pkg
-    sys.modules['oai_agent_core'].processing = proc_pkg
-    sys.modules['oai_agent_core.processing'].output_serializer = MagicMock()
-    sys.modules['oai_agent_core.processing'].message_formatter = MagicMock()
+with patch.dict('sys.modules', {
+    'oai_agent_core.components.output_parser': mock_output_parser,
+    'oai_agent_core.components.output_parser.output_model_registry': mock_output_parser.output_model_registry,
+    'oai_agent_core.components.skills': mock_skills,
+    'oai_agent_core.components.skills.skill_registry': mock_skills.skill_registry,
+}):
+    # Robust mocking of oai_agent_core package structure
+    if 'oai_agent_core' not in sys.modules:
+        oai_agent_core = types.ModuleType('oai_agent_core')
+        oai_agent_core.__path__ = []
+        sys.modules['oai_agent_core'] = oai_agent_core
 
-# Mock strands package
-if 'strands' not in sys.modules:
-    strands = types.ModuleType('strands')
-    sys.modules['strands'] = strands
-    sys.modules['strands'].Agent = MagicMock()
-    sys.modules['strands'].tools = MagicMock()
-    sys.modules['strands'].tools.tool = MagicMock()
-    sys.modules['strands'].multiagent = MagicMock()
-    sys.modules['strands'].multiagent.GraphBuilder = MagicMock()
-    sys.modules['strands'].multiagent.Swarm = MagicMock()
-    sys.modules['strands'].models = MagicMock()
-    sys.modules['strands'].models.litellm = MagicMock()
-    sys.modules['strands'].models.litellm.LiteLLMModel = MagicMock()
+    if 'oai_agent_core.core' not in sys.modules:
+        core_pkg = types.ModuleType('oai_agent_core.core')
+        core_pkg.__path__ = []
+        sys.modules['oai_agent_core.core'] = core_pkg
+        sys.modules['oai_agent_core'].core = core_pkg
 
-from oai_agent_core.aws_strands_core.agents.aws_strands_agent import StrandsAgent
+    if 'oai_agent_core.processing' not in sys.modules:
+        proc_pkg = types.ModuleType('oai_agent_core.processing')
+        proc_pkg.__path__ = []
+        sys.modules['oai_agent_core.processing'] = proc_pkg
+        sys.modules['oai_agent_core'].processing = proc_pkg
+        sys.modules['oai_agent_core.processing'].output_serializer = MagicMock()
+        sys.modules['oai_agent_core.processing'].message_formatter = MagicMock()
+
+    # Mock strands package
+    if 'strands' not in sys.modules:
+        strands = types.ModuleType('strands')
+        sys.modules['strands'] = strands
+        sys.modules['strands'].Agent = MagicMock()
+        sys.modules['strands'].tools = MagicMock()
+        sys.modules['strands'].tools.tool = MagicMock()
+        sys.modules['strands'].multiagent = MagicMock()
+        sys.modules['strands'].multiagent.GraphBuilder = MagicMock()
+        sys.modules['strands'].multiagent.Swarm = MagicMock()
+        sys.modules['strands'].models = MagicMock()
+        sys.modules['strands'].models.litellm = MagicMock()
+        sys.modules['strands'].models.litellm.LiteLLMModel = MagicMock()
+
+    from oai_agent_core.aws_strands_core.agents.aws_strands_agent import StrandsAgent
 
 @pytest.fixture
 def agent():
