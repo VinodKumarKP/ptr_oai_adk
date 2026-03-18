@@ -1,0 +1,16 @@
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+skills:
+  skill_dir: "./skills"
+
+agent_list:
+  - simple_assistant:
+      system_prompt: |
+        You are a helpful assistant with access to file processing skills.
+      skills:
+        - file-processing
+
+crew_config:
+  pattern: supervisor
