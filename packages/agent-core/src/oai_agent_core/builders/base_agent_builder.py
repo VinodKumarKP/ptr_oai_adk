@@ -257,7 +257,7 @@ class BaseAgentBuilder(ABC):
             agent_configs: List[Dict[str, Any]],
             system_prompt: str = "",
             session_id: str = "default",
-            pattern: str = Constants.PATTERN_SUPERVISOR
+            crew_config: Dict[str, Any] = None
     ) -> Tuple[Any, List[BaseAgent]]:
         """Create a multi-agent system from configuration.
 
@@ -266,11 +266,13 @@ class BaseAgentBuilder(ABC):
             system_prompt: System prompt for the supervisor.
             session_id: Session identifier.
             pattern: Architecture pattern.
+            crew_config: Dictionary of crew config
 
         Returns:
             Tuple of (supervisor_agent, list_of_base_agents).
         """
         config_manager = ConfigManager(config_root=self.config_root)
+        pattern = crew_config.get('pattern', Constants.PATTERN_SUPERVISOR)
 
         # 1. Normalize configurations
         agent_definitions = self._normalize_agent_configs(agent_configs, config_manager)
@@ -282,7 +284,7 @@ class BaseAgentBuilder(ABC):
 
         # 3. Create supervisor/architecture structure
         supervisor = self._create_supervisor_agent(
-            pattern, agent_list, sub_agent_tools, system_prompt
+            crew_config, agent_list, sub_agent_tools, system_prompt
         )
 
         self.logger.info(
@@ -395,7 +397,7 @@ class BaseAgentBuilder(ABC):
     @abstractmethod
     def _create_supervisor_agent(
             self,
-            pattern: str,
+            crew_config: Dict[str, Any],
             agent_list: List[Any],
             sub_agent_tools: List[Any],
             system_prompt: str
