@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional, List
 from agents import Agent, ModelSettings, function_tool
 from oai_agent_core.builders.base_agent_builder import BaseAgentBuilder
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
-from oai_agent_core.core.base_knowledge_base_factory import BaseKnowledgeBaseFactory
+from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.core.constants import Constants
 
 from oai_agent_core.openai_core.components.configuration.model_config import \
@@ -31,7 +31,8 @@ class AgentBuilder(BaseAgentBuilder):
             logger: Optional[logging.Logger] = None,
             document_loader: Optional[Any] = None,
             vector_store: Optional[Any] = None,
-            skill_registry: Optional[SkillRegistry] = None
+            skill_registry: Optional[SkillRegistry] = None,
+            structured_output_model_registry: Optional[OutputModelRegistry] = None,
     ):
         """Initialize the agent builder.
 
@@ -52,7 +53,8 @@ class AgentBuilder(BaseAgentBuilder):
             logger=logger,
             document_loader=document_loader,
             vector_store=vector_store,
-            skill_registry=skill_registry
+            skill_registry=skill_registry,
+            structured_output_model_registry=structured_output_model_registry
         )
 
     def _create_agent_instance(
@@ -101,6 +103,7 @@ class AgentBuilder(BaseAgentBuilder):
             mcp_servers=[],  # MCPs are already in 'tools' list as clients
             tools=tools,
             model_settings=ModelSettings(include_usage=True),
+            output_type=self.structured_output_model_registry.get_model(agent_config.get('structured_output_model', None))
         )
 
         # Store agent-specific MCP config for later activation
@@ -143,13 +146,15 @@ class AgentBuilder(BaseAgentBuilder):
 
     def _create_supervisor_agent(
             self,
-            pattern: str,
+            crew_config: Dict[str, Any],
             agent_list: List[Any],
             sub_agent_tools: List[Any],
             system_prompt: str
     ) -> Any:
         """Create the supervisor agent or swarm structure."""
         supervisor = None
+
+        pattern = crew_config.get('pattern', Constants.PATTERN_SUPERVISOR)
 
         if pattern in [Constants.PATTERN_SUPERVISOR, Constants.PATTERN_HANDOFF]:
             # Default instruction for supervisor to ensure it knows how to route

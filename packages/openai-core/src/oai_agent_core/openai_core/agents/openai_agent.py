@@ -99,7 +99,8 @@ class OpenAIAgent(BaseAgent):
             logger=self.logger,
             document_loader=self.document_loader,
             vector_store=self.vector_store,
-            skill_registry=self.skill_registry
+            skill_registry=self.skill_registry,
+            structured_output_model_registry=self.output_model_registry
         )
 
         # Step 4: Determine mode and create agent(s)
@@ -145,7 +146,7 @@ class OpenAIAgent(BaseAgent):
             agent_configs=agent_list_config,
             system_prompt=system_prompt,
             session_id=self.session_id,
-            pattern=self.crew_config.get('pattern', 'supervisor')
+            crew_config=self.crew_config
         )
 
     async def _initialize_single_agent_from_list(self) -> None:
