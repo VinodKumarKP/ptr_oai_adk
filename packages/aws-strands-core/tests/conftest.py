@@ -195,6 +195,16 @@ if 'oai_agent_core' not in sys.modules:
     mock_formatter.MessageFormatter = MagicMock()
     sys.modules['oai_agent_core.processing.message_formatter'] = mock_formatter
     processing.MessageFormatter = MagicMock()
+
+    mock_output_model_registry = types.ModuleType('oai_agent_core.components.output_parser.output_model_registry')
+    mock_output_model_registry.OutputModelRegistry = MagicMock()
+    sys.modules['oai_agent_core.components.output_parser.output_model_registry'] = mock_output_model_registry
+    components.OutputModelRegistry = MagicMock()
+
+    mock_skills_registry = types.ModuleType('oai_agent_core.components.skills.skill_registry')
+    mock_skills_registry.SkillRegistry = MagicMock()
+    sys.modules['oai_agent_core.components.skills.skill_registry'] = mock_skills_registry
+    components.SkillRegistry = MagicMock()
     
     # Model Config Manager
     mock_model_config = types.ModuleType('oai_agent_core.core.base_model_configuration_manager')
