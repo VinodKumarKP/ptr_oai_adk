@@ -23,7 +23,28 @@ guardrails:
       parameters:
         competitors: ["Apple", "Samsung"]
       on_fail: "fix"
+    - name: restrict_to_topic
+      full_name: tryolabs/restricttotopic
+      parameters:
+        valid_topics: ["electronics", "company"]
+        invalid_topics: ["politics"]
+    - name: DetectPII
+      class_name: DetectPII
+      full_name: guardrails/detect_pii
+      parameters:
+        pii_entities: [ "EMAIL_ADDRESS", "PHONE_NUMBER" ]
+    - name: profanity_free
+      full_name: guardrails/profanity_free
+  input:
+    validators:
+      - ref: DetectPII
+      - ref: profanity_free
+      - ref: restrict_to_topic
   output:
     validators:
+      - ref: profanity_free
+      - ref: DetectPII
       - ref: competitor_check
+        on_fail: "exception" # Override on_fail for this specific use case
+      - ref: restrict_to_topic
         on_fail: "exception" # Override on_fail for this specific use case
