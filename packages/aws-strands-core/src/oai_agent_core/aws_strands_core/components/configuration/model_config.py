@@ -42,13 +42,13 @@ class StrandsModelConfigurationManager(BaseModelConfigurationManager):
         try:
             model = LiteLLMModel(
                 model_id=config['model_id'],
-                params=config['params']
+                params=config.get('params', {})
             )
 
             self.logger.debug(
                 f"Created LiteLLMModel: {config['model_id']} "
-                f"(temp={config['params']['temperature']}, "
-                f"max_tokens={config['params']['max_tokens']})"
+                f"(temp={config.get('params', {}).get('temperature')}, "
+                f"max_tokens={config.get('params', {}).get('max_tokens')})"
             )
 
             return model
