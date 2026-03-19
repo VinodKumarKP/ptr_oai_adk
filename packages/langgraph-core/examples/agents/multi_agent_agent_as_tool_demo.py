@@ -33,7 +33,7 @@ async def run_agent_as_tool_demo():
     print("\n--- Test 1: Flight Booking via Tool ---")
     query = "Book a flight from LAX to SFO for tomorrow."
     result = await agent.ainvoke(query)
-    pprint(result['content'][0]['text'])
+    pprint(result['content']['text'])
 
 if __name__ == "__main__":
     asyncio.run(run_agent_as_tool_demo())
