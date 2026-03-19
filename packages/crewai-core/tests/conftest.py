@@ -14,7 +14,7 @@ class MockBaseToolRegistry:
         self.logger = MagicMock()
         self.tools = {}
         self.mcp_configs = {}
-        self.mcp_clients = []
+        self.mcp_clients = {}
         self.project_root = "/tmp"
     
     def _get_mcp_name_list_from_mcp_config(self, config):
