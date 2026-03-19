@@ -122,7 +122,8 @@ class CrewAIAgent(BaseAgent):
                 llm=self.llm,
                 logger=self.logger,
                 document_loader=self.document_loader,
-                vector_store=self.vector_store
+                vector_store=self.vector_store,
+                structured_output_model_registry=self.output_model_registry
             )
             self.builder = self.agent_builder
 

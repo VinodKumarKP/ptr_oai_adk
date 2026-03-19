@@ -5,6 +5,8 @@ from typing import Dict, List, Any, Tuple, Optional
 
 from crewai import Agent, Task
 
+from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
+
 
 class TaskBuilder:
     """Builds CrewAI tasks from configuration.
@@ -15,7 +17,9 @@ class TaskBuilder:
     - Agent mapping
     """
 
-    def __init__(self, config: Dict[str, Any], logger: Optional[logging.Logger] = None):
+    def __init__(self, config: Dict[str, Any],
+                 logger: Optional[logging.Logger] = None,
+                 structured_output_model_registry: Optional[OutputModelRegistry] = None):
         """Initialize the task builder.
 
         Args:
@@ -24,6 +28,7 @@ class TaskBuilder:
         """
         self.config = config
         self.logger = logger or logging.getLogger(__name__)
+        self.structured_output_model_registry = structured_output_model_registry
 
     def build_tasks(self, agent_map: Dict[str, Agent]) -> Tuple[Dict[str, Task], List[Task], List[Dict]]:
         """Build all tasks from configuration.
@@ -116,7 +121,8 @@ class TaskBuilder:
             expected_output=task_data.get('expected_output', f"Output from {task_key}"),
             agent=agent_map[agent_key],
             context=context_tasks if context_tasks else None,
-            config=task_data
+            config=task_data,
+            output_pydantic=self.structured_output_model_registry.get_model(task_data.get('structured_output_model', None)),
         )
 
         return task

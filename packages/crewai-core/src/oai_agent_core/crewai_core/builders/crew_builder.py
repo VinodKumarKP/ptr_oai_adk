@@ -9,6 +9,7 @@ from typing import Dict, List, Any, Tuple, Optional
 
 from crewai import Agent, Crew, Task, Process
 
+from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.crewai_core.components.registry.tool_registry import CrewAIToolRegistry as ToolRegistry
 from oai_agent_core.crewai_core.builders.task_builder import TaskBuilder
 
@@ -35,6 +36,7 @@ class CrewBuilder:
                  logger: Any,
                  document_loader: Optional[Any] = None,
                  vector_store: Optional[Any] = None,
+                 structured_output_model_registry: Optional[OutputModelRegistry] = None
                  ):
         """Initialize the agent builder.
 
@@ -52,12 +54,13 @@ class CrewBuilder:
         self.logger = logger
         self.document_loader = document_loader
         self.vector_store = vector_store
+        self.structured_output_model_registry = structured_output_model_registry
         
         # Lock to prevent race conditions during concurrent agent creation
         self._tool_lock = asyncio.Lock()
         
         # Initialize TaskBuilder
-        self.task_builder = TaskBuilder(config, logger)
+        self.task_builder = TaskBuilder(config, logger, structured_output_model_registry)
 
     def build_crew(self, session_id: str, step_callback: Any = None) -> Crew:
         """Build a complete CrewAI crew from configuration.
