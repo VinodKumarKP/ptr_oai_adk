@@ -12,13 +12,19 @@ def mock_registry():
     return reg
 
 @pytest.fixture
-def builder(mock_registry):
+def mock_output_model_registry():
+    reg = MagicMock()
+    reg.get_model.return_value = MagicMock()
+    return reg
+
+@pytest.fixture
+def builder(mock_registry, mock_output_model_registry):
     config = {
         'agent_list': [{'agent1': {'role': 'role1', 'goal': 'goal1', 'backstory': 'backstory1'}}],
         'task_list': [{'task1': {'description': 'desc', 'expected_output': 'out', 'agent': 'agent1'}}],
         'crew_config': {'process': 'sequential'}
     }
-    return CrewBuilder(config, mock_registry, MagicMock(), MagicMock())
+    return CrewBuilder(config, mock_registry, MagicMock(), MagicMock(), structured_output_model_registry=mock_output_model_registry)
 
 def test_build_crew(builder):
     # We need to patch Task in task_builder.py as well because CrewBuilder uses TaskBuilder

@@ -49,6 +49,22 @@ class MockBaseKnowledgeBaseFactory:
     def create_tool(self):
         return MagicMock(name="kb_tool")
 
+class MockOutputModelRegistry:
+    def __init__(self, logger=None, project_root=None):
+        self.logger = logger or MagicMock()
+        self.project_root = project_root
+        self.output_model_registry = {}
+
+    def discover_output_models(self, output_model_dir):
+        pass
+
+    def get_model(self, name):
+        return MagicMock()
+
+    def get_all_models(self):
+        return {}
+
+
 class MockBaseAgent:
     def __init__(self, llm=None, agent_name="", agent_config=None, session_id="default", config_root=None, agent_type="crewai", user_id="default", document_loader=None, vector_store=None, model_manager=None, **kwargs):
         self.llm = llm
@@ -67,6 +83,9 @@ class MockBaseAgent:
         self.langfuse_manager.is_enabled = False
         self._initialized = False
         self.memory_store = MagicMock()
+        self.skill_registry = MagicMock()
+        self.output_model_registry = MockOutputModelRegistry()
+        self.tool_registry = MagicMock()
         
     async def _ensure_initialized(self):
         pass
@@ -207,3 +226,7 @@ sys.modules['oai_agent_core.processing'] = MagicMock()
 sys.modules['oai_agent_core.processing.output_serializer'] = MagicMock()
 sys.modules['oai_agent_core.processing.message_formatter'] = MagicMock()
 sys.modules['oai_agent_core.processing.base_result_extractor'] = base_result_extractor_module
+
+sys.modules['oai_agent_core.components'] = MagicMock()
+sys.modules['oai_agent_core.components.output_parser'] = MagicMock()
+sys.modules['oai_agent_core.components.output_parser.output_model_registry'] = MagicMock()
