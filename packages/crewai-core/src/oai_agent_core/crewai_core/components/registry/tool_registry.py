@@ -1,7 +1,7 @@
 """CrewAI-specific tool registry implementation."""
 
 import inspect
-from typing import Dict, Any, Callable
+from typing import Dict, Any, Callable, List, Optional
 
 from crewai.mcp import MCPServerStdio, MCPServerHTTP, MCPServerSSE
 from crewai.tools.base_tool import Tool
@@ -19,7 +19,7 @@ class CrewAIToolRegistry(BaseToolRegistry):
     def get_input_parameter_schema(self, tool_list: str) -> str:
         pass
 
-    def load_mcp_tools_from_config(self, mcp_configs: Dict[str, Any]) -> list[Any]:
+    def load_mcp_tools_from_config(self, mcp_configs: Dict[str, Any], agent_name: Optional[str] = None) -> List[Any]:
         """Load MCP (Model Context Protocol) tools from configuration.
 
         Args:
@@ -34,17 +34,17 @@ class CrewAIToolRegistry(BaseToolRegistry):
             mcp = self._get_mcp_config(mcp_configs, tool_name)
             try:
                 if 'command' in mcp:
-                    self.mcp_clients.append(MCPServerStdio(**mcp))
+                    self.mcp_clients[tool_name] = MCPServerStdio(**mcp)
                 elif 'url' in mcp:
                     url = mcp.get('url', '')
                     if 'sse' in url:
-                        self.mcp_clients.append(MCPServerSSE(**mcp))
+                        self.mcp_clients[tool_name] = MCPServerSSE(**mcp)
                     elif 'mcp' in url:
-                        self.mcp_clients.append(MCPServerHTTP(**mcp))
+                        self.mcp_clients[tool_name] = MCPServerHTTP(**mcp)
             except Exception as e:
                 self.logger.error(f"Failed to load MCP server: {e}")
 
-        return self.mcp_clients
+        return list(self.mcp_clients.values())
 
     def _wrap_function_with_defaults(self, func: Callable, default_params: Dict[str, Any]) -> Callable:
         """Wrap a function to include default parameter values from config.
