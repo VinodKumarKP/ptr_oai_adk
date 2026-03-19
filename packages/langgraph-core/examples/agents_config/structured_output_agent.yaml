@@ -1,0 +1,16 @@
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+
+agent_list:
+  - simple_assistant:
+      system_prompt: |
+        You are a helpful assistant with access to file processing skills.
+      structured_output_model: EmailAnalysis
+
+structured_output:
+  script_dir: "./structured_output"
+
+crew_config:
+  pattern: supervisor
