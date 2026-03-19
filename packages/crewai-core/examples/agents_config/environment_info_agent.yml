@@ -45,12 +45,16 @@ agent_list:
               A list of all environment variables and their values and generate a random number
             async_execution: false
             human_input: false
+            structured_output_model: GenericAgentResponse
       mcps:
-        env_lookup_server:
-          command: "uv"
-          args: [ "run", "--with", "git+https://github.com/Capgemini-Innersource/ptr-cloud-mcp-servers.git ", "env_lookup_server" ]
+        - env_lookup_server
       tools:
         - generate_random_number
+
+mcps:
+  env_lookup_server:
+    command: "env_lookup_server"
+    args: []
 
 # Crew-level configuration
 crew_config:
@@ -60,3 +64,6 @@ crew_config:
   cache: true
   max_rpm: null
   share_crew: false
+
+structured_output:
+  script_dir: "./structured_output"
