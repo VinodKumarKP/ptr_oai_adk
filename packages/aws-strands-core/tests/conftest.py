@@ -131,6 +131,8 @@ if 'oai_agent_core' not in sys.modules:
             self.llm = kwargs.get('llm')
             self.document_loader = kwargs.get('document_loader')
             self.vector_store = kwargs.get('vector_store')
+            self.skill_registry = kwargs.get('skill_registry')
+            self.output_model_registry = kwargs.get('output_model_registryf')
 
         async def _ensure_initialized(self):
             pass
@@ -202,10 +204,11 @@ if 'oai_agent_core' not in sys.modules:
             self.logger = logger or MagicMock()
         def _merge_with_defaults(self, config): return config or self.default_config
         def _validate_config(self, config): pass
+        def get_model_info(self): pass
     mock_model_config.BaseModelConfigurationManager = MockBaseModelConfigurationManager
     sys.modules['oai_agent_core.core.base_model_configuration_manager'] = mock_model_config
     core.BaseModelConfigurationManager = MockBaseModelConfigurationManager
-    
+
     # Tool Registry
     mock_tool_registry = types.ModuleType('oai_agent_core.core.base_tool_registry')
     class MockBaseToolRegistry:
@@ -214,6 +217,7 @@ if 'oai_agent_core' not in sys.modules:
             self.project_root = project_root
             self.tools = {}
             self.mcp_clients = {}
+            self.enable_lazy_loading = False
         def _get_mcp_name_list_from_mcp_config(self, config): return list(config.keys())
         def _get_mcp_config(self, config, name): return config.get(name, {})
         def clear(self): 
@@ -242,7 +246,10 @@ if 'oai_agent_core' not in sys.modules:
     # Base Agent Builder
     mock_base_builder = types.ModuleType('oai_agent_core.builders.base_agent_builder')
     class MockBaseAgentBuilder:
-        def __init__(self, model_manager, tool_registry, llm=None, config_root=None, logger=None, document_loader=None, vector_store=None):
+        def __init__(self, model_manager,
+                     tool_registry, llm=None, config_root=None,
+                     logger=None, document_loader=None, vector_store=None,
+                     skill_registry=None, structured_output_model_registry=None):
             self.model_manager = model_manager
             self.tool_registry = tool_registry
             self.llm = llm
@@ -252,6 +259,8 @@ if 'oai_agent_core' not in sys.modules:
             self.vector_store = vector_store
             self._tool_lock = MagicMock()
             self._kb_lock = MagicMock()
+            self.skill_registry = MagicMock()
+            self.structured_output_model_registry = MagicMock()
         
         async def create_single_agent(self, agent_name, agent_config, pre_loaded_tools=None):
             # Simulate template method

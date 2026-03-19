@@ -25,16 +25,30 @@ def mock_tool_registry():
     return registry
 
 @pytest.fixture
-def builder(mock_model_manager, mock_tool_registry):
+def mock_structured_output_model_registry():
+    registry = MagicMock()
+    return registry
+
+@pytest.fixture
+def mock_skill_registry():
+    registry = MagicMock()
+    return registry
+
+@pytest.fixture
+def builder(mock_model_manager, mock_tool_registry, mock_structured_output_model_registry, mock_skill_registry):
     with patch('oai_agent_core.aws_strands_core.builders.agent_builder.BaseAgentBuilder.__init__') as mock_base_init:
         builder = AgentBuilder(
             model_manager=mock_model_manager,
             tool_registry=mock_tool_registry,
-            logger=MagicMock()
+            logger=MagicMock(),
+            structured_output_model_registry=mock_structured_output_model_registry,
+            skill_registry=mock_skill_registry
         )
         # Manually set attributes
         builder.model_manager = mock_model_manager
         builder.tool_registry = mock_tool_registry
+        builder.structured_output_model_registry = mock_structured_output_model_registry
+        builder.skill_registry = mock_skill_registry
         builder.logger = MagicMock()
         builder.llm = None
         builder.document_loader = None

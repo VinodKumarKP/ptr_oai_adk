@@ -10,6 +10,7 @@ def test_extract_text_graph_result(extractor):
     mock_result = MagicMock(spec=GraphResult)
     mock_execution = MagicMock()
     mock_execution.result.result.message.content = "graph content"
+    mock_execution.result.result.structured_output = None
     mock_result.execution_order = [mock_execution]
     
     text = extractor.extract_text(mock_result)
@@ -35,6 +36,8 @@ def test_extract_text_graph_result_fallback(extractor):
     original_safe_get = extractor._safe_get
     
     def side_effect(obj, path, default=None):
+        if path == 'result.result.structured_output':
+            return None
         if path == 'result':
             return "direct result"
         if path in ['result.result.message', 'result.message', 'message']:
