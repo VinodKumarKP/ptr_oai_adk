@@ -33,6 +33,9 @@ def builder(mock_llm, mock_tool_registry):
             tool_registry=mock_tool_registry,
             config_root="/tmp",
             model_manager=MagicMock(),
+            skill_registry=MagicMock(),
+            structured_output_model_registry=MagicMock(),
+            logger=MagicMock(),
         )
         # Manually set attributes that BaseAgentBuilder would set
         builder.llm = mock_llm
@@ -42,6 +45,8 @@ def builder(mock_llm, mock_tool_registry):
         builder.logger = MagicMock()
         builder.document_loader = None
         builder.vector_store = None
+        builder.skill_registry = MagicMock()
+        builder.structured_output_model_registry=MagicMock()
         builder._tool_lock = asyncio.Lock()
         builder._kb_lock = asyncio.Lock()
         return builder
@@ -278,7 +283,7 @@ def test_create_supervisor_agent_supervisor(builder):
         mock_supervisor.compile.return_value = 'compiled_supervisor'
         
         result = builder._create_supervisor_agent(
-            Constants.PATTERN_SUPERVISOR, 
+            { "pattern": Constants.PATTERN_SUPERVISOR},
             ['agent1'], 
             [], 
             'prompt'
@@ -294,7 +299,7 @@ def test_create_supervisor_agent_agent_as_tool(builder):
         mock_supervisor.compile.return_value = 'compiled_supervisor'
         
         result = builder._create_supervisor_agent(
-            Constants.PATTERN_AGENT_AS_TOOL, 
+            { "pattern":Constants.PATTERN_AGENT_AS_TOOL},
             [], 
             ['tool1'], 
             'prompt'
@@ -314,7 +319,7 @@ def test_create_supervisor_agent_swarm(builder):
             mock_agent.name = 'agent1'
             
             result = builder._create_supervisor_agent(
-                Constants.PATTERN_SWARM, 
+                { "pattern":Constants.PATTERN_SWARM},
                 [mock_agent], 
                 [], 
                 'prompt'
@@ -325,7 +330,7 @@ def test_create_supervisor_agent_swarm(builder):
 def test_create_supervisor_agent_unknown(builder):
     with pytest.raises(ValueError, match="Unknown architecture"):
         builder._create_supervisor_agent(
-            "unknown", 
+            { "pattern":"unknown"},
             [], 
             [], 
             'prompt'

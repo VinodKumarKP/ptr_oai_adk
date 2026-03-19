@@ -9,6 +9,7 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph_supervisor import create_supervisor
 from oai_agent_core.builders.base_agent_builder import BaseAgentBuilder
+from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.constants import Constants
 
@@ -43,7 +44,8 @@ class AgentBuilder(BaseAgentBuilder):
             logger: Optional[logging.Logger] = None,
             document_loader: Optional[Any] = None,
             vector_store: Optional[Any] = None,
-            skill_registry: Optional[SkillRegistry] = None
+            skill_registry: Optional[SkillRegistry] = None,
+            structured_output_model_registry: Optional[OutputModelRegistry] = None,
     ):
         """Initialize the agent builder.
 
@@ -64,7 +66,8 @@ class AgentBuilder(BaseAgentBuilder):
             logger=logger,
             document_loader=document_loader,
             vector_store=vector_store,
-            skill_registry=skill_registry
+            skill_registry=skill_registry,
+            structured_output_model_registry=structured_output_model_registry
         )
 
     def _create_agent_instance(
@@ -112,7 +115,8 @@ class AgentBuilder(BaseAgentBuilder):
             model=self.llm,
             tools=tools if tools else [],
             system_prompt=system_prompt,
-            name=agent_name
+            name=agent_name,
+            response_format=self.structured_output_model_registry.get_model(agent_config.get('structured_output_model', None))
         )
 
         return agent
@@ -142,7 +146,7 @@ class AgentBuilder(BaseAgentBuilder):
 
     def _create_supervisor_agent(
             self,
-            pattern: str,
+            crew_config: Dict[str, Any],
             agent_list: List[Any],
             sub_agent_tools: List[Any],
             system_prompt: str
@@ -150,6 +154,7 @@ class AgentBuilder(BaseAgentBuilder):
         """Create the supervisor agent or swarm structure."""
         memory = MemorySaver()
         supervisor = None
+        pattern = crew_config.get('pattern', Constants.PATTERN_SUPERVISOR)
 
         if pattern == Constants.PATTERN_SUPERVISOR:
             supervisor = create_supervisor(
@@ -158,7 +163,8 @@ class AgentBuilder(BaseAgentBuilder):
                 prompt=system_prompt,
                 add_handoff_back_messages=True,
                 output_mode="full_history",
-                parallel_tool_calls=True
+                parallel_tool_calls=True,
+                response_format=self.structured_output_model_registry.get_model(crew_config.get('structured_output_model', None))
             ).compile(checkpointer=memory)
 
         elif pattern == Constants.PATTERN_AGENT_AS_TOOL:
@@ -166,7 +172,8 @@ class AgentBuilder(BaseAgentBuilder):
                 model=self.llm,
                 tools=sub_agent_tools,
                 system_prompt=system_prompt,
-                name="supervisor"
+                name="supervisor",
+                response_format=self.structured_output_model_registry.get_model(crew_config.get('structured_output_model', None))
             )
             if hasattr(supervisor, 'compile'):
                 supervisor = supervisor.compile(checkpointer=memory)

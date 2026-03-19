@@ -4,6 +4,8 @@ import logging
 from typing import Dict, Any, Optional, Union
 
 from langchain_core.messages import BaseMessage
+from pydantic import BaseModel
+
 from oai_agent_core.processing.base_result_extractor import BaseResultExtractor
 
 
@@ -57,7 +59,13 @@ class ResultExtractor(BaseResultExtractor):
         """Format response to match AWS Strands agent output format."""
         formatted = {}
 
-        content = self.extract_text(result)
+        if 'structured_response' in result:
+            if isinstance(result['structured_response'], BaseModel):
+                content = result['structured_response'].model_dump()
+            else:
+                content = str(result['structured_response'])
+        else:
+            content = self.extract_text(result)
 
         formatted['content'] = {
             "text": content,
