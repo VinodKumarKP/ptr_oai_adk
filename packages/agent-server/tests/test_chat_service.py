@@ -7,9 +7,13 @@ from fastapi import HTTPException, Request
 
 
 class MockState:
-    def __init__(self, user_email=None):
+    def __init__(self, user_email=None, user_id=None, user_role=None):
         if user_email:
             self.user_email = user_email
+        if user_id:
+            self.user_id = user_id
+        if user_role:
+            self.user_role = user_role
 
 
 class MockRequest:
@@ -57,6 +61,19 @@ async def test_process_chat_with_saml_user(chat_service):
 
     call_args = chat_service.db_logger.log_interaction.call_args
     assert call_args.kwargs['user_id'] == "saml.user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_process_chat_with_api_token_user(chat_service):
+    chat_request = ChatRequest(message="Hello") # No user_id in body
+    http_request = MockRequest(state=MockState(user_id="api_user_from_token"))
+
+    chat_service.agent.ainvoke = AsyncMock(return_value={"content": "Response"})
+
+    await chat_service.process_chat(http_request, chat_request, http_request.headers)
+
+    call_args = chat_service.db_logger.log_interaction.call_args
+    assert call_args.kwargs['user_id'] == "api_user_from_token"
 
 
 @pytest.mark.asyncio

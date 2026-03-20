@@ -22,24 +22,22 @@ def test_generate_token_with_ttl(token_manager):
 
 def test_validate_token_valid(token_manager):
     token = "random.metadata"
-    token_manager.parse_token = MagicMock(return_value={"server": "server1"})
-    token_manager.r.hgetall.return_value = {"server_name": "server1"}
-    token_manager.r.ttl.return_value = 100
+    user_info = {"user_id": "anonymous", "role_id": "default"}
+    token_manager.parse_token = MagicMock(return_value={"server": "server1", **user_info})
+    token_manager.r.exists.return_value = True
     
-    assert token_manager.validate_token("server1", token) is True
+    result = token_manager.validate_token("server1", token)
+    assert result == user_info
 
 def test_validate_token_invalid_server(token_manager):
     token = "random.metadata"
     token_manager.parse_token = MagicMock(return_value={"server": "server2"})
-    token_manager.r.hgetall.return_value = {"server_name": "server2"}
     
-    assert token_manager.validate_token("server1", token) is False
-
+    assert token_manager.validate_token("server1", token) is None
 
 def test_revoke_token(token_manager):
     token = "random.metadata"
     token_manager.parse_token = MagicMock(return_value={"server": "s1", "user_id": "u1"})
-    # srem returns int (number of removed items)
     token_manager.r.srem.return_value = 1
     token_manager.r.zrem.return_value = 0
     

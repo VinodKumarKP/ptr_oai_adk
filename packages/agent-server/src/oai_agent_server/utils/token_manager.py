@@ -140,58 +140,74 @@ class TokenManager:
         except Exception:
             return None
 
-    def validate_token(self, server_key: str, token: str) -> bool:
+    def validate_token(self, server_key: str, token: str) -> Optional[Dict[str, str]]:
         """
-        Check if a token is valid for the given server key.
-        Does NOT check user_id, only server_key.
-        Automatically removes expired tokens.
+        Check if a token is valid for the given server key and return user info.
+        This function handles both modern (with hash) and legacy (without hash) tokens.
+        It automatically removes expired tokens upon discovery.
 
         Args:
-            server_key: Name of the MCP server
-            token: Token to validate
+            server_key: Name of the MCP server.
+            token: Token to validate.
 
         Returns:
-            True if token is valid for this server, False otherwise
+            A dictionary with 'user_id' and 'role_id' if the token is valid, otherwise None.
         """
-        token_data = self.r.hgetall(f"tokens:{token}")
+        # Step 1: Parse the token to verify its format and extract claims.
         parsed_data = self.parse_token(token)
+        if not parsed_data:
+            return None  # Token is malformed.
 
-        server_name = token_data.get('server_name') if parsed_data is not None else None
+        # Step 2: Verify the server key from the token's claims.
+        if parsed_data.get("server") != server_key:
+            return None  # Token is for a different server.
 
-        if server_name != server_key:
-            return False
-
-        if len(token_data) == 0:
-            user_id = parsed_data.get('user_id') if parsed_data is not None else 'anonymous'
-            ttl_key = f"{server_key}:{user_id}:ttl"
-            score = self.r.zscore(ttl_key, token)
-
-            current_time = int(time.time())
-            if (score is not None and int(score) < current_time) or score is None:
-                self.r.zrem(ttl_key, token)
-            return False
-        else:
-            # Use pipeline for atomic operations
+        # Step 3: Check for the modern token hash first for efficient validation.
+        if self.r.exists(f"tokens:{token}"):
+            # Token hash exists, it's a valid modern token.
+            # Update access metadata.
             pipe = self.r.pipeline()
-            current_ttl = self.r.ttl(token)
-
-            # Atomically increment access count
             pipe.hincrby(f"tokens:{token}", 'access_count', 1)
-
-            # Update last accessed timestamp
             pipe.hset(f"tokens:{token}", 'last_accessed', datetime.utcnow().isoformat())
-
-            # Get all token data
-            pipe.hgetall(f"tokens:{token}")
-
-            # Execute pipeline
             pipe.execute()
+            # Return user info from parsed token
+            return {
+                "user_id": parsed_data.get("user_id", "anonymous"),
+                "role_id": parsed_data.get("role_id", "default")
+            }
 
-            # Restore TTL if it exists (hset resets TTL in some Redis versions)
-            if current_ttl > 0:
-                self.r.expire(f"tokens:{token}", current_ttl)
+        # Step 4: If hash doesn't exist, check legacy sets (permanent and TTL).
+        user_id = parsed_data.get('user_id', 'anonymous')
 
-        return True
+        # Check permanent token set.
+        permanent_key = f"{server_key}:{user_id}:permanent"
+        if self.r.sismember(permanent_key, token):
+            # It's a valid legacy permanent token.
+            return {
+                "user_id": parsed_data.get("user_id", "anonymous"),
+                "role_id": parsed_data.get("role_id", "default")
+            }
+
+        # Check TTL token sorted set.
+        ttl_key = f"{server_key}:{user_id}:ttl"
+        score = self.r.zscore(ttl_key, token)
+
+        if score is not None:
+            # Token found in TTL set, check if it's expired.
+            if int(score) < int(time.time()):
+                # Token is expired, remove it.
+                self.r.zrem(ttl_key, token)
+                self.r.zrem(f"{server_key}:ttl", token)  # Also remove from server-wide set
+                return None
+            else:
+                # Token is not expired.
+                return {
+                    "user_id": parsed_data.get("user_id", "anonymous"),
+                    "role_id": parsed_data.get("role_id", "default")
+                }
+
+        # Step 5: If token is not found anywhere, it's invalid.
+        return None
 
     def revoke_token(self, token: str) -> bool:
         """

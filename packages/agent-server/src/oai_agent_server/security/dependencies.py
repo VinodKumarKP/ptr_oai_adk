@@ -104,33 +104,18 @@ async def verify_api_key(
             from oai_agent_server.utils.token_manager import TokenManager
             token_manager = TokenManager()
 
-            # We need the agent name. In a dependency, we can try to get it from the app state
-            # or assume the token manager handles validation generically.
-            # Based on previous code, it needed agent_name.
-            # We can access the agent_name from the request.app if stored there,
-            # or we can pass it if we use a class-based dependency.
+            agent_name = getattr(request.app.state, "agent_name", "unknown")
 
-            # For now, let's try to get agent_name from the request state or app title parsing
-            # A more robust way is to store agent_name in app.state
-            agent_name = getattr(request.app.state, "agent_name", None)
+            user_info = token_manager.validate_token(agent_name, token)
 
-            # Fallback: If agent_name isn't in state, we might need to rethink how we pass it.
-            # However, looking at main.py, we can store it in app.state.
-
-            if not agent_name:
-                # Fallback for now, though this should be set in main.py
-                agent_name = "unknown"
-
-            is_valid = token_manager.validate_token(agent_name, token)
-
-            if not is_valid:
+            if user_info:
+                request.state.user_id = user_info.get("user_id")
+                request.state.user_role = user_info.get("role_id")
+                return True
+            else:
                 raise AuthenticationException(reason="Invalid or expired API token")
 
-            return True
-
         except ImportError:
-            # If TokenManager is missing, and auth is enabled, we should probably fail safe
-            # or log an error. The previous middleware returned 500.
             raise HTTPException(status_code=500, detail="Authentication service unavailable")
 
 

@@ -27,9 +27,7 @@ async def test_verify_api_key_missing():
     request.url = "http://example.com"
     request.headers = {}
     with patch('oai_agent_server.security.dependencies.get_original_environ', return_value={'AGENT_AUTH_ENABLED': 'true'}):
-        # The exception detail is "API token required"
         with pytest.raises(AuthenticationException) as excinfo:
-            # Pass None for header arguments to simulate missing headers when calling directly
             await verify_api_key(request, api_token=None, api_token_underscore=None, x_api_key=None, authorization=None)
         
         assert "API token required" in str(excinfo.value.detail)
@@ -42,8 +40,12 @@ async def test_verify_api_key_valid():
     
     with patch('oai_agent_server.security.dependencies.get_original_environ', return_value={'AGENT_AUTH_ENABLED': 'true'}):
         with patch('oai_agent_server.utils.token_manager.TokenManager') as MockTM:
-            MockTM.return_value.validate_token.return_value = True
+            # Mock to return a user info dictionary
+            MockTM.return_value.validate_token.return_value = {"user_id": "test_user", "role_id": "test_role"}
             assert await verify_api_key(request, api_token="valid_token") is True
+            # Verify that the state is updated
+            assert request.state.user_id == "test_user"
+            assert request.state.user_role == "test_role"
 
 @pytest.mark.asyncio
 async def test_verify_api_key_invalid():
@@ -53,7 +55,8 @@ async def test_verify_api_key_invalid():
     
     with patch('oai_agent_server.security.dependencies.get_original_environ', return_value={'AGENT_AUTH_ENABLED': 'true'}):
         with patch('oai_agent_server.utils.token_manager.TokenManager') as MockTM:
-            MockTM.return_value.validate_token.return_value = False
+            # Mock to return None for an invalid token
+            MockTM.return_value.validate_token.return_value = None
             with pytest.raises(AuthenticationException) as excinfo:
                 await verify_api_key(request, api_token="invalid_token")
             assert "Invalid or expired" in str(excinfo.value.detail)
@@ -81,7 +84,6 @@ async def test_verify_jwt_token_valid_secret():
     request.url = "http://example.com"
     
     secret = "test_secret"
-    # Added role: admin to satisfy the new check
     payload = {"sub": "user123", "exp": time.time() + 3600, "role": "admin"}
     token = jwt.encode(payload, secret, algorithm="HS256")
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
@@ -131,7 +133,6 @@ async def test_verify_jwt_token_public_key_path():
     request = MagicMock(spec=Request)
     request.url = "http://example.com"
     
-    # Generate RSA keys for testing
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     
@@ -148,7 +149,6 @@ async def test_verify_jwt_token_public_key_path():
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
     
-    # Added role: admin
     payload = {"sub": "user123", "exp": time.time() + 3600, "role": "admin"}
     token = jwt.encode(payload, private_pem, algorithm="RS256")
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
