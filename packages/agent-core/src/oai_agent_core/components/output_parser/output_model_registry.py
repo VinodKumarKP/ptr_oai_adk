@@ -5,6 +5,7 @@ from typing import Optional, Dict, Type
 from pydantic import BaseModel
 from oai_agent_core.components.output_parser.utils import is_safe_path, resolve_path
 from oai_agent_core.utils.dynamic_class_loader import DynamicClassLoader
+import json
 
 
 class OutputModelRegistry:
@@ -89,3 +90,40 @@ class OutputModelRegistry:
             A dictionary of all Pydantic models in the registry.
         """
         return self.output_model_registry
+
+    def get_model_as_str(self, name: str) -> Optional[str]:
+        """
+        Retrieves a Pydantic model by its class name and returns its schema as a JSON string.
+
+        Args:
+            name: The class name of the model to retrieve.
+
+        Returns:
+            A JSON string representing the model's schema, or None if the model is not found.
+        """
+        model = self.get_model(name)
+        if model:
+            return json.dumps(model.model_json_schema(), indent=4)
+        return None
+
+    def get_system_prompt(self, name: str) -> Optional[str]:
+        """
+        Generates a system prompt for a given model.
+
+        Args:
+            name: The class name of the model.
+
+        Returns:
+            A string that can be used as a system prompt to guide the AI's response format.
+        """
+        model_schema = self.get_model_as_str(name)
+        if model_schema:
+            return f"""
+Your response must be a valid JSON object that strictly adheres to the following JSON schema.
+Do not include any other text, explanations, or markdown formatting in your response.
+The entire response should be only the JSON object, without any enclosing markdown code blocks like ```json.
+
+JSON Schema:
+{model_schema}
+"""
+        return None

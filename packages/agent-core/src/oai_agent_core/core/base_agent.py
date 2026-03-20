@@ -294,6 +294,11 @@ class BaseAgent(ABC):
             if conversation_context:
                 augmented_message = f"{conversation_context}\n\n{augmented_message}"
 
+        structured_output_model = self.agent_config.get('crew_config', {}).get('structured_output_model', None)
+        if structured_output_model:
+            augmented_message=f"{augmented_message}{self.output_model_registry.get_system_prompt(structured_output_model)}"
+
+
         return augmented_message
 
     def get_config_value(self, key_path: str, default: Any = None) -> Any:
