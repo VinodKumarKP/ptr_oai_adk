@@ -361,6 +361,7 @@ model:
 # 2. Architecture Configuration: Defines the multi-agent pattern.
 crew_config:
   pattern: "supervisor" # Options: supervisor, handoff, agent-as-tool
+  structured_output_model: "SupervisorOutputModel" # Optional: Pydantic model for the supervisor's final output.
 
 # 3. Tools Definition: A global registry of tools available to agents.
 tools:
@@ -685,7 +686,7 @@ Ensure your agent's responses are predictable and machine-readable by defining a
 
 When the agent is invoked, the framework instructs the LLM to format its response according to the provided Pydantic model, ensuring the output is a valid, structured object.
 
-### Example Implementation
+### Example: Agent-Level Structured Output
 
 **Step 1: Create a Pydantic Model**
 
@@ -725,6 +726,32 @@ agent_list:
 ```
 
 Now, when the `email_analyzer` agent is invoked, its output will be a JSON object that conforms to the `EmailAnalysis` model's schema.
+
+### Example: Supervisor-Level Structured Output
+
+In a multi-agent supervisor pattern, you can enforce a structured output for the **final response** from the supervisor. This is useful for ensuring the overall result of the crew's work is in a consistent format.
+
+To do this, add `structured_output_model` to the `crew_config` section.
+
+```yaml
+crew_config:
+  pattern: "supervisor"
+  # Enforce a structured output for the supervisor's final response
+  structured_output_model: "FinalReport"
+
+structured_output:
+  script_dir: "./structured_output"
+
+system_prompt: "You are a supervisor managing a research team. Your final output must be a complete report."
+
+agent_list:
+  - researcher:
+      system_prompt: "You gather information."
+  - writer:
+      system_prompt: "You write sections of the report based on the research."
+```
+
+In this example, even though the individual agents (`researcher`, `writer`) may produce intermediate text, the supervisor is responsible for assembling their work into a final JSON object that matches the `FinalReport` Pydantic model.
 
 ## Knowledge Base Integration
 
@@ -1234,6 +1261,8 @@ class OpenAIAgent:
         Synchronously invokes the agent.
         (See ainvoke for parameter details.)
         """
+
+
 
     async def astream(message: str, config: Dict = None) -> AsyncGenerator:
         """
