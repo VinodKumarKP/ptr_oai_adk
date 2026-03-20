@@ -14,6 +14,7 @@ A powerful, YAML-based configuration system for building multi-agent AI workflow
 - [Agents and Tasks](#agents-and-tasks)
 - [Tools System](#tools-system)
 - [Agent Skills](#agent-skills)
+- [Structured Output](#structured-output)
 - [Knowledge Base Integration](#knowledge-base-integration)
 - [Data Sources](#data-sources)
 - [Memory Management](#memory-management)
@@ -303,6 +304,9 @@ Integrate LangChain community tools, custom tools, and MCP servers seamlessly.
 ### 🎯 Agent Skills
 Group sets of related prompts, instructions, and workflows into reusable "skills" to modularize agent behavior. Support adding resources and scripts to skills for advanced workflows.
 
+### 📝 Structured Output
+Define the output structure using Pydantic models to get predictable, machine-readable results from your agents.
+
 ### 📚 Knowledge Base Support
 Easily integrate custom knowledge bases (RAG) for agents to access domain-specific information.
 
@@ -381,7 +385,11 @@ tools:
 skills:
   skill_dir: "./skills"
 
-# 5. Knowledge Base: Provides documents for Retrieval-Augmented Generation (RAG).
+# 5. Structured Output: Defines the Pydantic models for structured responses.
+structured_output:
+  script_dir: "./structured_output"
+
+# 6. Knowledge Base: Provides documents for Retrieval-Augmented Generation (RAG).
 knowledge_base:
   - name: "company_docs"
     description: "Search company policies and internal procedures."
@@ -394,7 +402,7 @@ knowledge_base:
       - type: "file"
         path: "docs/policy.pdf"
 
-# 6. Memory: Enables the agent to remember past conversations.
+# 7. Memory: Enables the agent to remember past conversations.
 memory:
   vector_store:
     type: "chroma"
@@ -405,13 +413,13 @@ memory:
     max_recent_turns: 5
     max_relevant_turns: 3
 
-# 7. MCP Servers: Connects to external tools via the Model Context Protocol.
+# 8. MCP Servers: Connects to external tools via the Model Context Protocol.
 mcps:
   filesystem_server:
     command: "mcp-server-filesystem"
     args: ["/data"]
 
-# 8. Guardrails: Adds input and output validation.
+# 9. Guardrails: Adds input and output validation.
 guardrails:
   validators:
     - name: "profanity_check"
@@ -421,7 +429,7 @@ guardrails:
     validators:
       - ref: "profanity_check"
 
-# 9. Agent Definitions: The list of agents in the system.
+# 10. Agent Definitions: The list of agents in the system.
 agent_list:
   - researcher:
       role: "Researcher"
@@ -431,13 +439,14 @@ agent_list:
       skills: ["my_skill"] # Assign skills from the global registry.
       knowledge_base: ["company_docs"] # Assign a knowledge base.
 
-# 10. Task Definitions: The list of tasks to be executed by the agents.
+# 11. Task Definitions: The list of tasks to be executed by the agents.
 task_list:
   - research_task:
       description: "Research the impact of AI on the job market."
       expected_output: "A detailed report summarizing the key findings."
       agent: "researcher"
       context: [] # Optional: List of other task keys this task depends on.
+      structured_output_model: "MyOutputModel" # Optional: Specify a Pydantic model for structured output.
 ```
 
 ## Orchestration Patterns
@@ -490,6 +499,7 @@ task_list:
       expected_output: "A comprehensive report with at least 5 key findings and their potential impact."
       agent: "researcher"
       context: [] # This task has no dependencies.
+      structured_output_model: "MyOutputModel" # Optional: Pydantic model for structured output
 
   - writing_task:
       description: "Write a blog post based on the research findings."
@@ -633,6 +643,67 @@ agent_list:
 ```
 
 When the `data_assistant` agent runs, it will now have all the knowledge and instructions defined in `skills/file-processing/SKILL.md` added to its prompt.
+
+## Structured Output
+
+Ensure your agent's responses are predictable and machine-readable by defining a structured output format. This is useful when you need the agent to return data that can be programmatically processed, such as JSON with a specific schema.
+
+### How It Works
+
+1.  **Define a Pydantic Model**: Create a Python file containing a Pydantic model. This model defines the exact schema (fields, types, and descriptions) of the output you expect from the agent.
+2.  **Configure the `structured_output` Directory**: In your main YAML configuration, specify the directory where your Pydantic models are located.
+3.  **Assign the Model to a Task**: In the `task_list`, add the `structured_output_model` property to the desired task and set its value to the name of your Pydantic class.
+
+When the task is executed, the framework instructs the LLM to format its response according to the provided Pydantic model, ensuring the output is a valid, structured object.
+
+### Example Implementation
+
+**Step 1: Create a Pydantic Model**
+
+Create a Python file (e.g., `structured_output/models.py`) and define your Pydantic model.
+
+*Example: `structured_output/models.py`*
+```python
+from pydantic import BaseModel, Field
+
+class EmailAnalysis(BaseModel):
+    """
+    Represents the structured analysis of an email's content.
+    """
+    summary: str = Field(description="A concise, one-line summary of the email's main topic.")
+    requires_urgent_response: bool = Field(description="True if the email requires an immediate response.")
+    sentiment: str = Field(description="The email's sentiment. Must be 'positive', 'negative', or 'neutral'.", enum=['positive', 'negative', 'neutral'])
+```
+
+**Step 2: Update Your Agent Configuration**
+
+In your main YAML file, configure the `structured_output` directory and assign the model to your task.
+
+```yaml
+model:
+  model_id: "gpt-4o"
+  cloud_provider: "openai"
+
+# 1. Tell the framework where your Pydantic models are located
+structured_output:
+  script_dir: "./structured_output"
+
+agent_list:
+  - email_analyzer:
+      role: "Email Analyzer"
+      goal: "Analyze an email and provide a structured summary."
+      backstory: "An expert in email analysis."
+
+task_list:
+  - analysis_task:
+      description: "Analyze the following email."
+      expected_output: "A structured summary of the email."
+      agent: "email_analyzer"
+      # 2. Assign the Pydantic model to the task
+      structured_output_model: "EmailAnalysis"
+```
+
+Now, when the `analysis_task` is executed, its output will be a JSON object that conforms to the `EmailAnalysis` model's schema.
 
 ## Knowledge Base Integration
 
