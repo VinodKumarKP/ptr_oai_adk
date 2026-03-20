@@ -8,10 +8,11 @@ from fastapi import HTTPException, Request
 
 class MockState:
     def __init__(self, user_email=None):
-        self.user_email = user_email
+        if user_email:
+            self.user_email = user_email
 
 
-class MockRequest(Request):
+class MockRequest:
     def __init__(self, state=None, headers=None):
         self._state = state or MockState()
         self._headers = headers or {}
@@ -43,6 +44,32 @@ async def test_process_chat_success(chat_service):
     content = response.body.decode()
     assert "Response" in content
     chat_service.db_logger.log_interaction.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_process_chat_with_saml_user(chat_service):
+    chat_request = ChatRequest(message="Hello", user_id="user1")
+    http_request = MockRequest(state=MockState(user_email="saml.user@example.com"))
+
+    chat_service.agent.ainvoke = AsyncMock(return_value={"content": "Response"})
+
+    await chat_service.process_chat(http_request, chat_request, http_request.headers)
+
+    call_args = chat_service.db_logger.log_interaction.call_args
+    assert call_args.kwargs['user_id'] == "saml.user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_process_chat_with_non_saml_user(chat_service):
+    chat_request = ChatRequest(message="Hello", user_id="api_user")
+    http_request = MockRequest()
+
+    chat_service.agent.ainvoke = AsyncMock(return_value={"content": "Response"})
+
+    await chat_service.process_chat(http_request, chat_request, http_request.headers)
+
+    call_args = chat_service.db_logger.log_interaction.call_args
+    assert call_args.kwargs['user_id'] == "api_user"
 
 
 @pytest.mark.asyncio

@@ -40,7 +40,7 @@ class ChatService:
         """
         start_time = time.time()
         session_id = chat_request.session_id or str(uuid.uuid4())
-        user_id = http_request.state.user_email or chat_request.user_id or "user"
+        user_id = getattr(http_request.state, 'user_email', None) or chat_request.user_id or "user"
         status = "success"
 
         # Prepare config
@@ -115,7 +115,7 @@ class ChatService:
         """
         start_time = time.time()
         session_id = stream_request.session_id or str(uuid.uuid4())
-        user_id = http_request.state.user_email or stream_request.user_id or "user"
+        user_id = getattr(http_request.state, 'user_email', None) or stream_request.user_id or "user"
 
         # Prepare config
         config = {
