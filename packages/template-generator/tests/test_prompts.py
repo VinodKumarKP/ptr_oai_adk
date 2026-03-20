@@ -100,20 +100,25 @@ def test_prompt_project_details_agent():
         "A research agent",     # 9
         "1",                    # 10 (Pattern: supervisor)
         "",                     # 11 (Sub-agents empty)
-        "You are a researcher", # 12 (Instructions)
-        "8",                    # 13 (Model - Custom)
-        "my-custom-model",      # 14
-        "us-west-2",            # 15
-        "y",                    # 16 (Tools)
-        "search_tool",          # 17
-        "n",                    # 18 (MCP)
-        "n",                    # 19 (Memory)
-        "n",                    # 20 (Global KB)
-        "n",                    # 21 (Agent KB)
-        "n",                    # 22 (Guardrails)
-        "research, ai",         # 23 (Tags)
-        "n",                    # 24 (Prompts)
-        "n"                     # 25 (Env)
+        "MyOutput",             # 12 (Structured Output for sub-agent)
+        "You are a researcher", # 13 (Instructions)
+        "8",                    # 14 (Model - Custom)
+        "my-custom-model",      # 15
+        "us-west-2",            # 16
+        "y",                    # 17 (Tools)
+        "search_tool",          # 18
+        "y",                    # 19 (Skills)
+        "file_processing",      # 20
+        "n",                    # 21 (MCP)
+        "n",                    # 22 (Memory)
+        "n",                    # 23 (Global KB)
+        "n",                    # 24 (Agent KB)
+        "n",                    # 25 (Guardrails)
+        "y",                    # 26 (Global SO)
+        "GlobalOutput",         # 27
+        "research, ai",         # 28 (Tags)
+        "n",                    # 29 (Prompts)
+        "n"                     # 30 (Env)
     ]):
     
         template, slug, author, email, output_dir, description, items, framework = prompt_project_details(

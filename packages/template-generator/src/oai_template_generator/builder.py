@@ -242,6 +242,12 @@ class {tools_class_name}:
         utils_dir.mkdir(exist_ok=True)
         (utils_dir / "__init__.py").touch()
         
+        skills_dir = self.project_dir / "skills"
+        skills_dir.mkdir(exist_ok=True)
+        
+        structured_output_dir = self.project_dir / "structured_output"
+        structured_output_dir.mkdir(exist_ok=True)
+        
         server_template_dir = agents_dir / "server_template"
         template_yaml = agents_config_dir / "template.yaml"
         
@@ -277,6 +283,8 @@ class {tools_class_name}:
             # Generate configuration
             if isinstance(agent_config, dict):
                 self._generate_agent_utils(agent_config, agent_name, utils_dir)
+                self._generate_agent_skills(agent_config, skills_dir)
+                self._generate_structured_outputs(agent_config, structured_output_dir)
                 self._generate_agent_yaml(agent_config, agent_name, agents_config_dir)
             else:
                 # Fallback for strings
@@ -304,6 +312,40 @@ def {tool}():
 '''
             (utils_dir / utils_filename).write_text(utils_content, encoding="utf-8")
 
+    def _generate_agent_skills(self, config: Dict, skills_dir: Path) -> None:
+        """Generates files for agent skills."""
+        skill_list = config.get("skill_list", [])
+        for skill in skill_list:
+            skill_dir = skills_dir / skill
+            skill_dir.mkdir(exist_ok=True)
+            (skill_dir / "__init__.py").touch()
+            (skill_dir / "main.py").write_text(f'"""Implementation for {skill} skill."""\n', encoding="utf-8")
+
+    def _generate_structured_outputs(self, config: Dict, output_dir: Path) -> None:
+        """Generates files for structured output models."""
+        models = []
+        if config.get("global_structured_output_model"):
+            models.append(config["global_structured_output_model"])
+        
+        for sub in config.get("sub_agents", []):
+            if sub.get("structured_output_model"):
+                models.append(sub["structured_output_model"])
+        
+        if not models:
+            return
+            
+        (output_dir / "__init__.py").touch()
+        for model_name in set(models):
+            if model_name:
+                file_content = f'''from pydantic import BaseModel, Field
+
+class {model_name}(BaseModel):
+    """Define the structured output for {model_name}."""
+    param1: str = Field(description="An example parameter.")
+    param2: int = Field(description="Another example parameter.")
+'''
+                (output_dir / f"{model_name.lower()}.py").write_text(file_content, encoding="utf-8")
+
     def _generate_agent_yaml(self, config: Dict, agent_name: str, config_dir: Path) -> None:
         """Generates agent configuration YAML."""
         yaml_content = []
@@ -321,8 +363,10 @@ def {tool}():
         memory_config = config.get("memory_config", {})
         use_guardrails = config.get("use_guardrails", False)
         tool_list = config.get("tool_list", [])
+        skill_list = config.get("skill_list", [])
         pattern = config.get("pattern", "single")
         entry_agent = config.get("entry_agent")
+        global_structured_output_model = config.get("global_structured_output_model")
         
         # Helper for KB
         def generate_kb_section(kb_list, indent_level=0):
@@ -377,11 +421,14 @@ def {tool}():
                 sub_name = sub["name"]
                 sub_ctx = sub["context"]
                 sub_kb = sub.get("knowledge_base", [])
+                sub_so = sub.get("structured_output_model")
                 
                 yaml_content.append(f"  - {sub_name}:")
                 yaml_content.append(f"      system_prompt: Prompt for {sub_name}")
                 
-                # Add tools for sub-agent
+                if sub_so:
+                    yaml_content.append(f"      structured_output_model: {sub_so}")
+                
                 if tool_list:
                     yaml_content.append("      tools:")
                     for t in tool_list:
@@ -425,8 +472,13 @@ def {tool}():
                  sub_name = sub["name"]
                  sub_ctx = sub["context"]
                  sub_kb = sub.get("knowledge_base", [])
+                 sub_so = sub.get("structured_output_model")
+                 
                  yaml_content.append(f"  - {sub_name}:")
                  yaml_content.append(f"      system_prompt: {config['instructions'].splitlines()[0] if config['instructions'] else 'Default Prompt'}")
+                 
+                 if sub_so:
+                    yaml_content.append(f"      structured_output_model: {sub_so}")
                  
                  if tool_list:
                     yaml_content.append("      tools:")
@@ -460,6 +512,20 @@ def {tool}():
         yaml_content.append(f"  model_id: {config['model_id']}")
         yaml_content.append(f"  region_name: {config['region']}")
         yaml_content.append("")
+        
+        if skill_list:
+            yaml_content.append("# Skills configuration")
+            yaml_content.append("skills:")
+            yaml_content.append("  skill_dir: \"./skills\"")
+            yaml_content.append("")
+            
+            # Add skills to agent_list
+            for i, line in enumerate(yaml_content):
+                if line.strip().startswith("- " + sub_agents[0]["name"]):
+                    yaml_content.insert(i + 2, "      skills:")
+                    for skill in skill_list:
+                        yaml_content.insert(i + 3, f"        - {skill}")
+                    break
 
         if tool_list:
             yaml_content.append("# For tools configuration")
@@ -488,7 +554,7 @@ def {tool}():
                 else: # remote
                     yaml_content.append(f"    url: {srv['url']}")
                     yaml_content.append(f"    headers: {srv.get('headers', '{}')}")
-            yaml_content.append("")
+        yaml_content.append("")
         
         # Memory
         if memory_config:
@@ -563,6 +629,14 @@ def {tool}():
             yaml_content.append("system_prompt: |\n  " + config['instructions'].replace('\n', '\n  '))
             yaml_content.append("")
         
+        if global_structured_output_model:
+            yaml_content.append("# Global Structured Output")
+            yaml_content.append("structured_output:")
+            yaml_content.append("  script_dir: \"./structured_output\"")
+            yaml_content.append("")
+            # Also add to crew_config
+            # This assumes crew_config is always present
+            
         if config['tags']:
             yaml_content.append("tags:")
             for tag in config['tags']:
@@ -584,6 +658,8 @@ def {tool}():
         yaml_content.append(f"  pattern: {pattern}")
         if entry_agent:
             yaml_content.append(f"  entry_agent: {entry_agent}")
+        if global_structured_output_model:
+            yaml_content.append(f"  structured_output_model: {global_structured_output_model}")
 
         new_yaml = config_dir / f"{agent_name}.yaml"
         new_yaml.write_text("\n".join(yaml_content) + "\n", encoding="utf-8")

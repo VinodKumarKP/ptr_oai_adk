@@ -184,7 +184,8 @@ def prompt_project_details(
             sub_agents = []
             if not raw_sub_names:
                 # Default to self if empty - Single Agent
-                sub_agents = [{"name": item, "context": [], "knowledge_base": []}]
+                structured_output_model = _ask("    Structured Output Model Name (optional)")
+                sub_agents = [{"name": item, "context": [], "knowledge_base": [], "structured_output_model": structured_output_model}]
             else:
                 # Multi-agent
                 for sub in raw_sub_names:
@@ -199,7 +200,8 @@ def prompt_project_details(
                         kb_type = _choose("        Vector Store Type", ["chroma", "postgres", "s3"])
                         kb_list.append({"name": kb_name, "description": kb_desc, "type": kb_type})
                     
-                    sub_agents.append({"name": sub, "context": ctx, "knowledge_base": kb_list})
+                    structured_output_model = _ask("      Structured Output Model Name (optional)")
+                    sub_agents.append({"name": sub, "context": ctx, "knowledge_base": kb_list, "structured_output_model": structured_output_model})
             
             # Entry Agent for Multi-agent
             entry_agent = None
@@ -230,6 +232,12 @@ def prompt_project_details(
                 tools_input = _ask("    List of tools (comma-separated)")
                 tool_list = [t.strip() for t in tools_input.split(",") if t.strip()]
             
+            # Skills
+            skill_list = []
+            if confirm("  Will this agent use skills?", default=False):
+                skills_input = _ask("    List of skills (comma-separated)")
+                skill_list = [s.strip() for s in skills_input.split(",") if s.strip()]
+
             # MCP Servers
             mcp_servers = []
             if confirm("  Will this agent use MCP servers?", default=False):
@@ -289,6 +297,11 @@ def prompt_project_details(
 
             # Guardrails
             use_guardrails = confirm("  Enable Guardrails?", default=False)
+            
+            # Global Structured Output
+            global_structured_output_model = None
+            if confirm("  Enable Global Structured Output?", default=False):
+                global_structured_output_model = _ask("    Global Structured Output Model Name")
 
             tags = _ask(f"  Tags (comma-separated)", default="agent")
             
@@ -323,12 +336,14 @@ def prompt_project_details(
                 "region": region,
                 "use_tools": use_tools,
                 "tool_list": tool_list,
+                "skill_list": skill_list,
                 "mcp_servers": mcp_servers,
                 "sub_agents": sub_agents,
                 "entry_agent": entry_agent,
                 "global_kb": global_kb,
                 "memory_config": memory_config,
                 "use_guardrails": use_guardrails,
+                "global_structured_output_model": global_structured_output_model,
                 "tags": [t.strip() for t in tags.split(",") if t.strip()],
                 "prompts": prompts,
                 "env": env_vars

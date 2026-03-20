@@ -74,11 +74,13 @@ def test_agent_build_simple(temp_output_dir):
         "region": "us-east-1",
         "use_tools": True,
         "tool_list": ["google_search"],
+        "skill_list": ["file_processing"],
         "mcp_servers": [{"name": "test_mcp", "type": "stdio", "command": "echo", "args": [], "env": {}}],
-        "sub_agents": [],
+        "sub_agents": [{"name": "research_agent", "context": [], "knowledge_base": [], "structured_output_model": "MyOutput"}],
         "global_kb": [],
         "memory_config": {},
         "use_guardrails": True,
+        "global_structured_output_model": "GlobalOutput",
         "tags": ["research"],
         "prompts": [],
         "env": {}
@@ -103,6 +105,9 @@ def test_agent_build_simple(temp_output_dir):
     assert (builder.project_dir / "agentic_registry_agents" / "agents" / "research_agent" / "agent.py").exists()
     assert (builder.project_dir / "agentic_registry_agents" / "agents_config" / "research_agent.yaml").exists()
     assert (builder.project_dir / "agentic_registry_agents" / "utils" / "research_agent_utils.py").exists()
+    assert (builder.project_dir / "skills" / "file_processing" / "main.py").exists()
+    assert (builder.project_dir / "structured_output" / "myoutput.py").exists()
+    assert (builder.project_dir / "structured_output" / "globaloutput.py").exists()
     
     # Verify config content
     yaml_content = (builder.project_dir / "agentic_registry_agents" / "agents_config" / "research_agent.yaml").read_text()
@@ -110,6 +115,9 @@ def test_agent_build_simple(temp_output_dir):
     assert "guardrails:" in yaml_content
     assert "research_agent_utils" in yaml_content 
     assert "test_mcp" in yaml_content
+    assert "skills:" in yaml_content
+    assert "structured_output_model: MyOutput" in yaml_content
+    assert "structured_output_model: GlobalOutput" in yaml_content
     
     # Verify tools file
     utils_content = (builder.project_dir / "agentic_registry_agents" / "utils" / "research_agent_utils.py").read_text()
@@ -161,7 +169,7 @@ def test_builder_overwrite(temp_output_dir):
     )
     builder.build()
     assert not (project_dir / "old_file.txt").exists()
-    assert (project_dir / "pyproject.toml").exists()
+    assert (builder.project_dir / "pyproject.toml").exists()
 
 def test_git_init(temp_output_dir):
     with patch("subprocess.run") as mock_run:
@@ -266,12 +274,14 @@ def test_agent_build_complex(temp_output_dir):
     sub_agent_1 = {
         "name": "sub1",
         "context": [],
-        "knowledge_base": [{"name": "kb1", "type": "postgres", "description": "d"}]
+        "knowledge_base": [{"name": "kb1", "type": "postgres", "description": "d"}],
+        "structured_output_model": "SubOutput"
     }
     sub_agent_2 = {
         "name": "sub2",
         "context": ["sub1"],
-        "knowledge_base": []
+        "knowledge_base": [],
+        "structured_output_model": None
     }
     
     items = [{
@@ -287,9 +297,11 @@ def test_agent_build_complex(temp_output_dir):
         "use_guardrails": False,
         "mcp_servers": [{"name": "mcp1", "type": "stdio", "command": "echo", "args": [], "env": {}}],
         "tool_list": [], # No tools covers 'else' branch
+        "skill_list": [], # No skills
         "tags": ["t1"],
         "prompts": ["p1"],
         "entry_agent": "sub1",
+        "global_structured_output_model": "GlobalOutput",
         "env": {"E": "V"}
     }]
     
@@ -313,7 +325,7 @@ def test_agent_build_complex(temp_output_dir):
     content = config_path.read_text()
     
     assert "sub1:" in content
-    assert "sub2:" in content
+    assert "structured_output_model: SubOutput" in content
     assert "gkb" in content # Global KB
     assert "kb1" in content # Agent KB
     assert "postgres" in content # Memory & KB
