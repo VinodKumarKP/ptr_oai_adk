@@ -60,12 +60,13 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
             return message
 
         @router.post("", response_model=ChatResponse)
-        async def chat(request: ChatRequest, req: Request):
+        async def chat(chat_request: ChatRequest, http_request: Request):
             """Process a synchronous chat request."""
-            original_message = request.message
-            request.message = _append_files_to_message(request.message, [], request.session_id)
-            return await chat_service.process_chat(request=request,
-                                                   headers=req.headers,
+            original_message = chat_request.message
+            chat_request.message = _append_files_to_message(chat_request.message, [], chat_request.session_id)
+            return await chat_service.process_chat(http_request=http_request,
+                                                   chat_request=chat_request,
+                                                   headers=http_request.headers,
                                                    original_message=original_message)
 
         _with_files_openapi = {
@@ -92,7 +93,7 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
 
         @router.post("/with-files", response_model=ChatResponse, openapi_extra=_with_files_openapi)
         async def chat_with_files(
-                req: Request,
+                http_request: Request,
                 background_tasks: BackgroundTasks,
                 message: str = Form(...),
                 session_id: Optional[str] = Form(None),
@@ -113,18 +114,20 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
 
             original_message = chat_request.message
             chat_request.message = _append_files_to_message(chat_request.message, file_paths, session_id)
-            return await chat_service.process_chat(request=chat_request,
-                                                   headers=dict(req.headers),
+            return await chat_service.process_chat(http_request=http_request,
+                                                   chat_request=chat_request,
+                                                   headers=dict(http_request.headers),
                                                    files=file_paths,
                                                    original_message=original_message)
 
         @router.post("/stream")
-        async def chat_stream(request: StreamChatRequest, req: Request):
+        async def chat_stream(stream_request: StreamChatRequest, http_request: Request):
             """Process a streaming chat request."""
-            original_message = request.message
-            request.message = _append_files_to_message(request.message, [], request.session_id)
-            return await chat_service.process_stream_chat(request=request,
-                                                          headers=req.headers,
+            original_message = stream_request.message
+            stream_request.message = _append_files_to_message(stream_request.message, [], stream_request.session_id)
+            return await chat_service.process_stream_chat(http_request=http_request,
+                                                          stream_request=stream_request,
+                                                          headers=http_request.headers,
                                                           original_message=original_message)
 
         _stream_with_files_openapi = {
@@ -152,7 +155,7 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
 
         @router.post("/stream/with-files", openapi_extra=_stream_with_files_openapi)
         async def chat_stream_with_files(
-                req: Request,
+                http_request: Request,
                 background_tasks: BackgroundTasks,
                 message: str = Form(...),
                 session_id: Optional[str] = Form(None),
@@ -175,8 +178,9 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
 
             original_message = stream_request.message
             stream_request.message = _append_files_to_message(stream_request.message, file_paths, session_id)
-            return await chat_service.process_stream_chat(request=stream_request,
-                                                          headers=dict(req.headers),
+            return await chat_service.process_stream_chat(http_request=http_request,
+                                                          stream_request=stream_request,
+                                                          headers=dict(http_request.headers),
                                                           files=file_paths,
                                                           original_message=original_message)
 

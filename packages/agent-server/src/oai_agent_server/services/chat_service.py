@@ -4,10 +4,11 @@ import time
 import uuid
 from typing import Optional, AsyncGenerator, List
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 
 from oai_agent_server.exceptions import StreamingException
+from oai_agent_server.models.requests import ChatRequest, StreamChatRequest
 from oai_agent_server.utils.response_extractor import ResponseContentExtractor, extract_output_text, extract_chunk_text
 from oai_agent_server.utils.serialization import make_serializable
 
@@ -21,14 +22,16 @@ class ChatService:
         self.logger = logger
         self.agent_name = agent.agent_name
 
-    async def process_chat(self, request,
+    async def process_chat(self, http_request: Request,
+                           chat_request: ChatRequest,
                            headers,
                            files: Optional[List[str]] = None,
                            original_message: Optional[str] = None):
         """Process a synchronous chat request.
 
         Args:
-            request: The chat request object.
+            http_request: The FastAPI request object.
+            chat_request: The chat request object.
             headers: Request headers.
             files: Optional list of uploaded file paths.
             original_message: Optional original message.
@@ -36,14 +39,14 @@ class ChatService:
             JSONResponse containing the chat response.
         """
         start_time = time.time()
-        session_id = request.session_id or str(uuid.uuid4())
-        user_id = request.user_id or "user"
+        session_id = chat_request.session_id or str(uuid.uuid4())
+        user_id = http_request.state.user_email or chat_request.user_id or "user"
         status = "success"
 
         # Prepare config
         config = {
             "session_id": session_id,
-            "user_id": request.user_id,
+            "user_id": user_id,
             "original_message": original_message
         }
 
@@ -51,14 +54,14 @@ class ChatService:
         if files:
             config["uploaded_files"] = files
         # Fallback: Extract uploaded files if present in message dict (legacy/alternative way)
-        elif isinstance(request.message, dict) and "uploaded_files" in request.message:
-            config["uploaded_files"] = request.message["uploaded_files"]
+        elif isinstance(chat_request.message, dict) and "uploaded_files" in chat_request.message:
+            config["uploaded_files"] = chat_request.message["uploaded_files"]
 
         try:
-            await self._handle_reinitialization(request.user_id)
+            await self._handle_reinitialization(user_id)
 
             response = await self.agent.ainvoke(
-                user_message=request.message,
+                user_message=chat_request.message,
                 config=config
             )
 
@@ -76,7 +79,7 @@ class ChatService:
                 session_id=session_id,
                 user_id=user_id,
                 endpoint="/chat",
-                input_message=request.message,
+                input_message=chat_request.message,
                 output_response=output_response,
                 request_headers=headers,
                 model_info=content.get('model') if isinstance(content, dict) else None,
@@ -93,14 +96,16 @@ class ChatService:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
 
-    async def process_stream_chat(self, request,
+    async def process_stream_chat(self, http_request: Request,
+                                  stream_request: StreamChatRequest,
                                   headers,
                                   files: Optional[List[str]] = None,
                                   original_message: Optional[str] = None):
         """Process a streaming chat request.
 
         Args:
-            request: The streaming chat request object.
+            http_request: The FastAPI request object.
+            stream_request: The streaming chat request object.
             headers: Request headers.
             files: Optional list of uploaded file paths.
             original_message: Optional original message.
@@ -109,14 +114,14 @@ class ChatService:
             StreamingResponse yielding chat chunks.
         """
         start_time = time.time()
-        session_id = request.session_id or str(uuid.uuid4())
-        user_id = request.user_id or "user"
+        session_id = stream_request.session_id or str(uuid.uuid4())
+        user_id = http_request.state.user_email or stream_request.user_id or "user"
 
         # Prepare config
         config = {
             "session_id": session_id,
-            "user_id": request.user_id,
-            "verbose": request.verbose,
+            "user_id": user_id,
+            "verbose": stream_request.verbose,
             "original_message": original_message
         }
 
@@ -124,19 +129,19 @@ class ChatService:
         if files:
             config["uploaded_files"] = files
         # Fallback: Extract uploaded files if present in message dict
-        elif isinstance(request.message, dict) and "uploaded_files" in request.message:
-            config["uploaded_files"] = request.message["uploaded_files"]
+        elif isinstance(stream_request.message, dict) and "uploaded_files" in stream_request.message:
+            config["uploaded_files"] = stream_request.message["uploaded_files"]
 
         try:
             # Handle reinitialization BEFORE generating response
-            await self._handle_reinitialization(request.user_id)
+            await self._handle_reinitialization(user_id)
 
             response_extractor = ResponseContentExtractor(self.agent)
 
             async def generate_response() -> AsyncGenerator[str, None]:
                 # Call astream to get the result
                 stream_result = self.agent.astream(
-                    user_message=request.message,
+                    user_message=stream_request.message,
                     config=config
                 )
 
@@ -225,7 +230,7 @@ class ChatService:
                     await self.db_logger.log_stream_chunks_batch(
                         agent_name=self.agent_name,
                         session_id=session_id,
-                        user_id=request.user_id,
+                        user_id=user_id,
                         endpoint="/chat/stream",
                         chunks=activity_chunks,
                         request_headers=headers
@@ -238,7 +243,7 @@ class ChatService:
                     session_id=session_id,
                     user_id=user_id,
                     endpoint="/chat/stream",
-                    input_message=request.message,
+                    input_message=stream_request.message,
                     output_response=output_response,
                     request_headers=headers,
                     model_info=last_response.get('model') if isinstance(last_response, dict) else None,
