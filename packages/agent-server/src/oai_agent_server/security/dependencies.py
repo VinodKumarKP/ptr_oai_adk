@@ -59,7 +59,7 @@ async def verify_api_key(
         return True
 
     # 2. Check for Localhost exception
-    if 'localhost' in str(request.url) and original_environ.get('FORCE_AUTH', 'false').lower() == 'false':
+    if ('localhost' in str(request.url) or '0.0.0.0' in str(request.url)) and original_environ.get('FORCE_AUTH', 'false').lower() == 'false':
         return True
 
     # 3. Extract Token (Support api-token, api_token, x-api-key header or Authorization: Bearer)
