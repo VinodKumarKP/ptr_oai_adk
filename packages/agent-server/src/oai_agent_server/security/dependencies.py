@@ -1,3 +1,4 @@
+import base64
 from typing import Optional
 import os
 
@@ -6,6 +7,21 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from oai_agent_server.exceptions import AuthenticationException
 from oai_agent_server.middleware.request_context import get_original_environ
+from oai_agent_server.utils.saml_token_validation import TokenValidator, TokenValidationError
+
+
+def is_saml_token(token: str) -> bool:
+    """
+    Checks if a token is likely a SAML token by checking if it's base64 encoded XML.
+    """
+    if not token or not isinstance(token, str) or len(token) % 4 != 0:
+        return False
+    try:
+        decoded_token = base64.b64decode(token, validate=True)
+        # Check for SAML or SAMLP tags, without requiring the XML declaration
+        return b'<saml:' in decoded_token or b'<samlp:' in decoded_token
+    except (ValueError, TypeError):
+        return False
 
 
 async def verify_api_key(
@@ -48,62 +64,79 @@ async def verify_api_key(
 
     # 3. Extract Token (Support api-token, api_token, x-api-key header or Authorization: Bearer)
     token = api_token or api_token_underscore or x_api_key
-    
+
     # If not found in specific headers, check Authorization header
     if not token and authorization:
         if authorization.lower().startswith('bearer '):
             token = authorization[7:]
         else:
             token = authorization
-            
+
     # Fallback: Check headers directly from request object (case-insensitive)
     if not token:
         token = (
-            request.headers.get('api-token') or 
-            request.headers.get('api_token') or 
-            request.headers.get('x-api-key')
+                request.headers.get('api-token') or
+                request.headers.get('api_token') or
+                request.headers.get('x-api-key')
         )
 
     if not token:
         raise AuthenticationException(reason="API token required")
 
     # 4. Validate Token
-    try:
-        from oai_agent_server.utils.token_manager import TokenManager
-        token_manager = TokenManager()
+    if is_saml_token(token):
+        try:
+            validator = TokenValidator(os.environ.get("SAML_PUBLIC_KEY_PATH", None))
+            validation_result = validator.validate_token_and_get_role(token)
+            if validation_result.is_valid:
+                # Store user info in request state if needed
+                request.state.user_role = validation_result.role
+                request.state.user_email = validation_result.email
+                return True
+            else:
+                raise AuthenticationException(reason=validation_result.error_message or "Invalid SAML token")
+        except TokenValidationError as e:
+            raise AuthenticationException(reason=str(e))
+        except Exception:
+            raise HTTPException(status_code=500, detail="SAML token validation service unavailable")
+    else:
+        try:
+            from oai_agent_server.utils.token_manager import TokenManager
+            token_manager = TokenManager()
 
-        # We need the agent name. In a dependency, we can try to get it from the app state 
-        # or assume the token manager handles validation generically.
-        # Based on previous code, it needed agent_name. 
-        # We can access the agent_name from the request.app if stored there, 
-        # or we can pass it if we use a class-based dependency.
+            # We need the agent name. In a dependency, we can try to get it from the app state
+            # or assume the token manager handles validation generically.
+            # Based on previous code, it needed agent_name.
+            # We can access the agent_name from the request.app if stored there,
+            # or we can pass it if we use a class-based dependency.
 
-        # For now, let's try to get agent_name from the request state or app title parsing
-        # A more robust way is to store agent_name in app.state
-        agent_name = getattr(request.app.state, "agent_name", None)
+            # For now, let's try to get agent_name from the request state or app title parsing
+            # A more robust way is to store agent_name in app.state
+            agent_name = getattr(request.app.state, "agent_name", None)
 
-        # Fallback: If agent_name isn't in state, we might need to rethink how we pass it.
-        # However, looking at main.py, we can store it in app.state.
+            # Fallback: If agent_name isn't in state, we might need to rethink how we pass it.
+            # However, looking at main.py, we can store it in app.state.
 
-        if not agent_name:
-            # Fallback for now, though this should be set in main.py
-            agent_name = "unknown"
+            if not agent_name:
+                # Fallback for now, though this should be set in main.py
+                agent_name = "unknown"
 
-        is_valid = token_manager.validate_token(agent_name, token)
+            is_valid = token_manager.validate_token(agent_name, token)
 
-        if not is_valid:
-            raise AuthenticationException(reason="Invalid or expired API token")
+            if not is_valid:
+                raise AuthenticationException(reason="Invalid or expired API token")
 
-        return True
+            return True
 
-    except ImportError:
-        # If TokenManager is missing, and auth is enabled, we should probably fail safe
-        # or log an error. The previous middleware returned 500.
-        raise HTTPException(status_code=500, detail="Authentication service unavailable")
+        except ImportError:
+            # If TokenManager is missing, and auth is enabled, we should probably fail safe
+            # or log an error. The previous middleware returned 500.
+            raise HTTPException(status_code=500, detail="Authentication service unavailable")
 
 
 # Define security scheme for Swagger UI
 security = HTTPBearer(auto_error=False)
+
 
 async def verify_jwt_token(
         request: Request,
@@ -138,14 +171,14 @@ async def verify_jwt_token(
 
     try:
         import jwt
-        
+
         # Check for Public Key (RSA)
         public_key_path = os.environ.get("JWT_PUBLIC_KEY_PATH")
         public_key_content = os.environ.get("JWT_PUBLIC_KEY")
-        
+
         key = None
         algorithms = []
-        
+
         if public_key_path and os.path.exists(public_key_path):
             with open(public_key_path, "r") as f:
                 key = f.read()
@@ -159,7 +192,7 @@ async def verify_jwt_token(
             algorithms = ["HS256"]
 
         if not key:
-             raise AuthenticationException(reason="JWT configuration missing (Public Key or Secret Key required)")
+            raise AuthenticationException(reason="JWT configuration missing (Public Key or Secret Key required)")
 
         payload = jwt.decode(token, key, algorithms=algorithms)
 
