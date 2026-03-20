@@ -140,7 +140,6 @@ class LangChainToolRegistry(BaseToolRegistry):
                 mcp = {k: v for k, v in mcp.items() if
                        k in {'command', 'args', 'env', 'transport', 'url', 'headers', 'environment'}}
 
-                mcp['headers'] = self._sanitize_headers(mcp.get('headers', {}))
                 if 'command' in mcp:
                     mcp['transport'] = 'stdio'
                     mcp_configs[tool_name] = StdioConnection(**mcp)
@@ -148,6 +147,7 @@ class LangChainToolRegistry(BaseToolRegistry):
                     self.logger.info(f"Creating STDIO MCP client for '{tool_name}'")
                 elif 'url' in mcp:
                     url = mcp.get('url', '')
+                    mcp['headers'] = self._sanitize_headers(mcp.get('headers', {}))
                     if 'sse' in url:
                         mcp['transport'] = 'sse'
                         mcp_configs[tool_name] = SSEConnection(**mcp)
