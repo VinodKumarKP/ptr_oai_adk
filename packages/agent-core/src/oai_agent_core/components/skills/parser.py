@@ -9,8 +9,8 @@ from typing import Optional
 
 import strictyaml
 
-from .errors import ParseError, ValidationError
-from .utils import is_safe_path
+from oai_agent_core.components.skills.errors import ParseError, ValidationError
+from oai_agent_core.utils.path_utils import is_safe_path
 
 
 def find_skill_md(skill_dir: Path) -> Optional[Path]:

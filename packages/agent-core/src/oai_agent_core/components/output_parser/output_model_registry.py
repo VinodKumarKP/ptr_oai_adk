@@ -3,7 +3,7 @@ import inspect
 import sys
 from typing import Optional, Dict, Type
 from pydantic import BaseModel
-from oai_agent_core.components.output_parser.utils import is_safe_path, resolve_path
+from oai_agent_core.utils.path_utils import is_safe_path, resolve_path
 from oai_agent_core.utils.dynamic_class_loader import DynamicClassLoader
 import json
 

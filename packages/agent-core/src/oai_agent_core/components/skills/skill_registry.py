@@ -1,11 +1,10 @@
 import logging
-from pathlib import Path
 from typing import Optional, List, Dict
 
-from .errors import ParseError, ValidationError
-from .models import SkillProperties
-from .parser import load_metadata, find_skill_md
-from .utils import resolve_path, is_safe_path
+from oai_agent_core.components.skills.errors import ParseError, ValidationError
+from oai_agent_core.components.skills.models import SkillProperties
+from oai_agent_core.components.skills.parser import load_metadata, find_skill_md
+from oai_agent_core.utils.path_utils import resolve_path, is_safe_path
 
 
 class SkillRegistry:

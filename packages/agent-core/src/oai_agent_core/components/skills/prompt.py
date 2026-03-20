@@ -3,7 +3,7 @@
 This module provides XML-formatted prompt generation following the AgentSkills.io specification.
 """
 from typing import List
-from .models import SkillProperties
+from oai_agent_core.components.skills.models import SkillProperties
 
 # This is the core instruction set for how an agent should understand and use skills.
 # It's designed to be concise and clear, focusing on the progressive disclosure pattern.
