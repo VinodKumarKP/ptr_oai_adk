@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "oai-agent-client"
-description = "OAI Agent Server - FastAPI based server for OAI Agents"
+description = "A robust, asynchronous client for interacting with OAI agent servers."
 authors = [{ name = "Vinod Kumar KP", email = "vinod.kunnum-purath@capgemini.com" }]
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.11"
-keywords = ["agent", "agent-server", "oai-agent-server", "fastapi"]
+keywords = ["agent-client", "oai-agent", "async-client", "aiohttp"]
 dynamic = ["version"]
 classifiers = [
     "Development Status :: 4 - Beta",
