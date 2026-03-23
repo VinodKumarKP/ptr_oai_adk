@@ -302,5 +302,6 @@ sys.modules['oai_agent_core.components.configuration'] = MagicMock()
 sys.modules['oai_agent_core.components.configuration.model_config'] = config_manager_module
 sys.modules['oai_agent_core.utils'] = MagicMock()
 sys.modules['oai_agent_core.utils.dynamic_class_loader'] = MagicMock()
+sys.modules['oai_agent_core.utils.path_utils'] = MagicMock()
 sys.modules['oai_agent_core.processing'] = MagicMock()
 sys.modules['oai_agent_core.processing.message_formatter'] = MagicMock()
