@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 # List of all packages
-PACKAGES := agent-core openai-core agent-server langgraph-core agent-evaluator aws-strands-core mcp-core crewai-core template-generator
+PACKAGES := agent-core openai-core agent-server langgraph-core agent-evaluator aws-strands-core mcp-core crewai-core template-generator agent-client
 
 .PHONY: all install test clean help $(PACKAGES)
 
