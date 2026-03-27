@@ -112,6 +112,7 @@ class ResponseContentExtractor:
 
 def extract_output_text(content: Any) -> str:
     """Extract text representation from content object"""
+
     output_response = ""
     if isinstance(content, dict):
         if content.get('content'):

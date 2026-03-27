@@ -18,7 +18,8 @@ from crewai import Crew
 from oai_agent_server.main import AgentHTTPServer as BaseAgentHTTPServer, main as http_main
 
 file_root = os.path.dirname(os.path.abspath(__file__))
-config_path = os.path.join(os.path.dirname(file_root), 'agents_config', 'crewai_rag_agent.yaml')
+# config_path = os.path.join(os.path.dirname(file_root), 'agents_config', 'crewai_rag_agent.yaml')
+config_path = os.path.join(os.path.dirname(file_root), 'agents_config', 'environment_info_agent.yml')
 # config_path = os.path.join(os.path.dirname(file_root), 'agents_config', 'random_generator_agent.yml')
 # config_path = os.path.join(os.path.dirname(file_root), 'agents_config', 'random_generator_flow.yml')
 # config_path = os.path.join(os.path.dirname(file_root), 'agents_config', 'researcher_crewai_agent_task.yml')
@@ -37,7 +38,7 @@ def main():
     agent = CrewAIAgent(agent_name="crewai_agent", agent_config=config, config_root=(os.path.dirname(file_root)))
 
     # crew = cast(Crew, await agent.initialize())
-
+    os.environ['DB_LOGGING_ENABLED'] = "true"
 
     # Initialize the HTTP server with your custom agent
     server = BaseAgentHTTPServer(

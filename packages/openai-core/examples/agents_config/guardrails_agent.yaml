@@ -26,12 +26,30 @@ guardrails:
         competitors: [ "Apple", "Samsung" ]
       on_fail: "fix"
 
+    - name: RestrictToTopic
+      full_name: tryolabs/restricttotopic
+      parameters:
+        valid_topics: [ "sports" ]
+
+    - name: DetectPII
+      full_name: guardrails/detect_pii
+      parameters:
+        pii_entities: ["EMAIL_ADDRESS", "PHONE_NUMBER"]
+
+    - name: profanity_free
+      full_name: guardrails/profanity_free
+
+
 #    - name: json_validator
 #      full_name: ValidJson
 #      module: valid_json
 #      on_fail: "noop"
 #      instruction: Response should be a valid json # Optional instruction
+  input:
+    validators:
+      - ref: competitor_check
   output:
     validators:
       - ref: competitor_check
       - ref: json_validator
+      - ref: RestrictToTopic

@@ -32,7 +32,10 @@ async def run_simple_agent():
 
     # Test 1: General query
     print("\n--- Test 1: General Query ---")
-    result = await agent.ainvoke('hi, what are the available skills?')
+    # result = await agent.ainvoke('Read the csv file /Users/vinodkumarkp/PycharmProjects/strands_demo/data.csv and analyze the data? ')
+    # result = await agent.ainvoke(
+        # 'Get the transcript for this video https://www.youtube.com/watch?v=0QzopZ78w9M')
+    result = await agent.ainvoke('hi, what are the available tools')
     pprint(result['content']['text'])
     pprint(result)
 
