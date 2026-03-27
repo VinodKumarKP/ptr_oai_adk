@@ -116,7 +116,7 @@ class ResultExtractor(BaseResultExtractor):
 
             formatted['content'] = {
                 "text": content,
-                "type": "text",
+                "type": type(last_message).__name__,
                 "final": is_final,
                 "session_id": session_id
             }
