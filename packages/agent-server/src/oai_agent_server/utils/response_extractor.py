@@ -118,6 +118,8 @@ def extract_output_text(content: Any) -> str:
             content_data = content['content']
             if isinstance(content_data, list) and content_data and isinstance(content_data[-1], dict):
                 output_response = content_data[-1].get('text', '')
+            elif isinstance(content_data, dict) and content_data:
+                output_response = content_data.get('text', '')
             elif isinstance(content_data, str):
                 output_response = content_data
         elif content.get('text'):
