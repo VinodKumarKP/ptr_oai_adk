@@ -846,8 +846,8 @@ class BaseToolRegistry(ABC):
 
         system_prompt = f"""{system_prompt}
         Workflow: Follow this workflow strictly
-        1. Call `get_input_parameter_schema(tool_list)` with a comma-separated list of required tools to retrieve schemas.
-        2. Call `execute_multiple_tools(tool_list, arguments)` where tool_list is a comma-separated string and arguments is a dictionary mapping tool names to their parameters.    
+        1. Call `get_input_parameter_schema(tool_list)` with a comma-separated list of required tool name only to retrieve schemas. Do not include mcp client name in the tool name
+        2. Call `execute_multiple_tools(tool_list, arguments)` where tool_list is a comma-separated string and arguments is a dictionary mapping tool names to their parameters.Do not include mcp client name in the tool name    
         """
 
         return system_prompt
