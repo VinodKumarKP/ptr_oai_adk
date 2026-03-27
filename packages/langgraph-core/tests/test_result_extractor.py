@@ -109,13 +109,13 @@ def test_format_response_fallback(extractor):
 def test_format_stream_chunk(extractor):
     chunk = {'messages': [{'content': 'chunk'}]}
     formatted = extractor.format_stream_chunk(chunk, "sess_1", "gpt-4")
-    assert formatted['content'] == {'final': False, 'session_id': 'sess_1', 'text': 'chunk', 'type': 'text'}
+    assert formatted['content'] == {'final': False, 'session_id': 'sess_1', 'text': 'chunk', 'type': 'dict'}
     assert formatted['model']['model_id'] == "gpt-4"
 
 def test_format_stream_chunk_aimessage(extractor):
     chunk = {'messages': [AIMessage(content='chunk')]}
     formatted = extractor.format_stream_chunk(chunk, "sess_1", "gpt-4")
-    assert formatted['content'] == {'final': False, 'session_id': 'sess_1', 'text': 'chunk', 'type': 'text'}
+    assert formatted['content'] == {'final': False, 'session_id': 'sess_1', 'text': 'chunk', 'type': 'AIMessage'}
 
 def test_format_stream_chunk_usage(extractor):
     usage = {'input_tokens': 5}

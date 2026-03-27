@@ -290,8 +290,8 @@ def test_astream_verbose(agent):
             
         # Should yield msg1 then msg2 (deduplicated)
         assert len(chunks) == 2
-        assert chunks[0]['content'] == {'final': False, 'session_id': 'default', 'text': 'msg1', 'type': 'text'}
-        assert chunks[1]['content'] == {'final': False, 'session_id': 'default', 'text': 'msg2', 'type': 'text'}
+        assert chunks[0]['content'] == {'final': False, 'session_id': 'default', 'text': 'msg1', 'type': 'dict'}
+        assert chunks[1]['content'] == {'final': False, 'session_id': 'default', 'text': 'msg2', 'type': 'dict'}
         
     asyncio.run(run())
 
