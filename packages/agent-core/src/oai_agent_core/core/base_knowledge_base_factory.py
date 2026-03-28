@@ -39,7 +39,7 @@ class BaseKnowledgeBaseFactory(ABC):
         self.query_analyzer = PromptAnalyzer(llm, self.logger) if llm else None
         self.vector_store = vector_store
         self.document_loader = document_loader
-        self.env_resolver = ConfigResolver(logger=self.logger, allow_eval=True)
+        self.env_resolver = ConfigResolver(logger=self.logger, allow_eval=os.environ.get('ALLOW_EVAL', False))
         self.loader = None
         self.similarity_threshold = 0.6  # Default threshold
         self.knowledge_base_tools = {}
