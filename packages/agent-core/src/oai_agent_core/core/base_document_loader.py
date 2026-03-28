@@ -1,8 +1,10 @@
 import glob
+import hashlib
 import json
 import logging
 import os
 import tempfile
+import time
 from abc import ABC, abstractmethod
 from typing import List, Any, Dict, Tuple, Optional
 from uuid import uuid4
@@ -380,7 +382,7 @@ Source: {source}"""
         return files_to_load, new_loaded_files
 
     def _process_local_source(self, doc_path: str, loaded_files: Dict[str, int], session_id: Optional[str] = None) -> \
-    Tuple[List[str], Dict[str, int]]:
+            Tuple[List[str], Dict[str, int]]:
         """Process local file system source."""
         if '*' in doc_path:
             files = glob.glob(doc_path)
@@ -416,6 +418,148 @@ Source: {source}"""
             new_loaded_files[key] = file_size
 
         return files_to_load, new_loaded_files
+
+    def _get_dynamic_loader(self, loader_class_path: str, settings: Dict[str, Any]) -> BaseLoader:
+        """Dynamically import and instantiate a LangChain community loader by dotted class path.
+
+        Args:
+            loader_class_path: Fully-qualified class path, e.g.
+                "langchain_community.document_loaders.ConfluenceLoader".
+            settings: Keyword arguments forwarded to the loader's constructor.
+
+        Returns:
+            An instantiated LangChain BaseLoader.
+
+        Raises:
+            LoaderError: If the class cannot be imported or instantiated.
+        """
+        try:
+            module_path, class_name = loader_class_path.rsplit('.', 1)
+        except ValueError:
+            raise LoaderError(
+                f"Invalid loader class path '{loader_class_path}'. "
+                "Expected format: 'module.path.ClassName'"
+            )
+
+        try:
+            module = __import__(module_path, fromlist=[class_name])
+            loader_class = getattr(module, class_name)
+        except ImportError as e:
+            raise LoaderError(
+                f"Could not import '{module_path}'. "
+                f"Make sure the required package is installed: {e}"
+            )
+        except AttributeError:
+            raise LoaderError(
+                f"Class '{class_name}' not found in module '{module_path}'."
+            )
+
+        try:
+            return loader_class(**settings)
+        except TypeError as e:
+            raise LoaderError(
+                f"Failed to instantiate '{loader_class_path}' with provided settings: {e}"
+            )
+
+    def _dynamic_loader_cache_key(self, loader_class_path: str, settings: Dict[str, Any]) -> str:
+        """Return a stable cache key for a dynamic loader configuration.
+
+        The key is an MD5 digest of the loader class path plus its sorted
+        settings, giving a short, filesystem-safe identifier.
+
+        Args:
+            loader_class_path: Fully-qualified loader class string.
+            settings: Loader constructor kwargs.
+
+        Returns:
+            Hex-digest string used as the loaded_files_log key.
+        """
+        raw = json.dumps(
+            {"loader": loader_class_path, "settings": settings},
+            sort_keys=True
+        )
+        return hashlib.md5(raw.encode()).hexdigest()
+
+    def _process_dynamic_source(
+            self,
+            loader_class_path: str,
+            settings: Dict[str, Any],
+            loaded_files: Dict[str, Any],
+            ttl_seconds: int = 3600,
+    ) -> Tuple[List[Document], Dict[str, Any]]:
+        """Load documents from a dynamic LangChain community loader.
+
+        Uses a TTL-based cache so re-runs within the TTL window skip
+        re-fetching from the remote source.  The cache entry stored in
+        ``loaded_files`` has the shape::
+
+            {
+                "__dynamic__": True,
+                "last_fetched": <unix timestamp float>
+            }
+
+        Args:
+            loader_class_path: Fully-qualified class path of the loader,
+                e.g. "langchain_community.document_loaders.ConfluenceLoader".
+            settings: Keyword arguments forwarded to the loader constructor.
+            loaded_files: Current loaded-files registry (mutated in-place
+                with updated TTL metadata on a successful fetch).
+            ttl_seconds: How long (in seconds) a previous fetch stays valid.
+                Defaults to 3600 (1 hour).  Pass 0 to always re-fetch.
+
+        Returns:
+            Tuple of (documents, file_updates) where file_updates contains
+            the new cache entry to persist.
+
+        Raises:
+            LoaderError: If the loader fails to return any documents.
+        """
+        cache_key = self._dynamic_loader_cache_key(loader_class_path, settings)
+        existing = loaded_files.get(cache_key)
+
+        if existing and existing.get("__dynamic__"):
+            age = time.time() - existing.get("last_fetched", 0)
+            if age < ttl_seconds:
+                self.logger.info(
+                    f"Skipping '{loader_class_path}' — cached "
+                    f"{int(age)}s ago (TTL={ttl_seconds}s)"
+                )
+                return [], {}
+
+        self.logger.info(f"Loading documents via dynamic loader: {loader_class_path}")
+        loader = self._get_dynamic_loader(loader_class_path, settings)
+
+        try:
+            docs = loader.load()
+        except Exception as e:
+            raise LoaderError(
+                f"Dynamic loader '{loader_class_path}' raised an error: {e}"
+            )
+
+        if not docs:
+            self.logger.warning(
+                f"Dynamic loader '{loader_class_path}' returned no documents."
+            )
+            return [], {}
+
+        # Ensure every document has a source tag so downstream metadata
+        # enrichment has something to display.
+        for doc in docs:
+            if 'source' not in doc.metadata:
+                doc.metadata['source'] = loader_class_path
+
+        self.logger.info(
+            f"Dynamic loader '{loader_class_path}' returned {len(docs)} documents."
+        )
+
+        file_updates = {
+            cache_key: {
+                "__dynamic__": True,
+                "last_fetched": time.time(),
+                "loader_class": loader_class_path,
+            }
+        }
+        return docs, file_updates
 
     def _update_s3_metadata(self, docs: List[Document]):
         """Update metadata source to reflect S3 URI."""
@@ -456,31 +600,96 @@ Source: {source}"""
         loaded_files = self._get_loaded_files()
 
         for doc in docs_dict:
-            session_id = docs_dict[doc].get('session_id')
-            loader_settings = docs_dict[doc].get('loader', {})
+            entry = docs_dict[doc]
+            session_id = entry.get('session_id')
+            loader_settings = entry.get('loader', {})
 
-            is_s3 = False
-            if doc.startswith('s3://'):
-                region = docs_dict[doc]['region']
-                files_to_load, file_updates = self._process_s3_source(doc, loaded_files, session_id, {'region': region})
-                is_s3 = True
+            # Determine source type. Prefer the explicit 'type' key (set by
+            # build_docs_dict), but fall back to shape-based inference so that
+            # callers who build docs_dict manually still work without changes.
+            if 'type' in entry:
+                source_type = entry['type']
+            elif 'loader_class' in entry:
+                source_type = 'dynamic'
+            elif doc.startswith('s3://'):
+                source_type = 's3'
             else:
-                files_to_load, file_updates = self._process_local_source(doc, loaded_files, session_id)
+                source_type = 'file'
 
-            if not files_to_load:
-                continue
+            # ----------------------------------------------------------------
+            # Branch A: dynamic LangChain community loader
+            # ----------------------------------------------------------------
+            if source_type == 'dynamic':
+                loader_class_path = entry.get('loader_class', '')
+                loader_init_settings = entry.get('settings', {})
+                ttl = entry.get('ttl_seconds', 3600)
 
-            try:
-                docs = self._load_documents(knowledge_base_list=files_to_load, loader_settings=loader_settings)
+                if not loader_class_path:
+                    self.logger.error(
+                        f"Dynamic source entry '{doc}' is missing 'loader_class'. Skipping."
+                    )
+                    continue
 
-                if is_s3:
+                try:
+                    docs, file_updates = self._process_dynamic_source(
+                        loader_class_path=loader_class_path,
+                        settings=loader_init_settings,
+                        loaded_files=loaded_files,
+                        ttl_seconds=ttl,
+                    )
+                except Exception as e:
+                    self.logger.error(
+                        f"Failed to load dynamic source '{loader_class_path}': {e}"
+                    )
+                    continue
+
+                if not docs:
+                    loaded_files.update(file_updates)
+                    continue
+
+            # ----------------------------------------------------------------
+            # Branch B: S3 source
+            # ----------------------------------------------------------------
+            elif source_type == 's3':
+                region = entry.get('region', 'us-east-1')
+                files_to_load, file_updates = self._process_s3_source(
+                    doc, loaded_files, session_id, {'region': region}
+                )
+
+                if not files_to_load:
+                    continue
+
+                try:
+                    docs = self._load_documents(
+                        knowledge_base_list=files_to_load,
+                        loader_settings=loader_settings
+                    )
                     self._update_s3_metadata(docs)
+                except Exception as e:
+                    self.logger.error(f"Failed to load S3 documents for {doc}: {e}")
+                    continue
 
-            except Exception as e:
-                self.logger.error(f"Failed to load documents for {doc}: {str(e)}")
-                continue
+            # ----------------------------------------------------------------
+            # Branch C: local file / directory / glob
+            # ----------------------------------------------------------------
+            else:
+                files_to_load, file_updates = self._process_local_source(
+                    doc, loaded_files, session_id
+                )
 
-            # Apply chunking strategy
+                if not files_to_load:
+                    continue
+
+                try:
+                    docs = self._load_documents(
+                        knowledge_base_list=files_to_load,
+                        loader_settings=loader_settings
+                    )
+                except Exception as e:
+                    self.logger.error(f"Failed to load local documents for {doc}: {e}")
+                    continue
+
+            # Apply chunking strategy (shared by all three branches)
             docs = self._split_text(doc, docs, docs_dict)
 
             # Add session_id to metadata if available
@@ -574,7 +783,8 @@ Source: {source}"""
         """Load documents into the vector store with comprehensive validation.
 
         Args:
-            docs: List of file paths or document sources to load.
+            docs: Pre-built docs_dict keyed by path / synthetic key, as
+                produced by :meth:`BaseKnowledgeBaseFactory._process_data_sources`.
 
         Returns:
             Vector Store: Initialized vector store wrapper.
@@ -671,7 +881,7 @@ Source: {source}"""
 
     def reset_collection(self):
         """Reset the collection by deleting and recreating it.
-        
+
         Raises:
             LoaderError: If reset fails.
         """

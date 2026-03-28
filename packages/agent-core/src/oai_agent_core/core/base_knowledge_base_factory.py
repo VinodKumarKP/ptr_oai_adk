@@ -55,46 +55,88 @@ class BaseKnowledgeBaseFactory(ABC):
     def _process_data_sources(self, data_sources: List[Dict[str, Any]],
                               text_splitter_settings: Dict[str, Any],
                               loader_settings: Dict[str, Any]) -> Dict[str, Any]:
-        """Process data sources and return a dictionary of source paths/URIs to settings.
+        """Process data sources and return a docs_dict for the document loader.
+
+        Handles three source types:
+        - ``file`` (default): local file, directory, or glob path.
+        - ``s3``: S3 bucket URI constructed from ``bucket`` + ``key``/``prefix``.
+        - ``dynamic``: any LangChain community loader specified by a dotted
+          ``loader`` class path and a ``settings`` block.
 
         Args:
-            data_sources: List of data source configurations.
-            text_splitter_settings: Default text splitter settings.
+            data_sources: List of data source configurations from YAML.
+            text_splitter_settings: Default chunk_size / chunk_overlap settings.
+            loader_settings: File-level loader kwargs forwarded as ``loader`` key.
 
         Returns:
-            Dictionary mapping source URIs/paths to their settings.
+            docs_dict ready to pass directly to :meth:`loader.load_db`.
         """
         docs_paths = {}
-        for source in data_sources:
-            source_type = source.get('type', 'file')
 
-            # Merge source-specific settings with default text splitter settings
+        for i, source in enumerate(data_sources):
+            # Infer type: explicit 'type' key > presence of 'loader' key > 'path' key
+            if 'type' in source:
+                source_type = source['type']
+            elif 'loader' in source and 'path' not in source:
+                # 'loader' with no 'path' means a dynamic community loader
+                source_type = 'dynamic'
+            else:
+                source_type = 'file'
+
+            # Base settings: text splitter defaults merged with any per-source overrides
             source_settings = text_splitter_settings.copy()
-            source_settings.update(source)
             source_settings['loader'] = loader_settings
 
-            if source_type == 'file':
+            if source_type == 'dynamic':
+                loader_class = source.get('loader')
+                if not loader_class:
+                    self.logger.warning(f"Dynamic data source at index {i} is missing 'loader'. Skipping.")
+                    continue
+
+                key = f"__dynamic_{i}__"
+                docs_paths[key] = {
+                    **source_settings,
+                    'type': 'dynamic',
+                    'loader_class': loader_class,
+                    'settings': source.get('settings', {}),
+                    'ttl_seconds': source.get('ttl_seconds', 3600),
+                }
+
+            elif source_type == 'file':
                 path = source.get('path')
-                if path:
-                    if not os.path.isabs(path) and self.project_root:
-                        full_path = os.path.join(self.project_root, path)
-                    else:
-                        full_path = path
-                    docs_paths[full_path] = source_settings
+                if not path:
+                    self.logger.warning(f"File data source at index {i} is missing 'path'. Skipping.")
+                    continue
+
+                if not os.path.isabs(path) and self.project_root:
+                    full_path = os.path.join(self.project_root, path)
+                else:
+                    full_path = path
+
+                docs_paths[full_path] = {
+                    **source_settings,
+                    'type': 'file',
+                }
 
             elif source_type == 's3':
                 bucket = source.get('bucket')
+                if not bucket:
+                    self.logger.warning(f"S3 data source at index {i} is missing 'bucket'. Skipping.")
+                    continue
+
                 key = source.get('key', '')
                 prefix = source.get('prefix', '')
                 region = source.get('region', 'us-east-1')
-                source_settings['region'] = region
-                if bucket:
-                    # Construct s3 URI
-                    if key:
-                        uri = f"s3://{bucket}/{key}"
-                    else:
-                        uri = f"s3://{bucket}/{prefix}"
-                    docs_paths[uri] = source_settings
+                uri = f"s3://{bucket}/{key if key else prefix}"
+
+                docs_paths[uri] = {
+                    **source_settings,
+                    'type': 's3',
+                    'region': region,
+                }
+
+            else:
+                self.logger.warning(f"Unknown source type '{source_type}' at index {i}. Skipping.")
 
         return docs_paths
 
@@ -182,7 +224,7 @@ class BaseKnowledgeBaseFactory(ABC):
             'retrieval_settings': retrieval_settings,
             'vector_load_type': vector_load_type
         }
-        
+
         # If this is the "main" or only KB, we might want to set self.vector_store for backward compatibility
         if not self.vector_store:
             self.vector_store = vector_store
@@ -201,7 +243,6 @@ class BaseKnowledgeBaseFactory(ABC):
                 doc_paths[doc]['session_id'] = session_id
 
         self.loader.load_documents(doc_paths)
-
 
     def search_knowledge_base(self, query: str,
                               kb_name: str = None,
@@ -256,14 +297,14 @@ class BaseKnowledgeBaseFactory(ABC):
             queries = self.query_analyzer.analyze(query)
 
         all_results = []
-        
+
         # Prepare filter if source_list is provided
         search_kwargs = {}
         if source_list:
             # Pass the list directly. The vector store implementation will handle it.
             # For Chroma, Postgres, and S3 stores, we've updated them to handle list values as OR conditions.
             search_kwargs['filter'] = {'source': source_list}
-        
+
         if session_id and vector_load_type == 'custom':
             if 'filter' not in search_kwargs:
                 search_kwargs['filter'] = {}
@@ -276,7 +317,7 @@ class BaseKnowledgeBaseFactory(ABC):
         # Deduplicate results based on content and source
         unique_results = {}
         distance_type = None
-        
+
         # Collect scores to detect distance type
         scores = []
         for item in all_results:
@@ -287,7 +328,7 @@ class BaseKnowledgeBaseFactory(ABC):
                 doc = item
                 score = getattr(doc, 'score', 0.0)
                 scores.append(score)
-        
+
         distance_type = self._detect_distance_type(scores)
 
         for item in all_results:
@@ -296,28 +337,28 @@ class BaseKnowledgeBaseFactory(ABC):
             else:
                 doc = item
                 score = getattr(doc, 'score', 0.0)
-            
+
             # Normalize score
             normalized_score = self._normalize_score(score, distance_type)
-            
+
             # Filter by threshold
             if normalized_score < score_threshold:
                 continue
-            
+
             # Add score to metadata for display
             doc.metadata['similarity_score'] = normalized_score
             doc.metadata['raw_score'] = score
 
             key = (doc.page_content, doc.metadata.get('source', 'unknown'))
-            
+
             # Keep the one with the higher score if duplicate
             if key not in unique_results or unique_results[key].metadata.get('similarity_score', 0) < normalized_score:
                 unique_results[key] = doc
 
         # Sort by score descending
         final_results = sorted(
-            list(unique_results.values()), 
-            key=lambda x: x.metadata.get('similarity_score', 0), 
+            list(unique_results.values()),
+            key=lambda x: x.metadata.get('similarity_score', 0),
             reverse=True
         )
 
@@ -325,7 +366,9 @@ class BaseKnowledgeBaseFactory(ABC):
             return "No relevant information found in the knowledge base."
 
         return "\n\n".join(
-            [f"Content: {doc.page_content}\nSource: {doc.metadata.get('source', 'unknown')}\nRelevance: {doc.metadata.get('similarity_score', 0):.2f}" for doc in final_results])
+            [
+                f"Content: {doc.page_content}\nSource: {doc.metadata.get('source', 'unknown')}\nRelevance: {doc.metadata.get('similarity_score', 0):.2f}"
+                for doc in final_results])
 
     # Keep backward compatibility for search_custom_knowledge_base
     def search_custom_knowledge_base(self, query: str) -> str:
@@ -391,11 +434,11 @@ class BaseKnowledgeBaseFactory(ABC):
         return 'cosine'
 
     @abstractmethod
-    def create_tool(self, name:str, description:str) -> Any:
+    def create_tool(self, name: str, description: str) -> Any:
         """Create a tool for searching the knowledge base.
-        
+
         This method must be implemented by subclasses to return the framework-specific tool.
-        
+
         Returns:
             A tool instance compatible with the target agent framework.
         """
@@ -411,10 +454,10 @@ class BaseKnowledgeBaseFactory(ABC):
             A tool instance compatible with the target agent framework.
         """
         pass
-    
+
     def get_tools(self) -> List[Any]:
         """Get all knowledge base tools.
-        
+
         Returns:
             List of tool instances.
         """
