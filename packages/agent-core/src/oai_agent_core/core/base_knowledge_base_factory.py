@@ -8,7 +8,7 @@ from typing import Dict, Any, List, Optional, Callable
 
 from oai_agent_core.components.vector_store.vector_store_factory import VectorStoreFactory
 from oai_agent_core.utils.prompt_analyzer import PromptAnalyzer
-from oai_agent_core.utils.env_resolver import EnvResolver
+from oai_agent_core.utils.env_resolver import ConfigResolver
 
 
 class BaseKnowledgeBaseFactory(ABC):
@@ -39,7 +39,7 @@ class BaseKnowledgeBaseFactory(ABC):
         self.query_analyzer = PromptAnalyzer(llm, self.logger) if llm else None
         self.vector_store = vector_store
         self.document_loader = document_loader
-        self.env_resolver = EnvResolver(logger=self.logger)
+        self.env_resolver = ConfigResolver(logger=self.logger, allow_eval=True)
         self.loader = None
         self.similarity_threshold = 0.6  # Default threshold
         self.knowledge_base_tools = {}

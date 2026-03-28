@@ -461,21 +461,49 @@ Source: {source}"""
                 f"Failed to instantiate '{loader_class_path}' with provided settings: {e}"
             )
 
+    @staticmethod
+    def _serialisable_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a copy of *settings* with non-JSON-serialisable values removed.
+
+        Callables (lambdas, functions) and other non-serialisable objects such
+        as compiled regexes cannot be stored in the JSON cache log.  This method
+        strips them out so the remaining primitive values can be used safely for
+        cache-key hashing and log persistence.
+
+        The stripped keys are not lost — they are still passed to the loader
+        constructor via the original *settings* dict.  They are only excluded
+        from the parts of the code that touch JSON.
+
+        Args:
+            settings: Raw settings dict, may contain callables.
+
+        Returns:
+            New dict containing only JSON-serialisable key/value pairs.
+        """
+        serialisable = {}
+        for k, v in settings.items():
+            try:
+                json.dumps(v)
+                serialisable[k] = v
+            except (TypeError, ValueError):
+                pass  # silently drop callables, compiled regexes, etc.
+        return serialisable
+
     def _dynamic_loader_cache_key(self, loader_class_path: str, settings: Dict[str, Any]) -> str:
         """Return a stable cache key for a dynamic loader configuration.
 
-        The key is an MD5 digest of the loader class path plus its sorted
-        settings, giving a short, filesystem-safe identifier.
+        Only JSON-serialisable settings values are included in the hash so
+        that callables (e.g. ``file_filter`` lambdas) do not cause errors.
 
         Args:
             loader_class_path: Fully-qualified loader class string.
-            settings: Loader constructor kwargs.
+            settings: Loader constructor kwargs (may contain callables).
 
         Returns:
             Hex-digest string used as the loaded_files_log key.
         """
         raw = json.dumps(
-            {"loader": loader_class_path, "settings": settings},
+            {"loader": loader_class_path, "settings": self._serialisable_settings(settings)},
             sort_keys=True
         )
         return hashlib.md5(raw.encode()).hexdigest()
@@ -728,11 +756,20 @@ Source: {source}"""
                 self.logger.error(f"Failed to load loaded files log: {str(e)}")
         return {}
 
-    def _save_loaded_files(self, loaded_files: Dict[str, int]):
-        """Save the list of loaded files and their sizes."""
+    def _save_loaded_files(self, loaded_files: Dict[str, Any]):
+        """Save the list of loaded files and their sizes.
+
+        Each entry value is sanitised through :meth:`_serialisable_settings`
+        before serialisation so that callable values (e.g. ``file_filter``
+        lambdas) never reach ``json.dump`` and cause a ``TypeError``.
+        """
         try:
+            serialisable = {
+                k: self._serialisable_settings(v) if isinstance(v, dict) else v
+                for k, v in loaded_files.items()
+            }
             with open(self.loaded_files_log, 'w') as f:
-                json.dump(loaded_files, f)
+                json.dump(serialisable, f)
         except Exception as e:
             self.logger.error(f"Failed to save loaded files log: {str(e)}")
 
