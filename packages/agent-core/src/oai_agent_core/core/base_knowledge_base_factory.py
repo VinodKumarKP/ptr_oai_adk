@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional, Callable
 
 from oai_agent_core.components.vector_store.vector_store_factory import VectorStoreFactory
 from oai_agent_core.utils.prompt_analyzer import PromptAnalyzer
+from oai_agent_core.utils.env_resolver import EnvResolver
 
 
 class BaseKnowledgeBaseFactory(ABC):
@@ -38,6 +39,7 @@ class BaseKnowledgeBaseFactory(ABC):
         self.query_analyzer = PromptAnalyzer(llm, self.logger) if llm else None
         self.vector_store = vector_store
         self.document_loader = document_loader
+        self.env_resolver = EnvResolver(logger=self.logger)
         self.loader = None
         self.similarity_threshold = 0.6  # Default threshold
         self.knowledge_base_tools = {}
@@ -98,7 +100,7 @@ class BaseKnowledgeBaseFactory(ABC):
                     **source_settings,
                     'type': 'dynamic',
                     'loader_class': loader_class,
-                    'settings': source.get('settings', {}),
+                    'settings': self.env_resolver.resolve_dict(source.get('settings', {})),
                     'ttl_seconds': source.get('ttl_seconds', 3600),
                 }
 
@@ -244,6 +246,7 @@ class BaseKnowledgeBaseFactory(ABC):
 
         self.loader.load_documents(doc_paths)
 
+
     def search_knowledge_base(self, query: str,
                               kb_name: str = None,
                               source_list: List[str] = None,
@@ -366,9 +369,7 @@ class BaseKnowledgeBaseFactory(ABC):
             return "No relevant information found in the knowledge base."
 
         return "\n\n".join(
-            [
-                f"Content: {doc.page_content}\nSource: {doc.metadata.get('source', 'unknown')}\nRelevance: {doc.metadata.get('similarity_score', 0):.2f}"
-                for doc in final_results])
+            [f"Content: {doc.page_content}\nSource: {doc.metadata.get('source', 'unknown')}\nRelevance: {doc.metadata.get('similarity_score', 0):.2f}" for doc in final_results])
 
     # Keep backward compatibility for search_custom_knowledge_base
     def search_custom_knowledge_base(self, query: str) -> str:
@@ -434,7 +435,7 @@ class BaseKnowledgeBaseFactory(ABC):
         return 'cosine'
 
     @abstractmethod
-    def create_tool(self, name: str, description: str) -> Any:
+    def create_tool(self, name:str, description:str) -> Any:
         """Create a tool for searching the knowledge base.
 
         This method must be implemented by subclasses to return the framework-specific tool.
