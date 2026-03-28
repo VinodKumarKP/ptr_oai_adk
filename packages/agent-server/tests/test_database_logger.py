@@ -85,6 +85,12 @@ class _FakeCursorCM:
         self.sql = sql
         self.params = params
 
+    def __await__(self):
+        self._calls.append({"sql": self.sql, "params": self.params})
+        async def _f():
+            return self
+        return _f().__await__()
+
     async def __aenter__(self):
         self._calls.append({"sql": self.sql, "params": self.params})
         return self
@@ -802,9 +808,9 @@ class TestSQLiteBackendIntegration:
 
     def test_db_path_takes_precedence_over_db_dir(self):
         backend = self.mod.SQLiteBackend()
-        with patch.dict(os.environ, {"SQLITE_DB_PATH": "/explicit/full.db", "SQLITE_DB_DIR": "/ignored"}):
+        with patch.dict(os.environ, {"SQLITE_DB_PATH": "/tmp/full.db", "SQLITE_DB_DIR": "/ignored"}):
             run(backend.initialize(silent_logger()))
-        assert backend._db_path == "/explicit/full.db"
+        assert backend._db_path == "/tmp/full.db"
 
     def test_close_nulls_path(self):
         backend = self.mod.SQLiteBackend()
@@ -812,12 +818,6 @@ class TestSQLiteBackendIntegration:
             run(backend.initialize(silent_logger()))
         run(backend.close())
         assert backend._db_path is None
-
-    def test_unavailable_when_aiosqlite_missing(self):
-        mod = load_module(fake_asyncpg=_FakeAsyncpg())
-        backend = mod.SQLiteBackend()
-        with patch.dict(os.environ, {"SQLITE_DB_PATH": "/tmp/x.db"}):
-            assert run(backend.initialize(silent_logger())) is False
 
 
 # ===========================================================================
@@ -828,12 +828,28 @@ class TestSQLiteBackendIntegration:
 class TestPostgresBackendFallsBack:
 
     def test_unavailable_when_asyncpg_missing(self):
-        mod = load_module(fake_aiosqlite=_FakeAiosqlite())
-        assert run(mod.PostgresBackend().initialize(silent_logger())) is False
+        with patch.dict(sys.modules, {"asyncpg": None}):
+            mod = load_module(fake_aiosqlite=_FakeAiosqlite())
+            assert run(mod.PostgresBackend().initialize(silent_logger())) is False
 
     def test_connection_failure_returns_false(self):
         mod = load_module(fake_aiosqlite=_FakeAiosqlite(), fake_asyncpg=_FakeAsyncpg())
         assert run(mod.PostgresBackend().initialize(silent_logger())) is False
+
+
+# ===========================================================================
+# SQLiteBackend fallback
+# ===========================================================================
+
+
+class TestSQLiteBackendFallsBack:
+
+    def test_unavailable_when_aiosqlite_missing(self):
+        with patch.dict(sys.modules, {"aiosqlite": None}):
+            mod = load_module(fake_asyncpg=_FakeAsyncpg())
+            backend = mod.SQLiteBackend()
+            with patch.dict(os.environ, {"SQLITE_DB_PATH": "/tmp/x.db"}):
+                assert run(backend.initialize(silent_logger())) is False
 
 
 # ===========================================================================
