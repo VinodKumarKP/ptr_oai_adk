@@ -921,6 +921,8 @@ knowledge_base:
 ```
 
 > **Note on Environment Variables**: For security, any value that starts with `$` (e.g., `${CONFLUENCE_API_KEY}`) will be automatically resolved from your environment variables. This is the recommended way to handle sensitive credentials.
+>
+> **Important**: When using a dynamic LangChain loader, be sure to consult its documentation and install any required dependencies (e.g., `pip install atlassian-python-api` for the Confluence loader).
 
 ## Memory Management
 
