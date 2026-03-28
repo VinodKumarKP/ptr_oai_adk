@@ -91,6 +91,8 @@ class BaseKnowledgeBaseFactory(ABC):
 
             if source_type == 'dynamic':
                 loader_class = source.get('loader')
+                if len(loader_class.split('.')) == 1:
+                    loader_class = "langchain_community.document_loaders." + loader_class
                 if not loader_class:
                     self.logger.warning(f"Dynamic data source at index {i} is missing 'loader'. Skipping.")
                     continue
