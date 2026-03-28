@@ -14,7 +14,7 @@ A powerful, interactive CLI tool designed to instantly scaffold production-ready
   - **Tool Integration**: Automatically scaffolds tool directories and utility scripts.
   - **Agent Skills**: Define reusable skills in a dedicated `skills/` directory, referenced in your agent configuration.
   - **Structured Output**: Generate Pydantic models for reliable, structured data extraction, configurable at both global and per-agent levels.
-  - **Knowledge Base (RAG)**: Built-in support for configuring **Chroma**, **Postgres (pgvector)**, and **S3** vector stores at both global and agent-specific levels.
+  - **Knowledge Base (RAG)**: Built-in support for configuring **Chroma**, **Postgres (pgvector)**, and **S3** vector stores, plus any LangChain document loader.
   - **Conversational Memory**: Configure global conversation history using a vector store.
   - **Guardrails**: Integrated placeholder support for **Guardrails AI** validators.
 
@@ -93,10 +93,28 @@ To enforce a specific output schema, you can define structured output models.
 The generator will create a `structured_output/` directory and scaffold a Pydantic `BaseModel` for each unique model name provided, ready for you to define the schema.
 
 ### Knowledge Base (RAG)
-You can configure knowledge bases at both the **Global** (shared) and **Agent** levels. Supported backends:
-- **Chroma**: Local vector store.
-- **Postgres**: Connection placeholders for pgvector.
-- **S3**: Bucket and region placeholders.
+You can configure knowledge bases at both the **Global** (shared) and **Agent** levels. The system supports a variety of data sources:
+- **Vector Stores**: **Chroma** (local), **Postgres** (pgvector), and **S3**.
+- **LangChain Loaders**: You can use any document loader from the LangChain ecosystem. You can provide the full class path or just the class name.
+  ```yaml
+  knowledge_base:
+    # Full class path
+    - loader: "langchain_community.document_loaders.ConfluenceLoader"
+      settings:
+        url: "https://your-company.atlassian.net/wiki"
+        username: "${CONFLUENCE_USERNAME}"
+        api_key: "${CONFLUENCE_API_KEY}"
+        space_key: "INSURANCE"
+    
+    # Just the class name (assumed to be a LangChain loader)
+    - loader: "ConfluenceLoader"
+      settings:
+        url: "https://your-company.atlassian.net/wiki"
+        username: "${CONFLUENCE_USERNAME}"
+        api_key: "${CONFLUENCE_API_KEY}"
+        space_key: "INSURANCE"
+  ```
+  > **Note**: Values starting with `$` (e.g., `${CONFLUENCE_API_KEY}`) are automatically resolved from environment variables.
 
 ### MCP Servers
 When adding MCPs to an agent, you can specify the type:

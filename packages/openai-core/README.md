@@ -759,7 +759,7 @@ Give your agents access to custom information by setting up a knowledge base. Th
 
 ### How It Works
 
-1.  **You provide documents**: Point the system to local files or S3 buckets.
+1.  **You provide documents**: Point the system to local files, S3 buckets, or even dynamically load from any LangChain-supported document loader.
 2.  **Indexing**: The system reads, splits, and stores the content in a vector database, making it searchable.
 3.  **Retrieval**: When a user asks a question, the system finds the most relevant information from the knowledge base.
 4.  **Answering**: This information is given to the agent, who uses it to form a complete and accurate answer.
@@ -878,6 +878,7 @@ The framework supports loading data from various sources to ground your agents.
 
 1.  **Local Files**: Load documents directly from the file system.
 2.  **S3 Buckets**: Download and sync documents from AWS S3 buckets.
+3.  **Any LangChain Document Loader**: Dynamically load data from any document loader available in the LangChain ecosystem. You can provide the full class path or just the class name.
 
 ### Configuration Example
 
@@ -896,7 +897,26 @@ knowledge_base:
         bucket: "my-company-docs-bucket"
         prefix: "manuals/"  # Optional: specific folder
         # Files are downloaded to {persist_directory}/s3_bucket/{bucket_name}/...
+
+      # 3. Dynamic LangChain Loader (e.g., Confluence)
+      # You can provide the full class path
+      - loader: "langchain_community.document_loaders.ConfluenceLoader"
+        settings:
+          url: "https://your-company.atlassian.net/wiki"
+          username: "${CONFLUENCE_USERNAME}"
+          api_key: "${CONFLUENCE_API_KEY}"
+          space_key: "INSURANCE"
+      
+      # Or, if only a class name is provided, it's assumed to be a LangChain loader
+      - loader: "ConfluenceLoader"
+        settings:
+          url: "https://your-company.atlassian.net/wiki"
+          username: "${CONFLUENCE_USERNAME}"
+          api_key: "${CONFLUENCE_API_KEY}"
+          space_key: "INSURANCE"
 ```
+
+> **Note on Environment Variables**: For security, any value that starts with `$` (e.g., `${CONFLUENCE_API_KEY}`) will be automatically resolved from your environment variables. This is the recommended way to handle sensitive credentials.
 
 ## Memory Management
 
