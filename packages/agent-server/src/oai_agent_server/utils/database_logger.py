@@ -122,6 +122,14 @@ class DatabaseBackend(ABC):
         """
 
     @abstractmethod
+    async def fetch(self, query: str, params: tuple) -> List[Dict[str, Any]]:
+        """Execute a SELECT and return all matching rows as plain dicts."""
+
+    @abstractmethod
+    async def fetch_one(self, query: str, params: tuple) -> Optional[Dict[str, Any]]:
+        """Execute a SELECT and return the first matching row as a plain dict, or None."""
+
+    @abstractmethod
     async def close(self) -> None:
         """Release all held resources."""
 
@@ -158,6 +166,7 @@ class PostgresBackend(DatabaseBackend):
             serialization_warning, request_headers
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
     """
+    PLACEHOLDER = "$"   # backends expose their placeholder style for _build_where_clause
 
     def __init__(self) -> None:
         self._pool: Optional[AsyncpgPool] = None
@@ -227,6 +236,20 @@ class PostgresBackend(DatabaseBackend):
             return
         async with self._pool.acquire() as conn:
             await conn.executemany(query, params_seq)
+
+    async def fetch(self, query: str, params: tuple) -> List[Dict[str, Any]]:
+        if self._pool is None:
+            raise RuntimeError("PostgresBackend.fetch called before successful initialize()")
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(query, *params)
+        return [dict(row) for row in rows]
+
+    async def fetch_one(self, query: str, params: tuple) -> Optional[Dict[str, Any]]:
+        if self._pool is None:
+            raise RuntimeError("PostgresBackend.fetch_one called before successful initialize()")
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(query, *params)
+        return dict(row) if row else None
 
     async def close(self) -> None:
         await self._cleanup()
@@ -320,6 +343,7 @@ class SQLiteBackend(DatabaseBackend):
             serialization_warning, request_headers
         ) VALUES (?,?,?,?,?,?,?,?,?,?)
     """
+    PLACEHOLDER = "?"   # backends expose their placeholder style for _build_where_clause
 
     def __init__(self) -> None:
         self._db_path: Optional[str] = None
@@ -361,6 +385,24 @@ class SQLiteBackend(DatabaseBackend):
         async with aiosqlite.connect(self._db_path) as db:
             await db.executemany(query, params_seq)
             await db.commit()
+
+    async def fetch(self, query: str, params: tuple) -> List[Dict[str, Any]]:
+        if self._db_path is None:
+            raise RuntimeError("SQLiteBackend.fetch called before successful initialize()")
+        async with aiosqlite.connect(self._db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(query, params) as cursor:
+                rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def fetch_one(self, query: str, params: tuple) -> Optional[Dict[str, Any]]:
+        if self._db_path is None:
+            raise RuntimeError("SQLiteBackend.fetch_one called before successful initialize()")
+        async with aiosqlite.connect(self._db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(query, params) as cursor:
+                row = await cursor.fetchone()
+        return dict(row) if row else None
 
     async def close(self) -> None:
         # aiosqlite connections are context-managed per operation; nothing to tear down.
@@ -638,6 +680,221 @@ class DatabaseLogger:
             if self.logger:
                 self.logger.warning(f"Failed to log stream chunk batch: {exc}")
 
+    async def get_logs(
+        self,
+        agent_name: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        endpoint: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Retrieve chat_logs rows with optional filters.
+
+        Returns an empty list when logging is disabled, no backend is active,
+        or a database error occurs.
+        """
+        if not self._ready():
+            return []
+
+        try:
+            filters = [
+                ("agent_name", agent_name),
+                ("session_id", session_id),
+                ("user_id", user_id),
+                ("endpoint", endpoint),
+                ("timestamp >=", start_date),
+                ("timestamp <=", end_date),
+                ("status", status),
+            ]
+            where, params = self._build_where_clause(filters)
+            ph = self._backend.PLACEHOLDER  # type: ignore[union-attr]
+            n = len(params)
+            limit_ph  = f"${n + 1}" if ph == "$" else "?"
+            offset_ph = f"${n + 2}" if ph == "$" else "?"
+            params = (*params, limit, offset)
+
+            query = f"""
+                SELECT
+                    id, timestamp, agent_name, session_id, user_id, endpoint,
+                    input_message, output_response, request_headers, model_info,
+                    token_usage, total_tokens, response_time_ms, status,
+                    error_message, created_at
+                FROM chat_logs
+                {where}
+                ORDER BY timestamp DESC
+                LIMIT {limit_ph} OFFSET {offset_ph}
+            """
+            rows = await self._backend.fetch(query, params)  # type: ignore[union-attr]
+            return [self._deserialize_chat_log_row(r) for r in rows]
+
+        except Exception as exc:  # pylint: disable=broad-except
+            if self.logger:
+                self.logger.error(f"Failed to retrieve logs: {exc}")
+            return []
+
+    async def get_activity_logs(
+        self,
+        agent_name: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Retrieve agent_activity_log rows with optional filters.
+
+        Returns an empty list when logging is disabled, no backend is active,
+        or a database error occurs.
+        """
+        if not self._ready():
+            return []
+
+        try:
+            filters = [
+                ("agent_name", agent_name),
+                ("session_id", session_id),
+                ("user_id", user_id),
+                ("timestamp >=", start_date),
+                ("timestamp <=", end_date),
+            ]
+            where, params = self._build_where_clause(filters)
+            ph = self._backend.PLACEHOLDER  # type: ignore[union-attr]
+            n = len(params)
+            limit_ph  = f"${n + 1}" if ph == "$" else "?"
+            offset_ph = f"${n + 2}" if ph == "$" else "?"
+            params = (*params, limit, offset)
+
+            query = f"""
+                SELECT
+                    id, timestamp, agent_name, session_id, user_id, endpoint,
+                    chunk_sequence, chunk_content, chunk_text,
+                    serialization_warning, request_headers, created_at
+                FROM agent_activity_log
+                {where}
+                ORDER BY timestamp DESC, chunk_sequence ASC
+                LIMIT {limit_ph} OFFSET {offset_ph}
+            """
+            rows = await self._backend.fetch(query, params)  # type: ignore[union-attr]
+            return [self._deserialize_activity_log_row(r) for r in rows]
+
+        except Exception as exc:  # pylint: disable=broad-except
+            if self.logger:
+                self.logger.error(f"Failed to retrieve activity logs: {exc}")
+            return []
+
+    async def get_stats(
+        self,
+        agent_name: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Return aggregate statistics over chat_logs.
+
+        Returns an empty dict when logging is disabled, no backend is active,
+        or a database error occurs.
+        """
+        if not self._ready():
+            return {}
+
+        try:
+            filters = [
+                ("agent_name", agent_name),
+                ("user_id", user_id),
+            ]
+            where, params = self._build_where_clause(filters)
+
+            query = f"""
+                SELECT
+                    COUNT(*)                                             AS total_interactions,
+                    COUNT(DISTINCT session_id)                           AS unique_sessions,
+                    COUNT(DISTINCT user_id)                              AS unique_users,
+                    AVG(response_time_ms)                                AS avg_response_time,
+                    MAX(response_time_ms)                                AS max_response_time,
+                    MIN(response_time_ms)                                AS min_response_time,
+                    SUM(total_tokens)                                    AS total_tokens_sum,
+                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_interactions,
+                    SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END) AS failed_interactions
+                FROM chat_logs
+                {where}
+            """
+            row = await self._backend.fetch_one(query, params)  # type: ignore[union-attr]
+            if not row:
+                return {}
+
+            return {
+                "total_interactions":      int(row["total_interactions"] or 0),
+                "unique_sessions":         int(row["unique_sessions"] or 0),
+                "unique_users":            int(row["unique_users"] or 0),
+                "avg_response_time_ms":    float(row["avg_response_time"]) if row["avg_response_time"] is not None else None,
+                "max_response_time_ms":    float(row["max_response_time"]) if row["max_response_time"] is not None else None,
+                "min_response_time_ms":    float(row["min_response_time"]) if row["min_response_time"] is not None else None,
+                "total_tokens_sum":        int(row["total_tokens_sum"] or 0),
+                "successful_interactions": int(row["successful_interactions"] or 0),
+                "failed_interactions":     int(row["failed_interactions"] or 0),
+            }
+
+        except Exception as exc:  # pylint: disable=broad-except
+            if self.logger:
+                self.logger.error(f"Failed to get stats: {exc}")
+            return {}
+
+    async def get_user_stats(
+        self,
+        agent_name: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return per-user aggregate statistics over chat_logs.
+
+        Returns an empty list when logging is disabled, no backend is active,
+        or a database error occurs.
+        """
+        if not self._ready():
+            return []
+
+        try:
+            filters = [("agent_name", agent_name)]
+            where, params = self._build_where_clause(filters)
+
+            query = f"""
+                SELECT
+                    user_id,
+                    COUNT(*)                                             AS total_interactions,
+                    COUNT(DISTINCT session_id)                           AS unique_sessions,
+                    AVG(response_time_ms)                                AS avg_response_time,
+                    MAX(response_time_ms)                                AS max_response_time,
+                    MIN(response_time_ms)                                AS min_response_time,
+                    SUM(total_tokens)                                    AS total_tokens_sum,
+                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_interactions,
+                    SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END) AS failed_interactions
+                FROM chat_logs
+                {where}
+                GROUP BY user_id
+                ORDER BY total_interactions DESC
+            """
+            rows = await self._backend.fetch(query, params)  # type: ignore[union-attr]
+            return [
+                {
+                    "user_id":                 row["user_id"],
+                    "total_interactions":      int(row["total_interactions"] or 0),
+                    "unique_sessions":         int(row["unique_sessions"] or 0),
+                    "avg_response_time_ms":    float(row["avg_response_time"]) if row["avg_response_time"] is not None else None,
+                    "max_response_time_ms":    float(row["max_response_time"]) if row["max_response_time"] is not None else None,
+                    "min_response_time_ms":    float(row["min_response_time"]) if row["min_response_time"] is not None else None,
+                    "total_tokens_sum":        int(row["total_tokens_sum"] or 0),
+                    "successful_interactions": int(row["successful_interactions"] or 0),
+                    "failed_interactions":     int(row["failed_interactions"] or 0),
+                }
+                for row in rows
+            ]
+
+        except Exception as exc:  # pylint: disable=broad-except
+            if self.logger:
+                self.logger.error(f"Failed to get user stats: {exc}")
+            return []
+
     async def close(self) -> None:
         """Release backend resources."""
         if self._backend is not None:
@@ -712,3 +969,104 @@ class DatabaseLogger:
         """Serialise *obj* to a JSON string, or None if *obj* is None."""
         serialised = cls._serialize_for_json(obj)
         return json.dumps(serialised) if serialised is not None else None
+
+    @staticmethod
+    def _build_where_clause(
+        filters: List[tuple],
+        start_index: int = 1,
+        placeholder: str = "$",
+    ) -> tuple:
+        """Build a WHERE clause and matching params tuple from a filter list.
+
+        Each entry in *filters* is ``(column_expr, value)``.  Entries whose
+        value is ``None`` are skipped.  *column_expr* may include a comparison
+        operator (e.g. ``"timestamp >="``); if none is given, ``=`` is assumed.
+
+        *placeholder* controls the paramstyle:
+          ``"$"``  → ``$1, $2, …``  (asyncpg / PostgreSQL)
+          ``"?"``  → ``?``          (aiosqlite / SQLite)
+
+        Returns ``(where_string, params_tuple)``.
+        """
+        conditions: List[str] = []
+        params: List[Any] = []
+        counter = start_index
+
+        for col_expr, value in filters:
+            if value is None:
+                continue
+            # Separate "timestamp >=" into column="timestamp" op=">="
+            parts = col_expr.split(None, 1)
+            col = parts[0]
+            op  = parts[1] if len(parts) > 1 else "="
+
+            if placeholder == "$":
+                ph = f"${counter}"
+                counter += 1
+            else:
+                ph = "?"
+
+            conditions.append(f"{col} {op} {ph}")
+            params.append(value)
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        return where, tuple(params)
+
+    @staticmethod
+    def _parse_json_field(value: Any) -> Any:
+        """Decode a JSON string from a DB row, or return the value as-is."""
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return value
+        return value
+
+    @staticmethod
+    def _isoformat(value: Any) -> Optional[str]:
+        """Convert a datetime (or ISO string) to an ISO-8601 string."""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return str(value)
+
+    def _deserialize_chat_log_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert a raw chat_logs DB row to a clean dict for callers."""
+        headers = self._parse_json_field(row.get("request_headers"))
+        return {
+            "id":               row.get("id"),
+            "timestamp":        self._isoformat(row.get("timestamp")),
+            "agent_name":       row.get("agent_name"),
+            "session_id":       row.get("session_id"),
+            "user_id":          row.get("user_id"),
+            "endpoint":         row.get("endpoint"),
+            "input_message":    self._parse_json_field(row.get("input_message")),
+            "output_response":  self._parse_json_field(row.get("output_response")),
+            "request_headers":  self._redact_headers(headers) if isinstance(headers, dict) else headers,
+            "model_info":       self._parse_json_field(row.get("model_info")),
+            "token_usage":      self._parse_json_field(row.get("token_usage")),
+            "total_tokens":     row.get("total_tokens"),
+            "response_time_ms": row.get("response_time_ms"),
+            "status":           row.get("status"),
+            "error_message":    row.get("error_message"),
+            "created_at":       self._isoformat(row.get("created_at")),
+        }
+
+    def _deserialize_activity_log_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert a raw agent_activity_log DB row to a clean dict for callers."""
+        headers = self._parse_json_field(row.get("request_headers"))
+        return {
+            "id":                    row.get("id"),
+            "timestamp":             self._isoformat(row.get("timestamp")),
+            "agent_name":            row.get("agent_name"),
+            "session_id":            row.get("session_id"),
+            "user_id":               row.get("user_id"),
+            "endpoint":              row.get("endpoint"),
+            "chunk_sequence":        row.get("chunk_sequence"),
+            "chunk_content":         self._parse_json_field(row.get("chunk_content")),
+            "chunk_text":            row.get("chunk_text"),
+            "serialization_warning": row.get("serialization_warning"),
+            "request_headers":       self._redact_headers(headers) if isinstance(headers, dict) else headers,
+            "created_at":            self._isoformat(row.get("created_at")),
+        }
