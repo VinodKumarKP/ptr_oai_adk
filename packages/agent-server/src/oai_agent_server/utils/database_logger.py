@@ -17,7 +17,7 @@ Usage
 -----
     logger = DatabaseLogger(
         backends=[PostgresBackend(), SQLiteBackend()],   # tried in order
-        app_logger=my_logger,
+        logger=my_logger,
     )
     await logger.initialize()
     await logger.log_interaction(...)
@@ -100,7 +100,7 @@ class DatabaseBackend(ABC):
     name: str = "unnamed"
 
     @abstractmethod
-    async def initialize(self, app_logger: Optional[logging.Logger]) -> bool:
+    async def initialize(self, logger: Optional[logging.Logger]) -> bool:
         """
         Set up the backend (connect, create tables, run migrations).
 
@@ -171,10 +171,10 @@ class PostgresBackend(DatabaseBackend):
     def __init__(self) -> None:
         self._pool: Optional[AsyncpgPool] = None
 
-    async def initialize(self, app_logger: Optional[logging.Logger]) -> bool:
+    async def initialize(self, logger: Optional[logging.Logger]) -> bool:
         if not _ASYNCPG_AVAILABLE:
-            if app_logger:
-                app_logger.debug("asyncpg not installed — PostgreSQL backend unavailable.")
+            if logger:
+                logger.debug("asyncpg not installed — PostgreSQL backend unavailable.")
             return False
 
         host = os.environ.get("LOGGING_DB_HOST", "localhost")
@@ -201,8 +201,8 @@ class PostgresBackend(DatabaseBackend):
 
             await self._create_schema()
 
-            if app_logger:
-                app_logger.info(f"PostgreSQL backend ready: {host}:{port}/{name}")
+            if logger:
+                logger.info(f"PostgreSQL backend ready: {host}:{port}/{name}")
             return True
 
         except (
@@ -213,13 +213,13 @@ class PostgresBackend(DatabaseBackend):
             asyncpg.PostgresError,
             OSError,
         ) as exc:
-            if app_logger:
-                app_logger.warning(f"PostgreSQL backend unavailable: {exc}")
+            if logger:
+                logger.warning(f"PostgreSQL backend unavailable: {exc}")
             await self._cleanup()
             return False
         except Exception as exc:  # pylint: disable=broad-except
-            if app_logger:
-                app_logger.error(f"Unexpected error initialising PostgreSQL backend: {exc}")
+            if logger:
+                logger.error(f"Unexpected error initialising PostgreSQL backend: {exc}")
             await self._cleanup()
             return False
 
@@ -348,10 +348,10 @@ class SQLiteBackend(DatabaseBackend):
     def __init__(self) -> None:
         self._db_path: Optional[str] = None
 
-    async def initialize(self, app_logger: Optional[logging.Logger]) -> bool:
+    async def initialize(self, logger: Optional[logging.Logger]) -> bool:
         if not _AIOSQLITE_AVAILABLE:
-            if app_logger:
-                app_logger.warning("aiosqlite not installed — SQLite backend unavailable.")
+            if logger:
+                logger.warning("aiosqlite not installed — SQLite backend unavailable.")
             return False
 
         self._db_path = self._resolve_db_path()
@@ -361,12 +361,12 @@ class SQLiteBackend(DatabaseBackend):
 
         try:
             await self._create_schema()
-            if app_logger:
-                app_logger.info(f"SQLite backend ready: {self._db_path}")
+            if logger:
+                logger.info(f"SQLite backend ready: {self._db_path}")
             return True
         except Exception as exc:  # pylint: disable=broad-except
-            if app_logger:
-                app_logger.error(f"SQLite backend failed to initialise: {exc}")
+            if logger:
+                logger.error(f"SQLite backend failed to initialise: {exc}")
             self._db_path = None
             return False
 
