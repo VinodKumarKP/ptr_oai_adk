@@ -31,6 +31,9 @@ class LangChainToolRegistry(BaseToolRegistry):
             except json.JSONDecodeError:
                 pass  # Maybe it's not JSON, but let the tool handle it or fail later
 
+        if isinstance(arguments, list):
+            arguments = arguments[0]
+
         if tool_name in self.available_mcp_tools:
             mcp_client = self.available_mcp_tools[tool_name]
             return await self.available_mcp_tools[mcp_client][tool_name]['tool'].ainvoke(input=arguments)

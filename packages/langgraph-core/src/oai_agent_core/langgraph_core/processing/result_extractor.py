@@ -114,6 +114,14 @@ class ResultExtractor(BaseResultExtractor):
             elif isinstance(last_message, dict) and 'content' in last_message:
                 content = last_message['content']
 
+            if hasattr(last_message, 'tool_calls') and len(last_message.tool_calls) > 0:
+                formatted['tool_calls'] = last_message.tool_calls
+                if content.strip() == '':
+                    content = 'Executing tools'
+
+            if hasattr(last_message, 'response_metadata') and last_message.response_metadata.get('finish_reason', None) == 'stop':
+                is_final = True
+
             formatted['content'] = {
                 "text": content,
                 "type": type(last_message).__name__,
