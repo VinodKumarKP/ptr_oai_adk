@@ -696,7 +696,8 @@ class StrandsAgent(BaseAgent):
                     if 'toolResult' in tool_use_content:
                         text = tool_use_content['toolResult']['content'][0]['text']
                         tool_calls = {
-                            'id': tool_use_content['toolResult']['toolUseId']
+                            'id': tool_use_content['toolResult']['toolUseId'],
+                            'type': 'tool_result'
                         }
                 if tool_calls and text:
                     return {"content": {
