@@ -113,7 +113,7 @@ class BaseResultExtractor(ABC):
         if original_message:
             response['original_message'] = original_message
 
-        if 'tool_calls' in result:
+        if isinstance(result, dict) and 'tool_calls' in result:
             response['tool_calls'] = result['tool_calls']
 
         # Add execution metadata

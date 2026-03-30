@@ -121,6 +121,7 @@ class StrandsAgent(BaseAgent):
         self.agent_builder = None
         self.orchestration_builder = None
         self._node_text_buffers = {}
+        self._tool_use_text_buffers = {}
         self.global_kb_factory = None
 
     async def initialize(self, session_id: str = None) -> Any:
@@ -494,11 +495,16 @@ class StrandsAgent(BaseAgent):
         # Determine the actual original message to use (config overrides argument)
         actual_original_message = config.get('original_message') if config else original_message
 
-        if len(self.agent_map) == 1:
+        if len(self.agent_map) == 1 or self.agent_config.get('crew_config', {}).get('pattern',
+                                                                                    None) == Constants.PATTERN_AGENT_AS_TOOL:
             # Single agent - use direct streaming
-            agent = list(self.agent_map.values())[0]
+            if len(self.agent_map) == 1:
+                agent = list(self.agent_map.values())[0]
+            else:
+                agent = self.multi_agent_system
             # Always skip these junk events
-            junk_events = {'contentBlockStart', 'contentBlockStop', 'messageStart', 'messageStop'}
+            junk_events = {'contentBlockStart', 'contentBlockStop', 'messageStart', 'messageStop', 'start_event_loop',
+                           'start', 'init_event_loop', 'metadata'}
 
             # Skip these only in non-verbose mode
             verbose_events = {'start_event_loop', 'start', 'init_event_loop'}
@@ -528,6 +534,9 @@ class StrandsAgent(BaseAgent):
                                 self.logger.debug(f"Skipping junk event: {chunk.get('event', {})}")
                             continue
 
+                        if any(event in chunk for event in junk_events):
+                            continue
+
                         # Skip verbose events only in non-verbose mode
                         if not verbose and (
                                 'current_tool_use' in chunk or
@@ -539,16 +548,43 @@ class StrandsAgent(BaseAgent):
                             continue
 
                         # In verbose mode, yield additional debug info
-                        if verbose and ('current_tool_use' in chunk or
-                                        ('event' in chunk and any(
-                                            event in chunk['event'] for event in verbose_events))):
-                            yield {"content": f"DEBUG: {chunk}", "type": "debug"}
+                        if verbose and ('current_tool_use' in chunk):
+                            continue
 
                         # Extract metadata if present
                         if 'event' in chunk and 'metadata' in chunk['event']:
                             token_usage = chunk['event']['metadata'].get('usage', {})
 
-                        yield {"content": chunk, "type": "event"}
+                        if 'type' in chunk and chunk['type'] == 'tool_use_stream':
+                            continue
+
+                        if 'message' in chunk and 'content' in chunk['message']:
+                            text = None
+                            tool_calls = []
+                            for tool_use_content in chunk['message']['content']:
+                                if 'text' in tool_use_content:
+                                    text = tool_use_content['text']
+                                if 'toolUse' in tool_use_content:
+                                    tool_calls = [
+                                        {
+                                            'args': tool_use_content['toolUse']['input'],
+                                            'id': tool_use_content['toolUse']['toolUseId'],
+                                            'name': tool_use_content['toolUse']['name'],
+                                            'type': 'tool_call'
+                                        }
+                                    ]
+                                if 'toolResult' in tool_use_content:
+                                    text = tool_use_content['toolResult']['content'][0]['text']
+                                    tool_calls = {
+                                        'id': tool_use_content['toolResult']['toolUseId']
+                                    }
+                            if tool_calls and text:
+                                yield {"content": {
+                                    "text": text,
+                                    'type': 'AIMessage'
+                                },
+                                    "tool_call": tool_calls
+                                }
 
                 # Yield final response
                 result = result['result'] if 'result' in result else content
@@ -597,6 +633,11 @@ class StrandsAgent(BaseAgent):
                         stream_complete_only=True
                 ):
                     event_type = event.get("type", "")
+                    with open(
+                            '/Users/vinodkumarkp/PycharmProjects/ptr_oai_agent_development_kit/packages/aws-strands-core/examples/agents/event.log',
+                            'a') as f:
+                        f.write(str(event) + '\n')
+                        f.write('\n')
                     if event_type in allowed_events:
                         formatted = self._format_stream_event(event,
                                                               input_message=formatted_message,
@@ -636,6 +677,34 @@ class StrandsAgent(BaseAgent):
             # AWS Strands often nests the standard agent event inside another 'event' key
             if "event" in inner_event:
                 inner_event = inner_event["event"]
+
+            if 'message' in inner_event and 'content' in inner_event['message']:
+                text = None
+                tool_calls = []
+                for tool_use_content in inner_event['message']['content']:
+                    if 'text' in tool_use_content:
+                        text = tool_use_content['text']
+                    if 'toolUse' in tool_use_content:
+                        tool_calls = [
+                            {
+                                'args': tool_use_content['toolUse']['input'],
+                                'id': tool_use_content['toolUse']['toolUseId'],
+                                'name': f"{agent_name} - {tool_use_content['toolUse']['name']}",
+                                'type': 'tool_call'
+                            }
+                        ]
+                    if 'toolResult' in tool_use_content:
+                        text = tool_use_content['toolResult']['content'][0]['text']
+                        tool_calls = {
+                            'id': tool_use_content['toolResult']['toolUseId']
+                        }
+                if tool_calls and text:
+                    return {"content": {
+                        "text": text,
+                        'type': 'AIMessage'
+                    },
+                        "tool_call": tool_calls
+                    }
 
             # 1. Accumulate Text Deltas
             if "contentBlockDelta" in inner_event:
