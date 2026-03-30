@@ -89,7 +89,7 @@ class BaseResultExtractor(ABC):
         response = {
             'content': {
                 'text': text_content,
-                'type': 'text',
+                'type': result.get('type', 'text') if isinstance(result, dict) else 'text',
                 'final': final,
                 'session_id': str(session_id)
             },
@@ -112,6 +112,9 @@ class BaseResultExtractor(ABC):
 
         if original_message:
             response['original_message'] = original_message
+
+        if 'tool_calls' in result:
+            response['tool_calls'] = result['tool_calls']
 
         # Add execution metadata
         response['metadata'] = self.extract_execution_metadata(result)

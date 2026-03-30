@@ -384,7 +384,8 @@ class OpenAIAgent(BaseAgent):
             model_id=getattr(self.llm, 'model', 'unknown'),
             model_provider=self.agent_config.get('cloud_provider', 'openai'),
             include_raw=config.get('include_raw', False) if config else False,
-            input_message=result_dict.get('input_message', None) if config and config.get('include_input_message', False) else None,
+            input_message=result_dict.get('input_message', None) if config and config.get('include_input_message',
+                                                                                          False) else None,
             original_message=user_message if config and config.get('include_original_message', False) else None
         )
 
@@ -393,7 +394,7 @@ class OpenAIAgent(BaseAgent):
                                        user_id=self.user_id,
                                        user_message=user_message,
                                        agent_response=result.final_output)
-            
+
         response['content']['text'] = self._guardrail_output_message(response['content']['text'])
         return response
 
@@ -420,13 +421,13 @@ class OpenAIAgent(BaseAgent):
             Chunks of the response formatted by ResultExtractor.
         """
         await self._ensure_initialized()
-        
+
         formatted_message = self._prepare_message(user_message, config)
         formatted_message = self._guardrail_input_message(formatted_message)
         formatted_message = self._augment_message(formatted_message, original_query=user_message)
-        
+
         self.langfuse_manager.initialize_client()
-        
+
         try:
             if self.langfuse_manager.is_enabled:
                 async for chunk in self._astream_with_tracing(formatted_message, user_message, config):
@@ -434,11 +435,11 @@ class OpenAIAgent(BaseAgent):
             else:
                 async for chunk in self._astream_without_tracing(formatted_message, user_message, config):
                     yield chunk
-                    
+
             # Note: Memory store update for streaming is tricky without full response accumulation.
             # StrandsAgent does it by accumulating in _astream_without_tracing or caller.
             # Here we yield chunks directly.
-            
+
         except Exception as e:
             self.logger.error(f"Error in astream: {e}", exc_info=True)
             if self.langfuse_manager.is_enabled:
@@ -449,7 +450,8 @@ class OpenAIAgent(BaseAgent):
                 )
             yield f"Error: {str(e)}"
 
-    async def _astream_without_tracing(self, message: str, original_message: str, config: Optional[Dict[str, Any]] = None):
+    async def _astream_without_tracing(self, message: str, original_message: str,
+                                       config: Optional[Dict[str, Any]] = None):
         """Stream agent response without Langfuse tracing.
 
         Args:
@@ -467,7 +469,9 @@ class OpenAIAgent(BaseAgent):
 
         async with self._mcp_context():
             result = Runner.run_streamed(self.agent, message)
+
             async for event in result.stream_events():
+                final = False
                 content: Optional[Dict[str, Any]] = None
                 # We'll ignore the raw responses event deltas
                 if event.type == "raw_response_event":
@@ -479,14 +483,21 @@ class OpenAIAgent(BaseAgent):
                 # When items are generated, print them
                 elif event.type == "run_item_stream_event":
                     if event.item.type == "tool_call_item":
-                        content = {
-                            'content': f"{event.item.raw_item.name}"
-                        }
+                        content = {'content': f"Executing {event.item.raw_item.name}",
+                                   'tool_calls': [{
+                                       'args': event.item.raw_item.arguments,
+                                       'id': event.item.raw_item.call_id,
+                                       'name': event.item.raw_item.name,
+                                       'type': 'tool_call'
+                                   }
+                                   ]}
                     elif event.item.type == "tool_call_output_item":
                         content = {
                             'content': f"{event.item.output}"
                         }
                     elif event.item.type == "message_output_item":
+                        if hasattr(event.item.raw_item, 'status') and event.item.raw_item.status == 'completed':
+                            final = True
                         from agents import ItemHelpers
                         text_content = ItemHelpers.text_message_output(event.item)
                         text_content = self._guardrail_output_message(text_content)
@@ -504,11 +515,12 @@ class OpenAIAgent(BaseAgent):
                         "output_tokens": usage_obj.output_tokens,
                         "total_tokens": usage_obj.total_tokens
                     } if hasattr(usage_obj, 'input_tokens') else {}
-                    
+
                     content['usage'] = usage_dict
-                    content['event_type']  = event.item.type if hasattr(event, 'item') and hasattr(event.item, 'type') else event.type
-                    content['raw'] = event
-                    
+                    content['type'] = event.item.type if hasattr(event, 'item') and hasattr(event.item,
+                                                                                                  'type') else event.type
+                    content['raw_result'] = event
+
                     yield self.result_extractor.format_response(
                         content,
                         session_id=self.session_id,
@@ -516,10 +528,11 @@ class OpenAIAgent(BaseAgent):
                         model_provider=self.agent_config.get('cloud_provider', 'langchain'),
                         include_raw=config.get('include_raw', False) if config else False,
                         input_message=message if config and config.get('include_input_message', False) else None,
-                        original_message=actual_original_message if config and config.get('include_original_message', False) else None,
-                        final=False
+                        original_message=actual_original_message if config and config.get('include_original_message',
+                                                                                          False) else None,
+                        final=final
                     )
-            
+
             # Add final response to memory after streaming is complete
             if self.memory_store:
                 # Use the final output from the result object if available
@@ -555,7 +568,7 @@ class OpenAIAgent(BaseAgent):
                 name_suffix='-stream'
         ) as span:
             collected_output = ""
-            
+
             async for chunk in self._astream_without_tracing(message, original_message, config):
                 # Collect output for tracing
                 if isinstance(chunk, dict):
@@ -569,7 +582,7 @@ class OpenAIAgent(BaseAgent):
                     collected_output += chunk
 
                 yield chunk
-            
+
             # Update trace with collected output
             if span and collected_output:
                 self.langfuse_manager.update_trace(
