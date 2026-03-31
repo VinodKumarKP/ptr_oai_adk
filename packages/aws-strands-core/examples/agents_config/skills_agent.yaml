@@ -8,9 +8,9 @@ skills:
 agent_list:
   - simple_assistant:
       system_prompt: |
-        You are a helpful assistant with access to file processing skills.
+        You are a helpful assistant with access to pdf processing skills
       skills:
-        - file-processing
+        - pdf
 
 crew_config:
   pattern: supervisor
