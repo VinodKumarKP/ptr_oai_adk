@@ -237,6 +237,7 @@ class DatabaseLogger:
                 self.is_active = True
                 return
         if self.logger: self.logger.warning("All database backends failed to initialise.")
+        self.is_active = False
 
     async def log_interaction(
         self,
@@ -352,7 +353,7 @@ class DatabaseLogger:
         try:
             filters = [("agent_name", agent_name), ("user_id", user_id)]
             where, params = self._build_where_clause(filters)
-            query = f"SELECT COUNT(*) AS total_interactions, COUNT(DISTINCT session_id) AS unique_sessions, COUNT(DISTINCT user_id) AS unique_users, AVG(response_time_ms) AS avg_response_time, MAX(response_time_ms) AS max_response_time, MIN(response_time_ms) AS min_response_time, SUM(total_tokens) AS total_tokens_sum, SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_interactions, SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END) AS failed_interactions FROM chat_logs {where}"
+            query = f"SELECT COUNT(*) AS total_interactions, COUNT(DISTINCT session_id) AS unique_sessions, COUNT(DISTINCT user_id) AS unique_users, AVG(response_time_ms) AS avg_response_time, MAX(response_time_ms) AS max_response_time, MIN(response_time_ms) AS min_response_time, SUM(total_tokens) AS total_tokens_sum, SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_interactions, SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END) AS failed_interactions FROM chat_logs cl {where}"
             row = await self._backend.fetch_one(query, params)
             if not row: return {}
             return {
@@ -375,7 +376,7 @@ class DatabaseLogger:
         try:
             filters = [("agent_name", agent_name)]
             where, params = self._build_where_clause(filters)
-            query = f"SELECT user_id, COUNT(*) AS total_interactions, COUNT(DISTINCT session_id) AS unique_sessions, AVG(response_time_ms) AS avg_response_time, MAX(response_time_ms) AS max_response_time, MIN(response_time_ms) AS min_response_time, SUM(total_tokens) AS total_tokens_sum, SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_interactions, SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END) AS failed_interactions FROM chat_logs {where} GROUP BY user_id ORDER BY total_interactions DESC"
+            query = f"SELECT user_id, COUNT(*) AS total_interactions, COUNT(DISTINCT session_id) AS unique_sessions, AVG(response_time_ms) AS avg_response_time, MAX(response_time_ms) AS max_response_time, MIN(response_time_ms) AS min_response_time, SUM(total_tokens) AS total_tokens_sum, SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_interactions, SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END) AS failed_interactions FROM chat_logs cl {where} GROUP BY user_id ORDER BY total_interactions DESC"
             rows = await self._backend.fetch(query, params)
             return [
                 {
@@ -428,7 +429,7 @@ class DatabaseLogger:
 
     @staticmethod
     def _redact_headers(headers: Optional[Dict]) -> Optional[Dict]:
-        if not headers: return None
+        if headers is None: return None
         return {k: (_REDACTED_SENTINEL if k.lower() in _REDACTED_HEADERS else v) for k, v in headers.items()}
 
     @staticmethod
@@ -484,12 +485,14 @@ class DatabaseLogger:
         conditions, params = [], []
         prefix = "al" if is_activity else "cl"
         placeholder = self._backend.PLACEHOLDER
-        for i, (col_expr, value) in enumerate(filters):
+        param_idx = 1
+        for col_expr, value in filters:
             if value is not None:
                 op = "="
                 if " " in col_expr:
                     col_expr, op = col_expr.split(None, 1)
-                ph = f"${i + 1}" if placeholder == "$" else "?"
+                ph = f"${param_idx}" if placeholder == "$" else "?"
+                param_idx += 1
                 conditions.append(f"{prefix}.{col_expr} {op} {ph}")
                 params.append(value)
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
