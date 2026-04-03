@@ -482,7 +482,7 @@ class DatabaseLogger:
 
     def _build_where_clause(self, filters: List[tuple], is_activity: bool = False) -> tuple:
         conditions, params = [], []
-        prefix = "al." if is_activity else "cl."
+        prefix = "al" if is_activity else "cl"
         placeholder = self._backend.PLACEHOLDER
         for i, (col_expr, value) in enumerate(filters):
             if value is not None:
@@ -490,23 +490,26 @@ class DatabaseLogger:
                 if " " in col_expr:
                     col_expr, op = col_expr.split(None, 1)
                 ph = f"${i + 1}" if placeholder == "$" else "?"
-                conditions.append(f"{prefix}{col_expr} {op} {ph}")
+                conditions.append(f"{prefix}.{col_expr} {op} {ph}")
                 params.append(value)
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         return where, tuple(params)
 
     def _deserialize_chat_log_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        for key in ["input_message", "output_response", "request_headers", "model_info", "token_usage", "evaluation_data"]:
+        headers = self._parse_json_field(row.get("request_headers"))
+        row["request_headers"] = self._redact_headers(headers) if isinstance(headers, dict) else headers
+        for key in ["input_message", "output_response", "model_info", "token_usage", "evaluation_data"]:
             if key in row: row[key] = self._parse_json_field(row[key])
         for key in ["timestamp", "created_at"]:
             if key in row: row[key] = self._isoformat(row[key])
         return row
 
     def _deserialize_activity_log_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        headers = self._parse_json_field(row.get("request_headers"))
+        row["request_headers"] = self._redact_headers(headers) if isinstance(headers, dict) else headers
         row["chunk_content"] = self._parse_json_field(row.get("chunk_content"))
-        row["request_headers"] = self._parse_json_field(row.get("request_headers"))
-        row["timestamp"] = self._isoformat(row.get("timestamp"))
-        row["created_at"] = self._isoformat(row.get("created_at"))
+        for key in ["timestamp", "created_at"]:
+            if key in row: row[key] = self._isoformat(row[key])
         return row
 
     @staticmethod
