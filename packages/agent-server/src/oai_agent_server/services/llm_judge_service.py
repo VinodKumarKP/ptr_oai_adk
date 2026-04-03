@@ -79,8 +79,7 @@ class LLMJudgeService:
                 }
                 self.judge_agent = self.agent_class(
                     agent_name="LLMJudgeAgent",
-                    agent_config=judge_config,
-                    config_root=self.config_root
+                    agent_config=judge_config
                 )
                 await self.judge_agent.initialize()
                 self.logger.info("LLM Judge Agent initialized.")
