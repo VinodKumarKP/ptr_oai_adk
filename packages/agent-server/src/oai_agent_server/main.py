@@ -87,7 +87,7 @@ class AgentHTTPServer:
         self.server_state = ServerState()
 
         # Define modes that are always active
-        ALWAYS_ACTIVE_MODES = {"health", "agent", "chat", "logs"}
+        ALWAYS_ACTIVE_MODES = {"health", "agent", "chat", "logs", "monitoring"}
 
         if allowed_modes is None:
             # If no modes are explicitly provided, use a comprehensive default list
@@ -145,7 +145,8 @@ class AgentHTTPServer:
             agent_class=type(self.agent),
             config_root=self.config_root,
             logger=self.logger,
-            db_logger=self.db_logger
+            db_logger=self.db_logger,
+            judge_model_id=os.environ.get('LLM_JUDGE_MODEL_ID', 'bedrock/us.amazon.nova-micro-v1:0')
         )
         self.chat_service = ChatService(self.agent, self.db_logger, self.logger, self.llm_judge_service,
                                         self.allowed_modes)
