@@ -136,7 +136,7 @@ class PostgresBackend(DatabaseBackend):
             await conn.execute(activity_log_index_ddl)
             try:
                 await conn.execute("ALTER TABLE chat_logs ADD COLUMN IF NOT EXISTS total_tokens INT")
-                await conn.execute("ALTER TABLE chat_logs ADD COLUMN IF NOT EXISTS interaction_id VARCHAR(255)")
+                await conn.execute("ALTER TABLE chat_logs ADD COLUMN IF NOT EXISTS interaction_id VARCHAR(255) UNIQUE DEFAULT gen_random_uuid()")
                 await conn.execute(
                     "ALTER TABLE agent_activity_log ADD COLUMN IF NOT EXISTS interaction_id VARCHAR(255)")
             except Exception:
