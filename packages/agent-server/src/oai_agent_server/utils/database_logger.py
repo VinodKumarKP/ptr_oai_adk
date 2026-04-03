@@ -51,7 +51,7 @@ class DatabaseBackend(ABC):
 class PostgresBackend(DatabaseBackend):
     name = "postgres"
     CHAT_LOGS_INSERT = "INSERT INTO chat_logs (interaction_id, timestamp, agent_name, session_id, user_id, endpoint, input_message, output_response, request_headers, model_info, token_usage, total_tokens, response_time_ms, status, error_message) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"
-    ACTIVITY_LOG_INSERT = "INSERT INTO agent_activity_log (timestamp, agent_name, session_id, user_id, endpoint, chunk_sequence, chunk_content, chunk_text, serialization_warning, request_headers) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+    ACTIVITY_LOG_INSERT = "INSERT INTO agent_activity_log (interaction_id, timestamp, agent_name, session_id, user_id, endpoint, chunk_sequence, chunk_content, chunk_text, serialization_warning, request_headers) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
     EVALUATION_LOG_INSERT = "INSERT INTO llm_judge_evaluations (interaction_id, quality_score, hallucination_detected, evaluation_data, timestamp) VALUES ($1, $2, $3, $4, $5)"
     PLACEHOLDER = "$"
 
@@ -115,30 +115,20 @@ class PostgresBackend(DatabaseBackend):
             self._pool = None
 
     async def _create_schema(self) -> None:
-        chat_logs_ddl = """
-            CREATE TABLE IF NOT EXISTS chat_logs (
-                id SERIAL PRIMARY KEY, interaction_id VARCHAR(255) UNIQUE, timestamp TIMESTAMP WITH TIME ZONE,
-                agent_name VARCHAR(255), session_id VARCHAR(255), user_id VARCHAR(255), endpoint VARCHAR(50),
-                input_message JSONB, output_response JSONB, request_headers JSONB, model_info JSONB,
-                token_usage JSONB, total_tokens INT, response_time_ms FLOAT, status VARCHAR(50),
-                error_message TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-        """
-        activity_log_ddl = "CREATE TABLE IF NOT EXISTS agent_activity_log (id SERIAL PRIMARY KEY, timestamp TIMESTAMP WITH TIME ZONE, agent_name VARCHAR(255), session_id VARCHAR(255), user_id VARCHAR(255), endpoint VARCHAR(50), chunk_sequence INT, chunk_content JSONB, chunk_text TEXT, serialization_warning TEXT, request_headers JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
-        evaluation_log_ddl = """
-            CREATE TABLE IF NOT EXISTS llm_judge_evaluations (
-                id SERIAL PRIMARY KEY, interaction_id VARCHAR(255) NOT NULL REFERENCES chat_logs(interaction_id) ON DELETE CASCADE,
-                quality_score FLOAT, hallucination_detected BOOLEAN, evaluation_data JSONB,
-                timestamp TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-        """
+        chat_logs_ddl = "CREATE TABLE IF NOT EXISTS chat_logs (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255) UNIQUE, timestamp TIMESTAMP WITH TIME ZONE, agent_name VARCHAR(255), session_id VARCHAR(255), user_id VARCHAR(255), endpoint VARCHAR(50), input_message JSONB, output_response JSONB, request_headers JSONB, model_info JSONB, token_usage JSONB, total_tokens INT, response_time_ms FLOAT, status VARCHAR(50), error_message TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
+        activity_log_ddl = "CREATE TABLE IF NOT EXISTS agent_activity_log (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255), timestamp TIMESTAMP WITH TIME ZONE, agent_name VARCHAR(255), session_id VARCHAR(255), user_id VARCHAR(255), endpoint VARCHAR(50), chunk_sequence INT, chunk_content JSONB, chunk_text TEXT, serialization_warning TEXT, request_headers JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
+        evaluation_log_ddl = "CREATE TABLE IF NOT EXISTS llm_judge_evaluations (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255) NOT NULL REFERENCES chat_logs(interaction_id) ON DELETE CASCADE, quality_score FLOAT, hallucination_detected BOOLEAN, evaluation_data JSONB, timestamp TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
+        activity_log_index_ddl = "CREATE INDEX IF NOT EXISTS idx_agent_activity_log_interaction_id ON agent_activity_log(interaction_id);"
+        
         async with self._pool.acquire() as conn:
             await conn.execute(chat_logs_ddl)
             await conn.execute(activity_log_ddl)
             await conn.execute(evaluation_log_ddl)
+            await conn.execute(activity_log_index_ddl)
             try:
                 await conn.execute("ALTER TABLE chat_logs ADD COLUMN IF NOT EXISTS total_tokens INT")
                 await conn.execute("ALTER TABLE chat_logs ADD COLUMN IF NOT EXISTS interaction_id VARCHAR(255)")
+                await conn.execute("ALTER TABLE agent_activity_log ADD COLUMN IF NOT EXISTS interaction_id VARCHAR(255)")
             except Exception:
                 pass
 
@@ -146,7 +136,7 @@ class PostgresBackend(DatabaseBackend):
 class SQLiteBackend(DatabaseBackend):
     name = "sqlite"
     CHAT_LOGS_INSERT = "INSERT INTO chat_logs (interaction_id, timestamp, agent_name, session_id, user_id, endpoint, input_message, output_response, request_headers, model_info, token_usage, total_tokens, response_time_ms, status, error_message) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-    ACTIVITY_LOG_INSERT = "INSERT INTO agent_activity_log (timestamp, agent_name, session_id, user_id, endpoint, chunk_sequence, chunk_content, chunk_text, serialization_warning, request_headers) VALUES (?,?,?,?,?,?,?,?,?,?)"
+    ACTIVITY_LOG_INSERT = "INSERT INTO agent_activity_log (interaction_id, timestamp, agent_name, session_id, user_id, endpoint, chunk_sequence, chunk_content, chunk_text, serialization_warning, request_headers) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
     EVALUATION_LOG_INSERT = "INSERT INTO llm_judge_evaluations (interaction_id, quality_score, hallucination_detected, evaluation_data, timestamp) VALUES (?, ?, ?, ?, ?)"
     PLACEHOLDER = "?"
 
@@ -211,28 +201,19 @@ class SQLiteBackend(DatabaseBackend):
         return "agent_logs.db"
 
     async def _create_schema(self) -> None:
-        chat_logs_ddl = """
-            CREATE TABLE IF NOT EXISTS chat_logs (
-                id INTEGER PRIMARY KEY, interaction_id TEXT UNIQUE, timestamp DATETIME, agent_name TEXT,
-                session_id TEXT, user_id TEXT, endpoint TEXT, input_message TEXT, output_response TEXT,
-                request_headers TEXT, model_info TEXT, token_usage TEXT, total_tokens INTEGER,
-                response_time_ms REAL, status TEXT, error_message TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-        """
-        activity_log_ddl = "CREATE TABLE IF NOT EXISTS agent_activity_log (id INTEGER PRIMARY KEY, timestamp DATETIME, agent_name TEXT, session_id TEXT, user_id TEXT, endpoint TEXT, chunk_sequence INTEGER, chunk_content TEXT, chunk_text TEXT, serialization_warning TEXT, request_headers TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
-        evaluation_log_ddl = """
-            CREATE TABLE IF NOT EXISTS llm_judge_evaluations (
-                id INTEGER PRIMARY KEY, interaction_id TEXT NOT NULL, quality_score REAL,
-                hallucination_detected INTEGER, evaluation_data TEXT, timestamp DATETIME,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-        """
+        chat_logs_ddl = "CREATE TABLE IF NOT EXISTS chat_logs (id INTEGER PRIMARY KEY, interaction_id TEXT UNIQUE, timestamp DATETIME, agent_name TEXT, session_id TEXT, user_id TEXT, endpoint TEXT, input_message TEXT, output_response TEXT, request_headers TEXT, model_info TEXT, token_usage TEXT, total_tokens INTEGER, response_time_ms REAL, status TEXT, error_message TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
+        activity_log_ddl = "CREATE TABLE IF NOT EXISTS agent_activity_log (id INTEGER PRIMARY KEY, interaction_id TEXT, timestamp DATETIME, agent_name TEXT, session_id TEXT, user_id TEXT, endpoint TEXT, chunk_sequence INTEGER, chunk_content TEXT, chunk_text TEXT, serialization_warning TEXT, request_headers TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
+        evaluation_log_ddl = "CREATE TABLE IF NOT EXISTS llm_judge_evaluations (id INTEGER PRIMARY KEY, interaction_id TEXT NOT NULL, quality_score REAL, hallucination_detected INTEGER, evaluation_data TEXT, timestamp DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
+        activity_log_index_ddl = "CREATE INDEX IF NOT EXISTS idx_agent_activity_log_interaction_id ON agent_activity_log(interaction_id);"
+
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute(chat_logs_ddl)
             await db.execute(activity_log_ddl)
             await db.execute(evaluation_log_ddl)
+            await db.execute(activity_log_index_ddl)
             try:
                 await db.execute("ALTER TABLE chat_logs ADD COLUMN interaction_id TEXT")
+                await db.execute("ALTER TABLE agent_activity_log ADD COLUMN interaction_id TEXT")
             except aiosqlite.OperationalError as e:
                 if "duplicate column name" not in str(e): raise
 
@@ -257,36 +238,21 @@ class DatabaseLogger:
                 return
         if self.logger: self.logger.warning("All database backends failed to initialise.")
 
-    async def log_interaction(
-        self,
-        interaction_id: str,
-        agent_name: str,
-        session_id: str,
-        user_id: str,
-        endpoint: str,
-        input_message: Any,
-        output_response: Any,
-        request_headers: Optional[Dict] = None,
-        model_info: Optional[Dict] = None,
-        token_usage: Optional[Dict] = None,
-        response_time_ms: Optional[float] = None,
-        status: str = "success",
-        error_message: Optional[str] = None,
-    ) -> None:
+    async def log_interaction(self, **kwargs) -> None:
         if not self._ready(): return
         try:
             now = datetime.now(timezone.utc)
             params = (
-                interaction_id, now, agent_name, session_id, user_id,
-                endpoint, self._to_json(input_message), self._to_json(output_response),
-                self._to_json(self._redact_headers(request_headers)), self._to_json(model_info),
-                self._to_json(token_usage), self._extract_total_tokens(token_usage),
-                response_time_ms, status, error_message,
+                kwargs["interaction_id"], now, kwargs["agent_name"], kwargs["session_id"], kwargs["user_id"],
+                kwargs["endpoint"], self._to_json(kwargs["input_message"]), self._to_json(kwargs["output_response"]),
+                self._to_json(self._redact_headers(kwargs.get("request_headers"))), self._to_json(kwargs.get("model_info")),
+                self._to_json(kwargs.get("token_usage")), self._extract_total_tokens(kwargs.get("token_usage")),
+                kwargs.get("response_time_ms"), kwargs.get("status", "success"), kwargs.get("error_message"),
             )
             await self._backend.execute(self._backend.CHAT_LOGS_INSERT, params)
-            if self.logger: self.logger.debug(f"Logged interaction: {interaction_id}")
+            if self.logger: self.logger.debug(f"Logged interaction: {kwargs['interaction_id']}")
         except Exception as exc:
-            if self.logger: self.logger.error(f"Failed to log interaction {interaction_id}: {exc}")
+            if self.logger: self.logger.error(f"Failed to log interaction {kwargs['interaction_id']}: {exc}")
             raise
 
     async def log_llm_judge_evaluation(self, interaction_id: str, evaluation_data: Dict) -> None:
@@ -305,6 +271,30 @@ class DatabaseLogger:
             if self.logger: self.logger.error(f"Failed to log LLM evaluation for {interaction_id}: {exc}")
             raise
 
+    async def get_chat_log_by_interaction_id(self, interaction_id: str) -> Optional[Dict[str, Any]]:
+        if not self._ready(): return None
+        try:
+            query = "SELECT * FROM chat_logs WHERE interaction_id = ?"
+            if isinstance(self._backend, PostgresBackend):
+                query = "SELECT * FROM chat_logs WHERE interaction_id = $1"
+            row = await self._backend.fetch_one(query, (interaction_id,))
+            return self._deserialize_chat_log_row(row) if row else None
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to retrieve chat log for interaction {interaction_id}: {exc}")
+            return None
+
+    async def get_evaluation_by_interaction_id(self, interaction_id: str) -> Optional[Dict[str, Any]]:
+        if not self._ready(): return None
+        try:
+            query = "SELECT evaluation_data FROM llm_judge_evaluations WHERE interaction_id = ?"
+            if isinstance(self._backend, PostgresBackend):
+                query = "SELECT evaluation_data FROM llm_judge_evaluations WHERE interaction_id = $1"
+            row = await self._backend.fetch_one(query, (interaction_id,))
+            return self._parse_json_field(row.get("evaluation_data")) if row else None
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to retrieve evaluation for interaction {interaction_id}: {exc}")
+            return None
+
     async def log_stream_chunks_batch(self, **kwargs) -> None:
         if not self._ready() or not kwargs.get("chunks"): return
         try:
@@ -312,7 +302,7 @@ class DatabaseLogger:
             headers_json = self._to_json(self._redact_headers(kwargs.get("request_headers")))
             params_seq = [
                 (
-                    now, kwargs["agent_name"], kwargs["session_id"], kwargs["user_id"], kwargs["endpoint"],
+                    kwargs["interaction_id"], now, kwargs["agent_name"], kwargs["session_id"], kwargs["user_id"], kwargs["endpoint"],
                     chunk["chunk_sequence"], self._to_json(chunk["chunk_content"]),
                     chunk.get("chunk_text"), chunk.get("serialization_warning"), headers_json,
                 ) for chunk in kwargs["chunks"]
@@ -322,6 +312,47 @@ class DatabaseLogger:
         except Exception as exc:
             if self.logger: self.logger.warning(f"Failed to log stream chunk batch: {exc}")
             raise
+
+    async def get_activity_logs(self, **kwargs) -> List[Dict[str, Any]]:
+        if not self._ready(): return []
+        try:
+            filters = [
+                ("agent_name", kwargs.get("agent_name")), ("session_id", kwargs.get("session_id")),
+                ("user_id", kwargs.get("user_id")), ("interaction_id", kwargs.get("interaction_id")),
+            ]
+            where, params = self._build_where_clause(filters, is_activity=True)
+            ph = self._backend.PLACEHOLDER
+            n = len(params)
+            limit_ph, offset_ph = (f"${n + 1}", f"${n + 2}") if ph == "$" else ("?", "?")
+            params = (*params, kwargs.get("limit", 100), kwargs.get("offset", 0))
+            query = f"SELECT * FROM agent_activity_log {where} ORDER BY timestamp DESC, chunk_sequence ASC LIMIT {limit_ph} OFFSET {offset_ph}"
+            rows = await self._backend.fetch(query, params)
+            return [self._deserialize_activity_log_row(r) for r in rows]
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to retrieve activity logs: {exc}")
+            return []
+
+    def _build_where_clause(self, filters: List[tuple], is_activity: bool = False) -> tuple:
+        conditions, params = [], []
+        prefix = "al." if is_activity else "cl."
+        placeholder = self._backend.PLACEHOLDER
+        for i, (col_expr, value) in enumerate(filters):
+            if value is not None:
+                op = "="
+                if " " in col_expr:
+                    col_expr, op = col_expr.split(None, 1)
+                ph = f"${i + 1}" if placeholder == "$" else "?"
+                conditions.append(f"{prefix}{col_expr} {op} {ph}")
+                params.append(value)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        return where, tuple(params)
+
+    def _deserialize_activity_log_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        row["chunk_content"] = self._parse_json_field(row.get("chunk_content"))
+        row["request_headers"] = self._parse_json_field(row.get("request_headers"))
+        row["timestamp"] = self._isoformat(row.get("timestamp"))
+        row["created_at"] = self._isoformat(row.get("created_at"))
+        return row
 
     async def get_logs(self, **kwargs) -> List[Dict[str, Any]]:
         if not self._ready(): return []
@@ -369,20 +400,6 @@ class DatabaseLogger:
     def _to_json(obj: Any) -> Optional[str]:
         if obj is None: return None
         return json.dumps(obj)
-
-    def _build_where_clause(self, filters: List[tuple]) -> tuple:
-        conditions, params = [], []
-        placeholder = self._backend.PLACEHOLDER
-        for i, (col_expr, value) in enumerate(filters):
-            if value is not None:
-                op = "="
-                if " " in col_expr:
-                    col_expr, op = col_expr.split(None, 1)
-                ph = f"${i + 1}" if placeholder == "$" else "?"
-                conditions.append(f"cl.{col_expr} {op} {ph}")
-                params.append(value)
-        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-        return where, tuple(params)
 
     def _deserialize_chat_log_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
         for key in ["input_message", "output_response", "request_headers", "model_info", "token_usage", "evaluation_data"]:

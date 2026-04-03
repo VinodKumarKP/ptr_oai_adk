@@ -25,6 +25,21 @@ def create_logs_router(logging_service, allowed_modes: Optional[List[str]] = Non
             """Retrieve logs with optional filtering."""
             return await logging_service.get_logs(session_id, user_id, endpoint, status, limit, offset)
 
+        @router.get("/logs/interaction/{interaction_id}")
+        async def get_chat_log_by_interaction_id(interaction_id: str):
+            """Retrieve a chat log for a specific interaction."""
+            return await logging_service.get_chat_log_by_interaction_id(interaction_id)
+
+        @router.get("/logs/activity/interaction/{interaction_id}")
+        async def get_activity_logs_by_interaction_id(interaction_id: str):
+            """Retrieve activity logs for a specific interaction."""
+            return await logging_service.get_activity_logs_by_interaction_id(interaction_id)
+
+        @router.get("/evaluations/{interaction_id}")
+        async def get_evaluation(interaction_id: str):
+            """Retrieve an evaluation for a specific interaction."""
+            return await logging_service.get_evaluation(interaction_id)
+
         @router.get("/logs/sessions/{session_id}")
         async def get_session_logs(session_id: str):
             """Retrieve logs for a specific session."""

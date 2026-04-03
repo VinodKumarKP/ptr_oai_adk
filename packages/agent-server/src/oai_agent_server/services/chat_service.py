@@ -3,6 +3,7 @@ import json
 import time
 import uuid
 from typing import Optional, AsyncGenerator, List
+from datetime import datetime
 
 from fastapi import HTTPException, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -81,7 +82,7 @@ class ChatService:
                 user_id=user_id
             )
 
-            return JSONResponse(content={"content": content, "session_id": session_id})
+            return JSONResponse(content={"content": content, "session_id": session_id, "interaction_id": interaction_id})
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
 
@@ -126,7 +127,7 @@ class ChatService:
                     content = response_extractor.extract_content(chunk)
                     last_response = content
                     chunk_text = extract_chunk_text(content)
-                    json_data, serialization_warning = self._serialize_chunk(content, session_id)
+                    json_data, serialization_warning = self._serialize_chunk(content, session_id, interaction_id)
                     yield f"data: {json_data}\n\n"
                     activity_chunks.append({
                         'chunk_sequence': chunk_sequence, 'chunk_content': content,
@@ -148,6 +149,7 @@ class ChatService:
 
                 if activity_chunks:
                     await self.db_logger.log_stream_chunks_batch(
+                        interaction_id=interaction_id,
                         agent_name=self.agent_name, session_id=session_id, user_id=user_id,
                         endpoint="/chat/stream", chunks=activity_chunks, request_headers=headers
                     )
@@ -167,17 +169,20 @@ class ChatService:
         except Exception as e:
             raise StreamingException(reason=str(e))
 
-    def _serialize_chunk(self, content, session_id):
+    def _serialize_chunk(self, content, session_id, interaction_id):
+        base_data = {'content': content, 'session_id': session_id, 'interaction_id': interaction_id}
         try:
-            return json.dumps({'content': content, 'session_id': session_id}), None
+            return json.dumps(base_data), None
         except (TypeError, ValueError):
             try:
-                serializable_content = make_serializable(content)
-                return json.dumps({'content': serializable_content, 'session_id': session_id}), None
+                base_data['content'] = make_serializable(content)
+                return json.dumps(base_data), None
             except Exception as e:
                 warning = f"Content not JSON serializable: {e}, converting to string"
                 self.logger.warning(warning)
-                return json.dumps({'content': str(content), 'session_id': session_id, 'serialization_warning': warning}), warning
+                base_data['content'] = str(content)
+                base_data['serialization_warning'] = warning
+                return json.dumps(base_data), warning
 
     async def _handle_reinitialization(self, user_id: Optional[str]):
         import os
