@@ -1,7 +1,6 @@
+import asyncio
 import json
 import re
-import asyncio
-import time
 
 EVALUATION_PROMPT_TEMPLATE = """
 You are an expert AI quality evaluator. Analyze the following conversation between a user and an AI agent, then provide a comprehensive quality assessment.
@@ -59,7 +58,8 @@ Respond with ONLY a valid JSON object (no markdown, no explanations) containing 
 
 
 class LLMJudgeService:
-    def __init__(self, agent_class, config_root, logger, db_logger, judge_model_id="bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0"):
+    def __init__(self, agent_class, config_root, logger, db_logger,
+                 judge_model_id="bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0"):
         self.agent_class = agent_class
         self.config_root = config_root
         self.logger = logger
@@ -95,7 +95,8 @@ class LLMJudgeService:
         try:
             judge_response_raw = await self.judge_agent.ainvoke(evaluation_request)
             if isinstance(judge_response_raw, dict) and 'content' in judge_response_raw:
-                judge_response_text = judge_response_raw['content'][0]['text'] if isinstance(judge_response_raw['content'], list) else judge_response_raw['content']['text']
+                judge_response_text = judge_response_raw['content'][0]['text'] if isinstance(
+                    judge_response_raw['content'], list) else judge_response_raw['content']['text']
             else:
                 judge_response_text = str(judge_response_raw)
 
@@ -112,7 +113,8 @@ class LLMJudgeService:
                     except Exception as db_exc:
                         # Crude check for foreign key errors
                         if "foreign key" in str(db_exc).lower() and attempt < max_retries - 1:
-                            self.logger.warning(f"LLM Judge: Retrying log for {interaction_id} due to FK error (attempt {attempt + 1})")
+                            self.logger.warning(
+                                f"LLM Judge: Retrying log for {interaction_id} due to FK error (attempt {attempt + 1})")
                             await asyncio.sleep(retry_delay)
                         else:
                             raise  # Re-raise the final exception
@@ -138,5 +140,6 @@ class LLMJudgeService:
             self.logger.error(f"Failed to parse JSON from judge response: {e}\nResponse: {response_text}")
             return {"error": f"JSON parsing failed: {str(e)}"}
         except Exception as e:
-            self.logger.error(f"An unexpected error occurred while parsing judge response: {e}\nResponse: {response_text}")
+            self.logger.error(
+                f"An unexpected error occurred while parsing judge response: {e}\nResponse: {response_text}")
             return {"error": f"An unexpected error occurred: {str(e)}"}

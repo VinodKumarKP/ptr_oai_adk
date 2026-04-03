@@ -48,15 +48,15 @@ class TokenManager:
             "server": server_key,
         }
         if user_id is not None:
-            #Remove email domain if present
+            # Remove email domain if present
             if "@" in user_id:
                 user_id = user_id.split("@")[0]
         else:
             user_id = "anonymous"
-        
+
         if role_id is None:
             role_id = "default"
-        
+
         metadata["user_id"] = user_id
         metadata["role_id"] = role_id
 
@@ -88,7 +88,6 @@ class TokenManager:
             'access_count': '0',
             'ttl': str(ttl_seconds) if ttl_seconds is not None else 'none'
         }
-
 
         self.r.hset(f"tokens:{token}", mapping=token_data)
 

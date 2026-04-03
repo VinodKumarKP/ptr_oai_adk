@@ -124,7 +124,8 @@ class TokenValidator:
             decoded_xml = decoded_bytes.decode('utf-8')
 
             # Basic XML structure validation
-            if not decoded_xml.strip().startswith('<?xml') and ('<saml:' not in decoded_xml and '<samlp:' not in decoded_xml):
+            if not decoded_xml.strip().startswith('<?xml') and (
+                    '<saml:' not in decoded_xml and '<samlp:' not in decoded_xml):
                 raise TokenValidationError("Token does not contain valid SAML XML")
 
             return decoded_xml
@@ -192,14 +193,18 @@ class TokenValidator:
         """
         Extract user email from SAML attributes.
         """
-        email_match = re.search(r'<saml:Attribute Name="email"[^>]*>\s*<saml:AttributeValue[^>]*>(.*?)</saml:AttributeValue>', xml_content, re.DOTALL)
+        email_match = re.search(
+            r'<saml:Attribute Name="email"[^>]*>\s*<saml:AttributeValue[^>]*>(.*?)</saml:AttributeValue>', xml_content,
+            re.DOTALL)
         return email_match.group(1).strip() if email_match else None
 
     def _extract_role(self, xml_content) -> Optional[str]:
         """
         Extract user role from SAML attributes.
         """
-        role_match = re.search(r'<saml:Attribute Name="role"[^>]*>\s*<saml:AttributeValue[^>]*>(.*?)</saml:AttributeValue>', xml_content, re.DOTALL)
+        role_match = re.search(
+            r'<saml:Attribute Name="role"[^>]*>\s*<saml:AttributeValue[^>]*>(.*?)</saml:AttributeValue>', xml_content,
+            re.DOTALL)
         return role_match.group(1).strip() if role_match else None
 
     def _extract_signature(self, xml_content: str) -> str:

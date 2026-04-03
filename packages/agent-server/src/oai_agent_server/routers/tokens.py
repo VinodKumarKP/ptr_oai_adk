@@ -1,9 +1,10 @@
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, Query, Security, Request
+from fastapi import APIRouter, Query, Security, Request
 from fastapi.responses import JSONResponse
 
 from oai_agent_server.security.dependencies import verify_jwt_token
+
 
 def create_token_router(token_service, allowed_modes: Optional[List[str]] = None):
     """Create the logs router with configured endpoints."""
@@ -16,13 +17,13 @@ def create_token_router(token_service, allowed_modes: Optional[List[str]] = None
     if 'token' in allowed_modes:
         @router.post("/custom")
         def generate_token(request: Request,
-                       user_id: Optional[str] = Query(None),
-                       role_id: Optional[str] = Query(None),
-                       ttl_seconds: Optional[int] = Query(3600)):
+                           user_id: Optional[str] = Query(None),
+                           role_id: Optional[str] = Query(None),
+                           ttl_seconds: Optional[int] = Query(3600)):
             """Generate a token with embedded metadata."""
             # Retrieve agent_name from app state (set in main.py)
             server_key = getattr(request.app.state, "agent_name", "unknown")
-            
+
             result = token_service.generate_token(server_key, user_id, role_id, ttl_seconds)
             return JSONResponse(content=result)
 

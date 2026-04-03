@@ -1,18 +1,18 @@
 import argparse
 import os
+import sys
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Optional, List, Set
+from typing import Optional, List
 
-import sys
-import time
 import uvicorn
 from fastapi import FastAPI
+
 from oai_agent_core.components.configuration.model_config import ConfigManager
 from oai_agent_core.core.base_agent import BaseAgent
 from oai_agent_core.utils.logger import get_logger
-
 from oai_agent_server.middleware.logging import LoggingMiddleware
 from oai_agent_server.middleware.request_context import setup_request_isolation, HeaderCaptureMiddleware
 from oai_agent_server.middleware.request_tracking import RequestTrackingMiddleware
@@ -147,7 +147,8 @@ class AgentHTTPServer:
             logger=self.logger,
             db_logger=self.db_logger
         )
-        self.chat_service = ChatService(self.agent, self.db_logger, self.logger, self.llm_judge_service, self.allowed_modes)
+        self.chat_service = ChatService(self.agent, self.db_logger, self.logger, self.llm_judge_service,
+                                        self.allowed_modes)
         self.agent_service = AgentService(self.agent, self.server_state, self.logger)
         self.logging_service = LoggingService(self.db_logger, self.agent_name)
         self.token_service = TokenService()

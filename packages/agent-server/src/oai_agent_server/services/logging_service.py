@@ -1,7 +1,7 @@
 from typing import Optional
 
-from fastapi.responses import JSONResponse
 from fastapi import HTTPException
+from fastapi.responses import JSONResponse
 
 from oai_agent_server.exceptions import DatabaseNotAvailableException
 
@@ -127,11 +127,11 @@ class LoggingService:
             await self.db_logger.initialize()
             if not self.db_logger.is_active:
                 raise DatabaseNotAvailableException(operation="get_user_stats")
-        
+
         if hasattr(self.db_logger, 'get_user_stats'):
-             stats = await self.db_logger.get_user_stats(agent_name=self.agent_name)
+            stats = await self.db_logger.get_user_stats(agent_name=self.agent_name)
         else:
-             stats = {}
+            stats = {}
 
         return JSONResponse(content={
             "agent_name": self.agent_name,

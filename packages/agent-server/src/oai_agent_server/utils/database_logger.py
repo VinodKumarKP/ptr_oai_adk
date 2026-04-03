@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -16,6 +15,7 @@ from typing import Any, Dict, List, Optional
 try:
     import asyncpg
     from asyncpg.pool import Pool as AsyncpgPool
+
     _ASYNCPG_AVAILABLE = True
 except ImportError:
     _ASYNCPG_AVAILABLE = False
@@ -23,27 +23,35 @@ except ImportError:
 
 try:
     import aiosqlite
+
     _AIOSQLITE_AVAILABLE = True
 except ImportError:
     _AIOSQLITE_AVAILABLE = False
 
 # Sensitive header keys
-_REDACTED_HEADERS = frozenset({"authorization", "cookie", "set-cookie", "x-api-key", "x-auth-token", "proxy-authorization"})
+_REDACTED_HEADERS = frozenset(
+    {"authorization", "cookie", "set-cookie", "x-api-key", "x-auth-token", "proxy-authorization"})
 _REDACTED_SENTINEL = "***REDACTED***"
 
 
 class DatabaseBackend(ABC):
     name: str = "unnamed"
+
     @abstractmethod
     async def initialize(self, logger: Optional[logging.Logger]) -> bool: ...
+
     @abstractmethod
     async def execute(self, query: str, params: tuple) -> None: ...
+
     @abstractmethod
     async def execute_many(self, query: str, params_seq: List[tuple]) -> None: ...
+
     @abstractmethod
     async def fetch(self, query: str, params: tuple) -> List[Dict[str, Any]]: ...
+
     @abstractmethod
     async def fetch_one(self, query: str, params: tuple) -> Optional[Dict[str, Any]]: ...
+
     @abstractmethod
     async def close(self) -> None: ...
 
@@ -72,7 +80,8 @@ class PostgresBackend(DatabaseBackend):
         timeout = int(os.environ.get("DB_POOL_TIMEOUT", "120"))
         dsn = f"postgresql://{user}:{password}@{host}:{port}/{name}"
         try:
-            self._pool = await asyncpg.create_pool(dsn, min_size=min_size, max_size=max_size, command_timeout=timeout, timeout=5)
+            self._pool = await asyncpg.create_pool(dsn, min_size=min_size, max_size=max_size, command_timeout=timeout,
+                                                   timeout=5)
             async with self._pool.acquire() as conn:
                 await conn.execute("SELECT 1")
             await self._create_schema()
@@ -119,7 +128,7 @@ class PostgresBackend(DatabaseBackend):
         activity_log_ddl = "CREATE TABLE IF NOT EXISTS agent_activity_log (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255), timestamp TIMESTAMP WITH TIME ZONE, agent_name VARCHAR(255), session_id VARCHAR(255), user_id VARCHAR(255), endpoint VARCHAR(50), chunk_sequence INT, chunk_content JSONB, chunk_text TEXT, serialization_warning TEXT, request_headers JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
         evaluation_log_ddl = "CREATE TABLE IF NOT EXISTS llm_judge_evaluations (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255) NOT NULL REFERENCES chat_logs(interaction_id) ON DELETE CASCADE, quality_score FLOAT, hallucination_detected BOOLEAN, evaluation_data JSONB, timestamp TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
         activity_log_index_ddl = "CREATE INDEX IF NOT EXISTS idx_agent_activity_log_interaction_id ON agent_activity_log(interaction_id);"
-        
+
         async with self._pool.acquire() as conn:
             await conn.execute(chat_logs_ddl)
             await conn.execute(activity_log_ddl)
@@ -128,7 +137,8 @@ class PostgresBackend(DatabaseBackend):
             try:
                 await conn.execute("ALTER TABLE chat_logs ADD COLUMN IF NOT EXISTS total_tokens INT")
                 await conn.execute("ALTER TABLE chat_logs ADD COLUMN IF NOT EXISTS interaction_id VARCHAR(255)")
-                await conn.execute("ALTER TABLE agent_activity_log ADD COLUMN IF NOT EXISTS interaction_id VARCHAR(255)")
+                await conn.execute(
+                    "ALTER TABLE agent_activity_log ADD COLUMN IF NOT EXISTS interaction_id VARCHAR(255)")
             except Exception:
                 pass
 
@@ -219,7 +229,8 @@ class SQLiteBackend(DatabaseBackend):
 
 
 class DatabaseLogger:
-    def __init__(self, backends: Optional[List[DatabaseBackend]] = None, logger: Optional[logging.Logger] = None) -> None:
+    def __init__(self, backends: Optional[List[DatabaseBackend]] = None,
+                 logger: Optional[logging.Logger] = None) -> None:
         self._backends: List[DatabaseBackend] = backends or [PostgresBackend(), SQLiteBackend()]
         self.logger = logger
         self._backend: Optional[DatabaseBackend] = None
@@ -240,20 +251,20 @@ class DatabaseLogger:
         self.is_active = False
 
     async def log_interaction(
-        self,
-        interaction_id: str,
-        agent_name: str,
-        session_id: str,
-        user_id: str,
-        endpoint: str,
-        input_message: Any,
-        output_response: Any,
-        request_headers: Optional[Dict] = None,
-        model_info: Optional[Dict] = None,
-        token_usage: Optional[Dict] = None,
-        response_time_ms: Optional[float] = None,
-        status: str = "success",
-        error_message: Optional[str] = None,
+            self,
+            interaction_id: str,
+            agent_name: str,
+            session_id: str,
+            user_id: str,
+            endpoint: str,
+            input_message: Any,
+            output_response: Any,
+            request_headers: Optional[Dict] = None,
+            model_info: Optional[Dict] = None,
+            token_usage: Optional[Dict] = None,
+            response_time_ms: Optional[float] = None,
+            status: str = "success",
+            error_message: Optional[str] = None,
     ) -> None:
         if not self._ready(): return
         try:
@@ -318,13 +329,15 @@ class DatabaseLogger:
             headers_json = self._to_json(self._redact_headers(kwargs.get("request_headers")))
             params_seq = [
                 (
-                    kwargs["interaction_id"], now, kwargs["agent_name"], kwargs["session_id"], kwargs["user_id"], kwargs["endpoint"],
+                    kwargs["interaction_id"], now, kwargs["agent_name"], kwargs["session_id"], kwargs["user_id"],
+                    kwargs["endpoint"],
                     chunk["chunk_sequence"], self._to_json(chunk["chunk_content"]),
                     chunk.get("chunk_text"), chunk.get("serialization_warning"), headers_json,
                 ) for chunk in kwargs["chunks"]
             ]
             await self._backend.execute_many(self._backend.ACTIVITY_LOG_INSERT, params_seq)
-            if self.logger: self.logger.debug(f"Logged batch of {len(kwargs['chunks'])} stream chunks for session {kwargs['session_id']}")
+            if self.logger: self.logger.debug(
+                f"Logged batch of {len(kwargs['chunks'])} stream chunks for session {kwargs['session_id']}")
         except Exception as exc:
             if self.logger: self.logger.warning(f"Failed to log stream chunk batch: {exc}")
             raise
@@ -360,9 +373,12 @@ class DatabaseLogger:
                 "total_interactions": int(row["total_interactions"] or 0),
                 "unique_sessions": int(row["unique_sessions"] or 0),
                 "unique_users": int(row["unique_users"] or 0),
-                "avg_response_time_ms": float(row["avg_response_time"]) if row["avg_response_time"] is not None else None,
-                "max_response_time_ms": float(row["max_response_time"]) if row["max_response_time"] is not None else None,
-                "min_response_time_ms": float(row["min_response_time"]) if row["min_response_time"] is not None else None,
+                "avg_response_time_ms": float(row["avg_response_time"]) if row[
+                                                                               "avg_response_time"] is not None else None,
+                "max_response_time_ms": float(row["max_response_time"]) if row[
+                                                                               "max_response_time"] is not None else None,
+                "min_response_time_ms": float(row["min_response_time"]) if row[
+                                                                               "min_response_time"] is not None else None,
                 "total_tokens_sum": int(row["total_tokens_sum"] or 0),
                 "successful_interactions": int(row["successful_interactions"] or 0),
                 "failed_interactions": int(row["failed_interactions"] or 0),
@@ -383,9 +399,12 @@ class DatabaseLogger:
                     "user_id": row["user_id"],
                     "total_interactions": int(row["total_interactions"] or 0),
                     "unique_sessions": int(row["unique_sessions"] or 0),
-                    "avg_response_time_ms": float(row["avg_response_time"]) if row["avg_response_time"] is not None else None,
-                    "max_response_time_ms": float(row["max_response_time"]) if row["max_response_time"] is not None else None,
-                    "min_response_time_ms": float(row["min_response_time"]) if row["min_response_time"] is not None else None,
+                    "avg_response_time_ms": float(row["avg_response_time"]) if row[
+                                                                                   "avg_response_time"] is not None else None,
+                    "max_response_time_ms": float(row["max_response_time"]) if row[
+                                                                                   "max_response_time"] is not None else None,
+                    "min_response_time_ms": float(row["min_response_time"]) if row[
+                                                                                   "min_response_time"] is not None else None,
                     "total_tokens_sum": int(row["total_tokens_sum"] or 0),
                     "successful_interactions": int(row["successful_interactions"] or 0),
                     "failed_interactions": int(row["failed_interactions"] or 0),
@@ -518,8 +537,10 @@ class DatabaseLogger:
     @staticmethod
     def _parse_json_field(value: Any) -> Any:
         if isinstance(value, str):
-            try: return json.loads(value)
-            except (json.JSONDecodeError, TypeError): return value
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return value
         return value
 
     @staticmethod

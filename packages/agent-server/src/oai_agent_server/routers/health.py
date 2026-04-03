@@ -1,7 +1,7 @@
 import os
+import time
 from typing import List, Optional
 
-import time
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
@@ -11,7 +11,7 @@ from oai_agent_server.middleware.request_context import get_original_environ, re
 def create_health_router(agent_name, server_state, enable_request_isolation, allowed_modes: Optional[List[str]] = None):
     """Create the health router with configured endpoints."""
     # Health router does NOT have the verify_api_key dependency
-    router = APIRouter(tags=["health"],)
+    router = APIRouter(tags=["health"], )
 
     if allowed_modes is None:
         allowed_modes = ["chat", "agent", "logs", "health"]

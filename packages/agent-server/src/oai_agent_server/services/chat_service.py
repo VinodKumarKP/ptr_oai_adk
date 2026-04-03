@@ -2,8 +2,8 @@ import inspect
 import json
 import time
 import uuid
-from typing import Optional, AsyncGenerator, List
 from datetime import datetime
+from typing import Optional, AsyncGenerator, List
 
 from fastapi import HTTPException, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -84,7 +84,8 @@ class ChatService:
                     user_id=user_id
                 )
 
-            return JSONResponse(content={"content": content, "session_id": session_id, "interaction_id": interaction_id})
+            return JSONResponse(
+                content={"content": content, "session_id": session_id, "interaction_id": interaction_id})
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
 
