@@ -3,7 +3,7 @@ import os
 import threading
 import uuid
 from contextlib import asynccontextmanager
-from typing import Optional, List
+from typing import Optional, List, Set
 
 import sys
 import time
@@ -85,8 +85,17 @@ class AgentHTTPServer:
         self.base_config_manager = ConfigManager(config_root=config_root)
         self.enable_request_isolation = enable_request_isolation
         self.server_state = ServerState()
-        self.allowed_modes = allowed_modes if allowed_modes is not None else ["chat", "agent", "logs", "health",
-                                                                              "token"]
+
+        # Define modes that are always active
+        ALWAYS_ACTIVE_MODES = {"health", "agent", "chat", "logs"}
+
+        if allowed_modes is None:
+            # If no modes are explicitly provided, use a comprehensive default list
+            # including always active modes and other common modes.
+            self.allowed_modes = list(ALWAYS_ACTIVE_MODES)
+        else:
+            # If modes are explicitly provided, ensure always active modes are included.
+            self.allowed_modes = list(set(allowed_modes).union(ALWAYS_ACTIVE_MODES))
 
         # Setup request-aware environment if enabled
         if enable_request_isolation:
@@ -138,7 +147,7 @@ class AgentHTTPServer:
             logger=self.logger,
             db_logger=self.db_logger
         )
-        self.chat_service = ChatService(self.agent, self.db_logger, self.logger, self.llm_judge_service)
+        self.chat_service = ChatService(self.agent, self.db_logger, self.logger, self.llm_judge_service, self.allowed_modes)
         self.agent_service = AgentService(self.agent, self.server_state, self.logger)
         self.logging_service = LoggingService(self.db_logger, self.agent_name)
         self.token_service = TokenService()
@@ -185,7 +194,7 @@ def parse_args(optional_agent_name_flag=False):
     parser.add_argument("--temperature", "-t", type=float, help="Temperature for the agent")
     parser.add_argument("--max-tokens", "-m", type=int, help="Maximum tokens for the agent")
     parser.add_argument("--allowed-modes", nargs='+', default=None,
-                        help="List of allowed modes (chat, agent, logs, health, token)")
+                        help="List of allowed modes (chat, logs, token, monitoring). Health and agent modes are always active.")
 
     args = parser.parse_args()
     return args

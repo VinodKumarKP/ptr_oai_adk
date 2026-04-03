@@ -35,11 +35,6 @@ def create_logs_router(logging_service, allowed_modes: Optional[List[str]] = Non
             """Retrieve activity logs for a specific interaction."""
             return await logging_service.get_activity_logs_by_interaction_id(interaction_id)
 
-        @router.get("/evaluations/{interaction_id}")
-        async def get_evaluation(interaction_id: str):
-            """Retrieve an evaluation for a specific interaction."""
-            return await logging_service.get_evaluation(interaction_id)
-
         @router.get("/logs/sessions/{session_id}")
         async def get_session_logs(session_id: str):
             """Retrieve logs for a specific session."""
@@ -54,5 +49,11 @@ def create_logs_router(logging_service, allowed_modes: Optional[List[str]] = Non
         async def get_user_stats():
             """Retrieve user statistics."""
             return await logging_service.get_user_stats()
+
+    if "monitoring" in allowed_modes:
+        @router.get("/evaluations/{interaction_id}")
+        async def get_evaluation(interaction_id: str):
+            """Retrieve an evaluation for a specific interaction."""
+            return await logging_service.get_evaluation(interaction_id)
 
     return router

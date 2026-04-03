@@ -18,12 +18,13 @@ from oai_agent_server.utils.serialization import make_serializable
 class ChatService:
     """Service for handling chat interactions."""
 
-    def __init__(self, agent, db_logger, logger, llm_judge_service: LLMJudgeService):
+    def __init__(self, agent, db_logger, logger, llm_judge_service: LLMJudgeService, allowed_modes: List[str]):
         self.agent = agent
         self.db_logger = db_logger
         self.logger = logger
         self.agent_name = agent.agent_name
         self.llm_judge_service = llm_judge_service
+        self.allowed_modes = allowed_modes
 
     async def process_chat(self, http_request: Request,
                            chat_request: ChatRequest,
@@ -73,14 +74,15 @@ class ChatService:
                 status=status
             )
 
-            background_tasks.add_task(
-                self.llm_judge_service.judge_interaction,
-                interaction_id=interaction_id,
-                user_message=chat_request.message,
-                agent_response=output_response,
-                session_id=session_id,
-                user_id=user_id
-            )
+            if "monitoring" in self.allowed_modes:
+                background_tasks.add_task(
+                    self.llm_judge_service.judge_interaction,
+                    interaction_id=interaction_id,
+                    user_message=chat_request.message,
+                    agent_response=output_response,
+                    session_id=session_id,
+                    user_id=user_id
+                )
 
             return JSONResponse(content={"content": content, "session_id": session_id, "interaction_id": interaction_id})
         except Exception as e:
@@ -140,14 +142,15 @@ class ChatService:
                 output_response = extract_output_text(last_response)
                 response_time_ms = (time.time() - start_time) * 1000
 
-                background_tasks.add_task(
-                    self.llm_judge_service.judge_interaction,
-                    interaction_id=interaction_id,
-                    user_message=stream_request.message,
-                    agent_response=output_response,
-                    session_id=session_id,
-                    user_id=user_id
-                )
+                if "monitoring" in self.allowed_modes:
+                    background_tasks.add_task(
+                        self.llm_judge_service.judge_interaction,
+                        interaction_id=interaction_id,
+                        user_message=stream_request.message,
+                        agent_response=output_response,
+                        session_id=session_id,
+                        user_id=user_id
+                    )
 
                 if activity_chunks:
                     await self.db_logger.log_stream_chunks_batch(
