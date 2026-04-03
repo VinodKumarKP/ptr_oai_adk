@@ -294,11 +294,11 @@ class TestFallbackChain:
             run(db.initialize())
         assert not db.is_active
         assert db._backend is None
-    def test_no_backends_leaves_inactive(self):
+    def test_no_backends_leaves_inactive_use_default_sqllite(self):
         with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "true"}):
             db = self.mod.DatabaseLogger(backends=[], logger=silent_logger())
             run(db.initialize())
-        assert not db.is_active
+        assert db.is_active
 
 class TestLogInteraction:
     @pytest.fixture(autouse=True)
