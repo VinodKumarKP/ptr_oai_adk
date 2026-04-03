@@ -37,7 +37,7 @@ def mock_llm_judge_service():
 
 @pytest.fixture
 def chat_service(mock_agent, mock_db_logger, mock_llm_judge_service):
-    return ChatService(mock_agent, mock_db_logger, MagicMock(), mock_llm_judge_service)
+    return ChatService(mock_agent, mock_db_logger, MagicMock(), mock_llm_judge_service, ["chat", "monitoring"])
 
 
 @pytest.mark.asyncio
