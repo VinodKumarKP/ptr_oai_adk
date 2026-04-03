@@ -13,7 +13,48 @@ You are an expert AI quality evaluator. Analyze the following conversation betwe
 {bot_response}
 
 Respond with ONLY a valid JSON object (no markdown, no explanations) containing these metrics:
-...
+  "sentiment_score": <0-10 scale: 0=very negative, 5=neutral, 10=very positive>,
+  "toxicity_score": <0-10 scale: 0=not toxic, 10=highly toxic>,
+  "satisfaction_score": <0-10 scale: user satisfaction with response>,
+  "text_analysis_explanation": "<brief explanation of sentiment, toxicity, and satisfaction scores>",
+  
+  "bleu_score": <0-1 scale: n-gram overlap quality>,
+  "rouge_score": <0-1 scale: recall-oriented quality>,
+  "perplexity_score": <low numbers like 1-3 for good quality, higher for uncertain/poor quality>,
+  "llm_evaluation_explanation": "<explain BLEU, ROUGE, and perplexity assessment>",
+  
+  "quality_score": <0-10 scale: overall response quality>,
+  "accuracy_score": <0-10 scale: factual correctness>,
+  "precision_score": <0-10 scale: focused without irrelevant info>,
+  "recall_score": <0-10 scale: completeness addressing all aspects>,
+  "ml_performance_explanation": "<explain quality, accuracy, precision, and recall scores>",
+  
+  "hallucination_detected": <boolean: contains unsupported claims>,
+  "hallucination_score": <0-10 scale: severity if detected, 0 if none>,
+  "context_relevance": <0-10 scale: how relevant context is>,
+  "context_adherence": <0-10 scale: stays grounded in context>,
+  "context_precision": <0-10 scale: quality of context retrieval>,
+  "context_recall": <0-10 scale: completeness of context>,
+  "context_monitoring_explanation": "<explain hallucination detection and context metrics>",
+  
+  "clarity_score": <0-10 scale: clear and understandable>,
+  "coherence_score": <0-10 scale: logical flow>,
+  "relevance_score": <0-10 scale: addresses the query>,
+  "completeness_score": <0-10 scale: all aspects covered>,
+  "readability_score": <0-10 scale: ease of reading>,
+  "formality_score": <0-10 scale: professional tone>,
+  "empathy_score": <0-10 scale: emotional awareness>,
+  "language_style_explanation": "<explain clarity, coherence, and language style scores>",
+  
+  "detected_intent": "<brief description of user intent>",
+  "intent_confidence": <0-10 scale: confidence in intent classification>,
+  "complexity_level": "<'simple', 'moderate', or 'complex'>",
+  
+  "has_code_example": <boolean>,
+  "has_structured_format": <boolean>,
+  "is_low_quality": <boolean>,
+  
+  "overall_assessment": "<comprehensive summary of the evaluation across all dimensions>"
 """
 
 

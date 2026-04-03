@@ -224,8 +224,7 @@ class SQLiteBackend(DatabaseBackend):
             CREATE TABLE IF NOT EXISTS llm_judge_evaluations (
                 id INTEGER PRIMARY KEY, interaction_id TEXT NOT NULL, quality_score REAL,
                 hallucination_detected INTEGER, evaluation_data TEXT, timestamp DATETIME,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (interaction_id) REFERENCES chat_logs (interaction_id) ON DELETE CASCADE
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """
         async with aiosqlite.connect(self._db_path) as db:
@@ -258,28 +257,43 @@ class DatabaseLogger:
                 return
         if self.logger: self.logger.warning("All database backends failed to initialise.")
 
-    async def log_interaction(self, **kwargs) -> None:
+    async def log_interaction(
+        self,
+        interaction_id: str,
+        agent_name: str,
+        session_id: str,
+        user_id: str,
+        endpoint: str,
+        input_message: Any,
+        output_response: Any,
+        request_headers: Optional[Dict] = None,
+        model_info: Optional[Dict] = None,
+        token_usage: Optional[Dict] = None,
+        response_time_ms: Optional[float] = None,
+        status: str = "success",
+        error_message: Optional[str] = None,
+    ) -> None:
         if not self._ready(): return
         try:
             now = datetime.now(timezone.utc)
             params = (
-                kwargs["interaction_id"], now, kwargs["agent_name"], kwargs["session_id"], kwargs["user_id"],
-                kwargs["endpoint"], self._to_json(kwargs["input_message"]), self._to_json(kwargs["output_response"]),
-                self._to_json(self._redact_headers(kwargs.get("request_headers"))), self._to_json(kwargs.get("model_info")),
-                self._to_json(kwargs.get("token_usage")), self._extract_total_tokens(kwargs.get("token_usage")),
-                kwargs.get("response_time_ms"), kwargs.get("status", "success"), kwargs.get("error_message"),
+                interaction_id, now, agent_name, session_id, user_id,
+                endpoint, self._to_json(input_message), self._to_json(output_response),
+                self._to_json(self._redact_headers(request_headers)), self._to_json(model_info),
+                self._to_json(token_usage), self._extract_total_tokens(token_usage),
+                response_time_ms, status, error_message,
             )
             await self._backend.execute(self._backend.CHAT_LOGS_INSERT, params)
-            if self.logger: self.logger.debug(f"Logged interaction: {kwargs['interaction_id']}")
+            if self.logger: self.logger.debug(f"Logged interaction: {interaction_id}")
         except Exception as exc:
-            if self.logger: self.logger.error(f"Failed to log interaction {kwargs['interaction_id']}: {exc}")
+            if self.logger: self.logger.error(f"Failed to log interaction {interaction_id}: {exc}")
             raise
 
     async def log_llm_judge_evaluation(self, interaction_id: str, evaluation_data: Dict) -> None:
         if not self._ready(): return
         try:
             now = datetime.now(timezone.utc)
-            quality_score = evaluation_data.get("quality_score")
+            quality_score = evaluation_data.get("quality_score", 0)
             hallucination_detected = str(evaluation_data.get("hallucination_detected", "false")).lower() == "true"
             params = (
                 interaction_id, float(quality_score) if quality_score is not None else None,
