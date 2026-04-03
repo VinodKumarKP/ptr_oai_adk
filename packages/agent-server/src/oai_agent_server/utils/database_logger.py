@@ -238,21 +238,36 @@ class DatabaseLogger:
                 return
         if self.logger: self.logger.warning("All database backends failed to initialise.")
 
-    async def log_interaction(self, **kwargs) -> None:
+    async def log_interaction(
+        self,
+        interaction_id: str,
+        agent_name: str,
+        session_id: str,
+        user_id: str,
+        endpoint: str,
+        input_message: Any,
+        output_response: Any,
+        request_headers: Optional[Dict] = None,
+        model_info: Optional[Dict] = None,
+        token_usage: Optional[Dict] = None,
+        response_time_ms: Optional[float] = None,
+        status: str = "success",
+        error_message: Optional[str] = None,
+    ) -> None:
         if not self._ready(): return
         try:
             now = datetime.now(timezone.utc)
             params = (
-                kwargs["interaction_id"], now, kwargs["agent_name"], kwargs["session_id"], kwargs["user_id"],
-                kwargs["endpoint"], self._to_json(kwargs["input_message"]), self._to_json(kwargs["output_response"]),
-                self._to_json(self._redact_headers(kwargs.get("request_headers"))), self._to_json(kwargs.get("model_info")),
-                self._to_json(kwargs.get("token_usage")), self._extract_total_tokens(kwargs.get("token_usage")),
-                kwargs.get("response_time_ms"), kwargs.get("status", "success"), kwargs.get("error_message"),
+                interaction_id, now, agent_name, session_id, user_id,
+                endpoint, self._to_json(input_message), self._to_json(output_response),
+                self._to_json(self._redact_headers(request_headers)), self._to_json(model_info),
+                self._to_json(token_usage), self._extract_total_tokens(token_usage),
+                response_time_ms, status, error_message,
             )
             await self._backend.execute(self._backend.CHAT_LOGS_INSERT, params)
-            if self.logger: self.logger.debug(f"Logged interaction: {kwargs['interaction_id']}")
+            if self.logger: self.logger.debug(f"Logged interaction: {interaction_id}")
         except Exception as exc:
-            if self.logger: self.logger.error(f"Failed to log interaction {kwargs['interaction_id']}: {exc}")
+            if self.logger: self.logger.error(f"Failed to log interaction {interaction_id}: {exc}")
             raise
 
     async def log_llm_judge_evaluation(self, interaction_id: str, evaluation_data: Dict) -> None:
@@ -325,34 +340,60 @@ class DatabaseLogger:
             n = len(params)
             limit_ph, offset_ph = (f"${n + 1}", f"${n + 2}") if ph == "$" else ("?", "?")
             params = (*params, kwargs.get("limit", 100), kwargs.get("offset", 0))
-            query = f"SELECT * FROM agent_activity_log {where} ORDER BY timestamp DESC, chunk_sequence ASC LIMIT {limit_ph} OFFSET {offset_ph}"
+            query = f"SELECT * FROM agent_activity_log al {where} ORDER BY timestamp DESC, chunk_sequence ASC LIMIT {limit_ph} OFFSET {offset_ph}"
             rows = await self._backend.fetch(query, params)
             return [self._deserialize_activity_log_row(r) for r in rows]
         except Exception as exc:
             if self.logger: self.logger.error(f"Failed to retrieve activity logs: {exc}")
             return []
 
-    def _build_where_clause(self, filters: List[tuple], is_activity: bool = False) -> tuple:
-        conditions, params = [], []
-        prefix = "al." if is_activity else "cl."
-        placeholder = self._backend.PLACEHOLDER
-        for i, (col_expr, value) in enumerate(filters):
-            if value is not None:
-                op = "="
-                if " " in col_expr:
-                    col_expr, op = col_expr.split(None, 1)
-                ph = f"${i + 1}" if placeholder == "$" else "?"
-                conditions.append(f"{prefix}{col_expr} {op} {ph}")
-                params.append(value)
-        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-        return where, tuple(params)
+    async def get_stats(self, agent_name: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Any]:
+        if not self._ready(): return {}
+        try:
+            filters = [("agent_name", agent_name), ("user_id", user_id)]
+            where, params = self._build_where_clause(filters)
+            query = f"SELECT COUNT(*) AS total_interactions, COUNT(DISTINCT session_id) AS unique_sessions, COUNT(DISTINCT user_id) AS unique_users, AVG(response_time_ms) AS avg_response_time, MAX(response_time_ms) AS max_response_time, MIN(response_time_ms) AS min_response_time, SUM(total_tokens) AS total_tokens_sum, SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_interactions, SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END) AS failed_interactions FROM chat_logs {where}"
+            row = await self._backend.fetch_one(query, params)
+            if not row: return {}
+            return {
+                "total_interactions": int(row["total_interactions"] or 0),
+                "unique_sessions": int(row["unique_sessions"] or 0),
+                "unique_users": int(row["unique_users"] or 0),
+                "avg_response_time_ms": float(row["avg_response_time"]) if row["avg_response_time"] is not None else None,
+                "max_response_time_ms": float(row["max_response_time"]) if row["max_response_time"] is not None else None,
+                "min_response_time_ms": float(row["min_response_time"]) if row["min_response_time"] is not None else None,
+                "total_tokens_sum": int(row["total_tokens_sum"] or 0),
+                "successful_interactions": int(row["successful_interactions"] or 0),
+                "failed_interactions": int(row["failed_interactions"] or 0),
+            }
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to get stats: {exc}")
+            return {}
 
-    def _deserialize_activity_log_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        row["chunk_content"] = self._parse_json_field(row.get("chunk_content"))
-        row["request_headers"] = self._parse_json_field(row.get("request_headers"))
-        row["timestamp"] = self._isoformat(row.get("timestamp"))
-        row["created_at"] = self._isoformat(row.get("created_at"))
-        return row
+    async def get_user_stats(self, agent_name: Optional[str] = None) -> List[Dict[str, Any]]:
+        if not self._ready(): return []
+        try:
+            filters = [("agent_name", agent_name)]
+            where, params = self._build_where_clause(filters)
+            query = f"SELECT user_id, COUNT(*) AS total_interactions, COUNT(DISTINCT session_id) AS unique_sessions, AVG(response_time_ms) AS avg_response_time, MAX(response_time_ms) AS max_response_time, MIN(response_time_ms) AS min_response_time, SUM(total_tokens) AS total_tokens_sum, SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful_interactions, SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END) AS failed_interactions FROM chat_logs {where} GROUP BY user_id ORDER BY total_interactions DESC"
+            rows = await self._backend.fetch(query, params)
+            return [
+                {
+                    "user_id": row["user_id"],
+                    "total_interactions": int(row["total_interactions"] or 0),
+                    "unique_sessions": int(row["unique_sessions"] or 0),
+                    "avg_response_time_ms": float(row["avg_response_time"]) if row["avg_response_time"] is not None else None,
+                    "max_response_time_ms": float(row["max_response_time"]) if row["max_response_time"] is not None else None,
+                    "min_response_time_ms": float(row["min_response_time"]) if row["min_response_time"] is not None else None,
+                    "total_tokens_sum": int(row["total_tokens_sum"] or 0),
+                    "successful_interactions": int(row["successful_interactions"] or 0),
+                    "failed_interactions": int(row["failed_interactions"] or 0),
+                }
+                for row in rows
+            ]
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to get user stats: {exc}")
+            return []
 
     async def get_logs(self, **kwargs) -> List[Dict[str, Any]]:
         if not self._ready(): return []
@@ -398,14 +439,74 @@ class DatabaseLogger:
 
     @staticmethod
     def _to_json(obj: Any) -> Optional[str]:
-        if obj is None: return None
-        return json.dumps(obj)
+        """Serialise *obj* to a JSON string, or None if *obj* is None."""
+        serialised = DatabaseLogger._serialize_for_json(obj)
+        return json.dumps(serialised) if serialised is not None else None
+
+    @staticmethod
+    def _serialize_for_json(obj: Any, depth: int = 0, max_depth: int = 10) -> Any:
+        """Recursively convert *obj* to a JSON-serialisable structure."""
+        if depth > max_depth:
+            return str(obj)
+        if obj is None:
+            return None
+        if isinstance(obj, (str, int, float, bool)):
+            return obj
+        if isinstance(obj, (list, tuple)):
+            return [
+                DatabaseLogger._serialize_for_json(item, depth + 1, max_depth)
+                for item in obj
+            ]
+        if isinstance(obj, dict):
+            return {
+                str(k): DatabaseLogger._serialize_for_json(v, depth + 1, max_depth)
+                for k, v in obj.items()
+            }
+        # Prefer Pydantic serialisation over raw __dict__ to respect validators/aliases.
+        if hasattr(obj, "model_dump") and callable(obj.model_dump):
+            try:
+                return obj.model_dump()
+            except Exception:  # pylint: disable=broad-except
+                pass
+        if hasattr(obj, "dict") and callable(obj.dict):
+            try:
+                return obj.dict()
+            except Exception:  # pylint: disable=broad-except
+                pass
+        if hasattr(obj, "__dict__") and obj.__dict__:
+            return {
+                str(k): DatabaseLogger._serialize_for_json(v, depth + 1, max_depth)
+                for k, v in obj.__dict__.items()
+            }
+        return str(obj)
+
+    def _build_where_clause(self, filters: List[tuple], is_activity: bool = False) -> tuple:
+        conditions, params = [], []
+        prefix = "al." if is_activity else "cl."
+        placeholder = self._backend.PLACEHOLDER
+        for i, (col_expr, value) in enumerate(filters):
+            if value is not None:
+                op = "="
+                if " " in col_expr:
+                    col_expr, op = col_expr.split(None, 1)
+                ph = f"${i + 1}" if placeholder == "$" else "?"
+                conditions.append(f"{prefix}{col_expr} {op} {ph}")
+                params.append(value)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        return where, tuple(params)
 
     def _deserialize_chat_log_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
         for key in ["input_message", "output_response", "request_headers", "model_info", "token_usage", "evaluation_data"]:
             if key in row: row[key] = self._parse_json_field(row[key])
         for key in ["timestamp", "created_at"]:
             if key in row: row[key] = self._isoformat(row[key])
+        return row
+
+    def _deserialize_activity_log_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        row["chunk_content"] = self._parse_json_field(row.get("chunk_content"))
+        row["request_headers"] = self._parse_json_field(row.get("request_headers"))
+        row["timestamp"] = self._isoformat(row.get("timestamp"))
+        row["created_at"] = self._isoformat(row.get("created_at"))
         return row
 
     @staticmethod

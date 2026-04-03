@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from oai_agent_server.services.chat_service import ChatService
 from oai_agent_server.models.requests import ChatRequest, StreamChatRequest
 from oai_agent_server.exceptions import StreamingException
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, BackgroundTasks
 
 
 class MockState:
@@ -31,18 +31,24 @@ class MockRequest:
 
 
 @pytest.fixture
-def chat_service(mock_agent, mock_db_logger):
-    return ChatService(mock_agent, mock_db_logger, MagicMock())
+def mock_llm_judge_service():
+    return MagicMock()
+
+
+@pytest.fixture
+def chat_service(mock_agent, mock_db_logger, mock_llm_judge_service):
+    return ChatService(mock_agent, mock_db_logger, MagicMock(), mock_llm_judge_service)
 
 
 @pytest.mark.asyncio
 async def test_process_chat_success(chat_service):
     chat_request = ChatRequest(message="Hello", user_id="user1")
     http_request = MockRequest(headers={"header": "value"})
+    background_tasks = BackgroundTasks()
 
     chat_service.agent.ainvoke = AsyncMock(return_value={"content": "Response"})
 
-    response = await chat_service.process_chat(http_request, chat_request, http_request.headers)
+    response = await chat_service.process_chat(http_request, chat_request, background_tasks, http_request.headers)
 
     assert response.status_code == 200
     content = response.body.decode()
@@ -54,10 +60,11 @@ async def test_process_chat_success(chat_service):
 async def test_process_chat_with_saml_user(chat_service):
     chat_request = ChatRequest(message="Hello", user_id="user1")
     http_request = MockRequest(state=MockState(user_email="saml.user@example.com"))
+    background_tasks = BackgroundTasks()
 
     chat_service.agent.ainvoke = AsyncMock(return_value={"content": "Response"})
 
-    await chat_service.process_chat(http_request, chat_request, http_request.headers)
+    await chat_service.process_chat(http_request, chat_request, background_tasks, http_request.headers)
 
     call_args = chat_service.db_logger.log_interaction.call_args
     assert call_args.kwargs['user_id'] == "saml.user@example.com"
@@ -67,10 +74,11 @@ async def test_process_chat_with_saml_user(chat_service):
 async def test_process_chat_with_api_token_user(chat_service):
     chat_request = ChatRequest(message="Hello") # No user_id in body
     http_request = MockRequest(state=MockState(user_id="api_user_from_token"))
+    background_tasks = BackgroundTasks()
 
     chat_service.agent.ainvoke = AsyncMock(return_value={"content": "Response"})
 
-    await chat_service.process_chat(http_request, chat_request, http_request.headers)
+    await chat_service.process_chat(http_request, chat_request, background_tasks, http_request.headers)
 
     call_args = chat_service.db_logger.log_interaction.call_args
     assert call_args.kwargs['user_id'] == "api_user_from_token"
@@ -80,10 +88,11 @@ async def test_process_chat_with_api_token_user(chat_service):
 async def test_process_chat_with_non_saml_user(chat_service):
     chat_request = ChatRequest(message="Hello", user_id="api_user")
     http_request = MockRequest()
+    background_tasks = BackgroundTasks()
 
     chat_service.agent.ainvoke = AsyncMock(return_value={"content": "Response"})
 
-    await chat_service.process_chat(http_request, chat_request, http_request.headers)
+    await chat_service.process_chat(http_request, chat_request, background_tasks, http_request.headers)
 
     call_args = chat_service.db_logger.log_interaction.call_args
     assert call_args.kwargs['user_id'] == "api_user"
@@ -93,11 +102,12 @@ async def test_process_chat_with_non_saml_user(chat_service):
 async def test_process_chat_with_files(chat_service):
     chat_request = ChatRequest(message="Analyze this", user_id="user1")
     http_request = MockRequest()
+    background_tasks = BackgroundTasks()
     files = ["/tmp/file1.txt"]
 
     chat_service.agent.ainvoke = AsyncMock(return_value={"content": "File analyzed"})
 
-    await chat_service.process_chat(http_request, chat_request, http_request.headers, files=files)
+    await chat_service.process_chat(http_request, chat_request, background_tasks, http_request.headers, files=files)
 
     call_args = chat_service.agent.ainvoke.call_args
     assert call_args.kwargs['config']['uploaded_files'] == files
@@ -107,10 +117,11 @@ async def test_process_chat_with_files(chat_service):
 async def test_process_chat_with_files_in_message(chat_service):
     chat_request = ChatRequest(message={"content": "Analyze", "uploaded_files": ["/tmp/file2.txt"]}, user_id="user1")
     http_request = MockRequest()
+    background_tasks = BackgroundTasks()
 
     chat_service.agent.ainvoke = AsyncMock(return_value={"content": "File analyzed"})
 
-    await chat_service.process_chat(http_request, chat_request, http_request.headers)
+    await chat_service.process_chat(http_request, chat_request, background_tasks, http_request.headers)
 
     call_args = chat_service.agent.ainvoke.call_args
     assert call_args.kwargs['config']['uploaded_files'] == ["/tmp/file2.txt"]
@@ -120,10 +131,11 @@ async def test_process_chat_with_files_in_message(chat_service):
 async def test_process_chat_exception(chat_service):
     chat_request = ChatRequest(message="Hello", user_id="user1")
     http_request = MockRequest()
+    background_tasks = BackgroundTasks()
     chat_service.agent.ainvoke = AsyncMock(side_effect=Exception("Agent error"))
 
     with pytest.raises(HTTPException) as excinfo:
-        await chat_service.process_chat(http_request, chat_request, http_request.headers)
+        await chat_service.process_chat(http_request, chat_request, background_tasks, http_request.headers)
     assert excinfo.value.status_code == 500
 
 
@@ -131,6 +143,7 @@ async def test_process_chat_exception(chat_service):
 async def test_process_stream_chat(chat_service):
     stream_request = StreamChatRequest(message="Stream me", user_id="user1")
     http_request = MockRequest()
+    background_tasks = BackgroundTasks()
 
     async def mock_stream(*args, **kwargs):
         yield {"content": "Chunk 1"}
@@ -138,7 +151,7 @@ async def test_process_stream_chat(chat_service):
 
     chat_service.agent.astream = mock_stream
 
-    response = await chat_service.process_stream_chat(http_request, stream_request, http_request.headers)
+    response = await chat_service.process_stream_chat(http_request, stream_request, background_tasks, http_request.headers)
 
     chunks = []
     async for chunk in response.body_iterator:
@@ -157,6 +170,7 @@ async def test_process_stream_chat(chat_service):
 async def test_process_stream_chat_non_serializable(chat_service):
     stream_request = StreamChatRequest(message="Stream me", user_id="user1")
     http_request = MockRequest()
+    background_tasks = BackgroundTasks()
 
     class NonSerializable:
         pass
@@ -167,7 +181,7 @@ async def test_process_stream_chat_non_serializable(chat_service):
     chat_service.agent.astream = mock_stream
 
     with patch('oai_agent_server.services.chat_service.make_serializable', side_effect=Exception("Serialize error")):
-        response = await chat_service.process_stream_chat(http_request, stream_request, http_request.headers)
+        response = await chat_service.process_stream_chat(http_request, stream_request, background_tasks, http_request.headers)
         chunks = []
         async for chunk in response.body_iterator:
             if isinstance(chunk, bytes):
@@ -181,13 +195,14 @@ async def test_process_stream_chat_non_serializable(chat_service):
 async def test_process_stream_chat_exception(chat_service):
     stream_request = StreamChatRequest(message="Stream me", user_id="user1")
     http_request = MockRequest()
+    background_tasks = BackgroundTasks()
 
     chat_service.agent.astream = MagicMock(side_effect=Exception("Stream init error"))
 
     chat_service._handle_reinitialization = AsyncMock(side_effect=Exception("Init error"))
 
     with pytest.raises(StreamingException):
-        await chat_service.process_stream_chat(http_request, stream_request, http_request.headers)
+        await chat_service.process_stream_chat(http_request, stream_request, background_tasks, http_request.headers)
 
 
 @pytest.mark.asyncio

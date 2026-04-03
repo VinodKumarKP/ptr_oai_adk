@@ -123,7 +123,8 @@ class ChatService:
 
                 last_response = {}
                 activity_chunks = []
-                async for chunk_sequence, chunk in enumerate(stream):
+                chunk_sequence = 0
+                async for chunk in stream:
                     content = response_extractor.extract_content(chunk)
                     last_response = content
                     chunk_text = extract_chunk_text(content)
@@ -134,6 +135,7 @@ class ChatService:
                         'chunk_text': chunk_text, 'serialization_warning': serialization_warning,
                         'timestamp': datetime.utcnow()
                     })
+                    chunk_sequence += 1
 
                 output_response = extract_output_text(last_response)
                 response_time_ms = (time.time() - start_time) * 1000
