@@ -633,11 +633,6 @@ class StrandsAgent(BaseAgent):
                         stream_complete_only=True
                 ):
                     event_type = event.get("type", "")
-                    with open(
-                            '/Users/vinodkumarkp/PycharmProjects/ptr_oai_agent_development_kit/packages/aws-strands-core/examples/agents/event.log',
-                            'a') as f:
-                        f.write(str(event) + '\n')
-                        f.write('\n')
                     if event_type in allowed_events:
                         formatted = self._format_stream_event(event,
                                                               input_message=formatted_message,
