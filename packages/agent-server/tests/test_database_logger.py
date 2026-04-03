@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # Locate the module under test
-_MODULE_PATH = '/Users/vinodkumarkp/PycharmProjects/ptr_oai_agent_development_kit/packages/agent-server/src/oai_agent_server/utils/database_logger.py'
+_MODULE_PATH = './src/oai_agent_server/utils/database_logger.py'
 
 def run(coro):
     return asyncio.run(coro)
