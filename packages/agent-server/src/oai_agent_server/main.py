@@ -23,6 +23,7 @@ from oai_agent_server.routers.logs import create_logs_router
 from oai_agent_server.routers.tokens import create_token_router
 from oai_agent_server.services.agent_service import AgentService
 from oai_agent_server.services.chat_service import ChatService
+from oai_agent_server.services.llm_judge_service import LLMJudgeService
 from oai_agent_server.services.logging_service import LoggingService
 from oai_agent_server.services.token_service import TokenService
 from oai_agent_server.utils.database_logger import DatabaseLogger
@@ -78,6 +79,7 @@ class AgentHTTPServer:
         self.agent = agent
         self.agent_name = agent.agent_name
         self.agent.session_id = str(uuid.uuid4())
+        self.config_root = config_root
 
         self.logger = get_logger()
         self.base_config_manager = ConfigManager(config_root=config_root)
@@ -130,7 +132,13 @@ class AgentHTTPServer:
 
     def _setup_services(self):
         """Initialize internal services."""
-        self.chat_service = ChatService(self.agent, self.db_logger, self.logger)
+        self.llm_judge_service = LLMJudgeService(
+            agent_class=type(self.agent),
+            config_root=self.config_root,
+            logger=self.logger,
+            db_logger=self.db_logger
+        )
+        self.chat_service = ChatService(self.agent, self.db_logger, self.logger, self.llm_judge_service)
         self.agent_service = AgentService(self.agent, self.server_state, self.logger)
         self.logging_service = LoggingService(self.db_logger, self.agent_name)
         self.token_service = TokenService()

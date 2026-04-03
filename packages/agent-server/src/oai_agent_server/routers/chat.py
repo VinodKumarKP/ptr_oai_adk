@@ -60,12 +60,13 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
             return message
 
         @router.post("", response_model=ChatResponse)
-        async def chat(chat_request: ChatRequest, http_request: Request):
+        async def chat(chat_request: ChatRequest, http_request: Request, background_tasks: BackgroundTasks):
             """Process a synchronous chat request."""
             original_message = chat_request.message
             chat_request.message = _append_files_to_message(chat_request.message, [], chat_request.session_id)
             return await chat_service.process_chat(http_request=http_request,
                                                    chat_request=chat_request,
+                                                   background_tasks=background_tasks,
                                                    headers=http_request.headers,
                                                    original_message=original_message)
 
@@ -116,17 +117,20 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
             chat_request.message = _append_files_to_message(chat_request.message, file_paths, session_id)
             return await chat_service.process_chat(http_request=http_request,
                                                    chat_request=chat_request,
+                                                   background_tasks=background_tasks,
                                                    headers=dict(http_request.headers),
                                                    files=file_paths,
                                                    original_message=original_message)
 
         @router.post("/stream")
-        async def chat_stream(stream_request: StreamChatRequest, http_request: Request):
+        async def chat_stream(stream_request: StreamChatRequest, http_request: Request,
+                              background_tasks: BackgroundTasks):
             """Process a streaming chat request."""
             original_message = stream_request.message
             stream_request.message = _append_files_to_message(stream_request.message, [], stream_request.session_id)
             return await chat_service.process_stream_chat(http_request=http_request,
                                                           stream_request=stream_request,
+                                                          background_tasks=background_tasks,
                                                           headers=http_request.headers,
                                                           original_message=original_message)
 
@@ -180,6 +184,7 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
             stream_request.message = _append_files_to_message(stream_request.message, file_paths, session_id)
             return await chat_service.process_stream_chat(http_request=http_request,
                                                           stream_request=stream_request,
+                                                          background_tasks=background_tasks,
                                                           headers=dict(http_request.headers),
                                                           files=file_paths,
                                                           original_message=original_message)

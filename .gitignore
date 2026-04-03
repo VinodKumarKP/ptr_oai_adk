@@ -9,3 +9,4 @@ build/
 dist/
 *hub_registry.json
 *.log
+*.db
