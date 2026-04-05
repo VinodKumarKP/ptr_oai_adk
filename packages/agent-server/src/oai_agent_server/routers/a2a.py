@@ -50,6 +50,7 @@ def create_a2a_router(
     a2a_base_url: Optional[str] = None,
     a2a_streaming: bool = True,
     a2a_push_notifications: bool = True,
+    agent_config: Optional[Dict[str, Any]] = None,
 ) -> Optional[APIRouter]:
     logger = get_logger()
 
@@ -74,6 +75,7 @@ def create_a2a_router(
         ) + "/a2a",
         streaming=a2a_streaming,
         push_notifications=a2a_push_notifications,
+        agent_config=agent_config,
     )
 
     # 2. Create your executor

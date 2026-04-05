@@ -187,6 +187,7 @@ class AgentHTTPServer:
             a2a_base_url=self.a2a_base_url,
             a2a_streaming=self.a2a_streaming,
             a2a_push_notifications=self.a2a_push_notifications,
+            agent_config=self.agent.agent_config,
         )
         if a2a_router:
             self.app.include_router(a2a_router, prefix="/a2a")
