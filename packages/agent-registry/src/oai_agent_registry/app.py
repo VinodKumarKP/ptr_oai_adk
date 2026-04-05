@@ -21,6 +21,10 @@ async def lifespan(app: FastAPI):
         limits=httpx.Limits(max_keepalive_connections=20, max_connections=100)
     )
     registry_instance.public_ip = get_public_ip()
+    
+    if registry_instance.registry_config.enable_auto_discovery:
+        await registry_instance.discover_agents()
+
     yield
     logger.info("Closing HTTP client...")
     await registry_instance.client.aclose()

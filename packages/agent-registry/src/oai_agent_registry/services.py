@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import time
+import asyncio
 from datetime import datetime
 from typing import Dict, Any, Optional
 
@@ -30,14 +31,12 @@ class AgentRegistry:
             if not os.path.exists(self.config_path):
                 logger.warning(f"Config file not found at {self.config_path}, using defaults.")
                 self.config = Config(agents={})
-                return
+            else:
+                with open(self.config_path, 'r') as f:
+                    config_data = json.load(f)
+                self.config = Config(**config_data)
 
-            with open(self.config_path, 'r') as f:
-                config_data = json.load(f)
-
-            self.config = Config(**config_data)
             self.registry_config = self.config.registry
-
             self.agents = {}
             for agent_name, agent_data in self.config.agents.items():
                 if isinstance(agent_data, str):
@@ -49,6 +48,30 @@ class AgentRegistry:
         except Exception as e:
             logger.error(f"Error loading config: {e}")
             raise
+
+    async def discover_agents(self):
+        """Discover agents by scanning a range of ports."""
+        start = self.registry_config.start_port
+        end = self.registry_config.end_port
+        logger.info(f"Starting auto-discovery of agents in port range {start}-{end}...")
+
+        for port in range(start, end + 1):
+            endpoint = f"http://localhost:{port}"
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(f"{endpoint}/agent/info", timeout=1.0)
+                    if response.status_code == 200:
+                        agent_info = response.json()
+                        agent_name = agent_info.get("agent_name")
+                        if agent_name and agent_name not in self.agents:
+                            self.agents[agent_name] = AgentConfig(
+                                name=agent_name,
+                                endpoint=endpoint,
+                                description=agent_info.get("description", "Auto-discovered agent")
+                            )
+                            logger.info(f"Discovered agent '{agent_name}' at {endpoint}")
+            except (httpx.RequestError, json.JSONDecodeError) as e:
+                pass
 
     async def get_info(self) -> JSONResponse:
         """Returns information about the registry and its agents."""
@@ -133,10 +156,31 @@ class AgentRegistry:
             response_headers = self._clean_response_headers(response.headers)
             content = response.content
 
-            if path.rstrip("/") in ["docs", "redoc"] and "text/html" in response.headers.get("content-type", ""):
-                content = self._rewrite_docs(response.text, agent_name).encode("utf-8")
-            elif path.rstrip("/") == "openapi.json":
-                content = self._rewrite_openapi_json(response.json(), agent_name).encode("utf-8")
+            if path and path.rstrip("/") in ["docs", "redoc"] and "text/html" in response.headers.get("content-type", ""):
+                try:
+                    text = response.text
+                    text = text.replace('"/openapi.json"', f'"/{agent_name}/openapi.json"')
+                    text = text.replace("'/openapi.json'", f"'/{agent_name}/openapi.json'")
+                    content = text.encode("utf-8")
+                    if "content-length" in response_headers:
+                        del response_headers["content-length"]
+                except Exception as e:
+                    logger.warning(f"Failed to rewrite docs for {agent_name}: {e}")
+
+            elif path and path.rstrip("/") == "openapi.json" and "application/json" in response.headers.get("content-type", ""):
+                try:
+                    data = response.json()
+                    if "paths" in data:
+                        new_paths = {}
+                        for p, methods in data["paths"].items():
+                            new_path = f"/{agent_name}{p}" if not p.startswith(f"/{agent_name}") else p
+                            new_paths[new_path] = methods
+                        data["paths"] = new_paths
+                    content = json.dumps(data).encode("utf-8")
+                    if "content-length" in response_headers:
+                        del response_headers["content-length"]
+                except Exception as e:
+                    logger.warning(f"Failed to rewrite openapi.json for {agent_name}: {e}")
 
             return Response(content=content, status_code=response.status_code, headers=response_headers, media_type=response.headers.get("content-type"))
         except httpx.TimeoutException:
@@ -159,12 +203,3 @@ class AgentRegistry:
     def _clean_response_headers(self, headers: httpx.Headers) -> dict:
         excluded = {'content-encoding', 'content-length', 'transfer-encoding', 'connection'}
         return {k: v for k, v in headers.items() if k.lower() not in excluded}
-
-    def _rewrite_docs(self, text: str, agent_name: str) -> str:
-        return text.replace('"/openapi.json"', f'"/{agent_name}/openapi.json"')
-
-    def _rewrite_openapi_json(self, data: dict, agent_name: str) -> str:
-        if "paths" in data:
-            new_paths = {f"/{agent_name}{p}": methods for p, methods in data["paths"].items()}
-            data["paths"] = new_paths
-        return json.dumps(data)
