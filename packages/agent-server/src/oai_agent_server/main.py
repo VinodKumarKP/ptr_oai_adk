@@ -215,7 +215,8 @@ class AgentHTTPServer:
             display_host = "localhost" if host == "0.0.0.0" else host
             base_url = f"http://{display_host}:{port}"
             self.a2a_agent_card.url = f"{base_url}/a2a/"
-            self.a2a_agent_card.additional_interfaces[0].url = f"{base_url}/api/"
+            self.a2a_agent_card.additional_interfaces[0].url = f"{base_url}/chat"
+            self.a2a_agent_card.additional_interfaces[1].url = f"{base_url}/chat/stream"
 
         self.logger.info(
             f"Starting Agent HTTP Server for '{self.app.title}' on {host}:{port}"

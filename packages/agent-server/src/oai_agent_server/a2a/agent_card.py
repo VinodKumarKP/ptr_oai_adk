@@ -99,7 +99,11 @@ def build_agent_card(
         additional_interfaces=[
             AgentInterface(
                 transport='HTTP+JSON',
-                url=f"{resolved_url}/api/"# Standard compatibility
+                url=f"{resolved_url}/chat/"# Standard compatibility
+            ),
+            AgentInterface(
+                transport='HTTP+JSON',
+                url=f"{resolved_url}/chat/stream"  # Standard compatibility
             )
         ]
     )
