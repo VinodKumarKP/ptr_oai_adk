@@ -11,6 +11,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse, Response, JSONResponse
 
 from oai_agent_registry.models import Config, AgentConfig, RegistryConfig
+from oai_agent_registry.security.dependencies import _validate_token
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +60,10 @@ class AgentRegistry:
         logger.info(f"Starting auto-discovery of agents in port range {start}-{end} on host {host}...")
 
         for port in range(start, end + 1):
-            search_endpoint = f"http://localhost:{port}"
             endpoint = f"http://{host}:{port}"
             try:
                 async with httpx.AsyncClient() as client:
-                    response = await client.get(f"{search_endpoint}/agent/info", timeout=1.0)
+                    response = await client.get(f"{endpoint}/agent/info", timeout=1.0)
                     if response.status_code == 200:
                         agent_info = response.json()
                         agent_name = agent_info.get("agent_name")
@@ -132,6 +132,8 @@ class AgentRegistry:
 
     async def proxy_request(self, agent_name: str, path: str, request: Request) -> Response:
         """Proxies a request to the specified agent."""
+        _validate_token(request, self.registry_config, agent_name)
+
         if agent_name not in self.agents:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
         

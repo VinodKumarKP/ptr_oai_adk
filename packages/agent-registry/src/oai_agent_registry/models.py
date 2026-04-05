@@ -17,9 +17,12 @@ class RegistryConfig(BaseModel):
     enable_cors: bool = True
     log_requests: bool = True
     strip_prefix: bool = True
-    enable_auto_discovery: bool = True
+    enable_auto_discovery: bool = False
     start_port: int = 8000
     end_port: int = 8100
+    auth_enabled: bool = False
+    force_auth: bool = False
+    api_key: Optional[str] = None
 
 class Config(BaseModel):
     """Root configuration model."""
