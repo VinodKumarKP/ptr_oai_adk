@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Request, Depends
-from oai_agent_registry.services import AgentRegistry
+from oai_agent_registry.services.registry import AgentRegistry
 from oai_agent_registry.dependencies import get_registry
 
 router = APIRouter()

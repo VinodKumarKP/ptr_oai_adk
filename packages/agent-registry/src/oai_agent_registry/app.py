@@ -5,10 +5,10 @@ import httpx
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
-from oai_agent_registry.api import router
+from oai_agent_registry.routers.registry import router
 from oai_agent_registry.dependencies import registry_instance
 from oai_agent_registry.security.dependencies import verify_api_key, api_key_header
-from oai_agent_registry.util import get_public_ip
+from oai_agent_registry.utils.util import get_public_ip
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
