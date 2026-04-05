@@ -3,11 +3,14 @@ import os
 from typing import Optional
 
 from fastapi import Header, HTTPException, Request, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 
 from oai_agent_server.exceptions import AuthenticationException
 from oai_agent_server.middleware.request_context import get_original_environ
 from oai_agent_server.utils.saml_token_validation import TokenValidator, TokenValidationError
+
+# Define the API key security scheme
+api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
 
 
 def is_saml_token(token: str) -> bool:

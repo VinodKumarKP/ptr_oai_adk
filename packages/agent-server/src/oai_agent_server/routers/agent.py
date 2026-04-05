@@ -1,14 +1,13 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
 from oai_agent_server.middleware.request_context import get_original_environ
-from oai_agent_server.security.dependencies import verify_api_key
 
 
 def create_agent_router(agent_service, enable_request_isolation, allowed_modes: Optional[List[str]] = None):
     """Create the agent router with configured endpoints."""
-    router = APIRouter(tags=["agent"], dependencies=[Depends(verify_api_key)])
+    router = APIRouter(tags=["agent"])
 
     if allowed_modes is None:
         allowed_modes = ["agent"]

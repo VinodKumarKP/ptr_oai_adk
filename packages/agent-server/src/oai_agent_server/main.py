@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Optional, List
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 
 from oai_agent_core.components.configuration.model_config import ConfigManager
 from oai_agent_core.core.base_agent import BaseAgent
@@ -25,6 +25,7 @@ from oai_agent_server.routers.health import create_health_router
 from oai_agent_server.routers.logs import create_logs_router
 from oai_agent_server.routers.tokens import create_token_router
 from oai_agent_server.routers.a2a import create_a2a_router
+from oai_agent_server.security.dependencies import verify_api_key, api_key_header
 from oai_agent_server.services.agent_service import AgentService
 from oai_agent_server.services.chat_service import ChatService
 from oai_agent_server.services.llm_judge_service import LLMJudgeService
@@ -108,6 +109,8 @@ class AgentHTTPServer:
             description=f"HTTP API for {agent_name} agent",
             version="1.0.0",
             lifespan=lifespan,
+            dependencies=[Depends(verify_api_key)],
+            security=[{api_key_header.model.name: []}],
         )
         self.app.state.agent_name = self.agent_name
 
