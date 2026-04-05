@@ -82,6 +82,7 @@ class AgentHTTPServer:
         self.base_config_manager = ConfigManager(config_root=config_root)
         self.enable_request_isolation = enable_request_isolation
         self.server_state = ServerState()
+        self.a2a_agent_card = None
 
         ALWAYS_ACTIVE_MODES = {"health", "agent", "chat", "logs", "a2a"}
         self.allowed_modes = (
@@ -180,7 +181,7 @@ class AgentHTTPServer:
         self.app.include_router(
             create_token_router(self.token_service, self.allowed_modes)
         )
-        a2a_router = create_a2a_router(
+        a2a_router, agent_card = create_a2a_router(
             agent=self.agent,
             agent_name=self.agent_name,
             allowed_modes=self.allowed_modes,
@@ -191,6 +192,7 @@ class AgentHTTPServer:
         )
         if a2a_router:
             self.app.include_router(a2a_router, prefix="/a2a")
+            self.a2a_agent_card = agent_card
 
     # ------------------------------------------------------------------
     # Startup / run (unchanged)
@@ -208,6 +210,13 @@ class AgentHTTPServer:
             )
 
     def run(self, host: str = "0.0.0.0", port: int = 8000):
+        if self.a2a_agent_card and "placeholder.url" in self.a2a_agent_card.url:
+            # URL was not set by env var or config, so build it dynamically
+            display_host = "localhost" if host == "0.0.0.0" else host
+            base_url = f"http://{display_host}:{port}"
+            self.a2a_agent_card.url = f"{base_url}/a2a/"
+            self.a2a_agent_card.additional_interfaces[0].url = f"{base_url}/api/"
+
         self.logger.info(
             f"Starting Agent HTTP Server for '{self.app.title}' on {host}:{port}"
         )
@@ -238,7 +247,7 @@ def main(server: AgentHTTPServer):
         agent_name=agent_name, abort_if_not_found=False
     )
     port = args.port or config.get("port", 8000)
-    server.run(host="0.0.0.0", port=port)
+    server.run(host=args.host, port=port)
 
 
 if __name__ == "__main__":

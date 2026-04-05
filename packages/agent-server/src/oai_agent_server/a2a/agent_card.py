@@ -10,7 +10,7 @@ from typing import List, Optional, Dict, Any
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
-    AgentSkill,
+    AgentSkill, AgentInterface, TransportProtocol,
 )
 
 
@@ -33,10 +33,8 @@ def build_agent_card(
       AGENT_VERSION           Semver string (default: 1.0.0)
       AGENT_DESCRIPTION       One-line description
     """
-    resolved_url = (
-        base_url
-        or os.environ.get("AGENT_BASE_URL", "http://localhost:8000")
-    ).rstrip("/")
+    # Use a placeholder if no URL is provided; it will be updated in main.py
+    resolved_url = base_url or os.environ.get("AGENT_BASE_URL", "http://placeholder.url")
 
     # --- Description ---
     description = os.environ.get("AGENT_DESCRIPTION", "")
@@ -89,7 +87,7 @@ def build_agent_card(
     return AgentCard(
         name=agent_name,
         description=description.strip(),
-        url=f"{resolved_url}/",
+        url=f"{resolved_url}/a2a/",
         version=os.environ.get("AGENT_VERSION", "1.0.0"),
         capabilities=AgentCapabilities(
             streaming=streaming,
@@ -98,4 +96,10 @@ def build_agent_card(
         default_input_modes=["text"],
         default_output_modes=["text"],
         skills=resolved_skills,
+        additional_interfaces=[
+            AgentInterface(
+                transport='HTTP+JSON',
+                url=f"{resolved_url}/api/"# Standard compatibility
+            )
+        ]
     )

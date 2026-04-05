@@ -1,5 +1,5 @@
 import os
-from typing import List, Optional, Union, Dict, Any, Literal
+from typing import List, Optional, Union, Dict, Any, Literal, Tuple
 
 from fastapi import APIRouter
 from oai_agent_core.core.base_agent import BaseAgent
@@ -10,7 +10,7 @@ try:
     from a2a.server.apps import A2AStarletteApplication
     from a2a.server.request_handlers import DefaultRequestHandler
     from a2a.server.tasks import InMemoryTaskStore
-    from oai_agent_server.a2a.agent_card import build_agent_card
+    from oai_agent_server.a2a.agent_card import build_agent_card, AgentCard
     from oai_agent_server.a2a.agent_executor import BaseAgentExecutor
     A2A_SDK_AVAILABLE = True
 except ImportError:
@@ -19,6 +19,7 @@ except ImportError:
     InMemoryTaskStore = None
     build_agent_card = None
     BaseAgentExecutor = None
+    AgentCard = None
     A2A_SDK_AVAILABLE = False
 
 
@@ -51,12 +52,12 @@ def create_a2a_router(
     a2a_streaming: bool = True,
     a2a_push_notifications: bool = True,
     agent_config: Optional[Dict[str, Any]] = None,
-) -> Optional[APIRouter]:
+) -> Optional[Tuple[APIRouter, AgentCard]]:
     logger = get_logger()
 
     if "a2a" not in allowed_modes:
         logger.info("A2A mode not enabled — skipping SDK integration")
-        return None
+        return None, None
 
     if not A2A_SDK_AVAILABLE:
         logger.warning(
@@ -64,15 +65,12 @@ def create_a2a_router(
             "Skipping A2A endpoint setup. "
             "Install with: pip install \"a2a-sdk[http-server]\""
         )
-        return None
+        return None, None
 
     # 1. Build the agent card
     agent_card = build_agent_card(
         agent_name=agent_name,
-        base_url=(
-            a2a_base_url
-            or os.environ.get("AGENT_BASE_URL", "http://localhost:8000")
-        ) + "/a2a",
+        base_url=a2a_base_url,  # Pass base_url, but it can be None
         streaming=a2a_streaming,
         push_notifications=a2a_push_notifications,
         agent_config=agent_config,
@@ -130,4 +128,4 @@ def create_a2a_router(
         f"(streaming={a2a_streaming}, "
         f"pushNotifications={a2a_push_notifications})"
     )
-    return a2a_router
+    return a2a_router, agent_card
