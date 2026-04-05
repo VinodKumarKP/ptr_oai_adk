@@ -53,13 +53,17 @@ class AgentRegistry:
         """Discover agents by scanning a range of ports."""
         start = self.registry_config.start_port
         end = self.registry_config.end_port
-        logger.info(f"Starting auto-discovery of agents in port range {start}-{end}...")
+        host = self.registry_config.host or "localhost"
+        if host == "0.0.0.0":
+            host = "localhost"
+        logger.info(f"Starting auto-discovery of agents in port range {start}-{end} on host {host}...")
 
         for port in range(start, end + 1):
-            endpoint = f"http://localhost:{port}"
+            search_endpoint = f"http://localhost:{port}"
+            endpoint = f"http://{host}:{port}"
             try:
                 async with httpx.AsyncClient() as client:
-                    response = await client.get(f"{endpoint}/agent/info", timeout=1.0)
+                    response = await client.get(f"{search_endpoint}/agent/info", timeout=1.0)
                     if response.status_code == 200:
                         agent_info = response.json()
                         agent_name = agent_info.get("agent_name")
