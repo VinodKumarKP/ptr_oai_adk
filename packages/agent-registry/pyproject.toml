@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "oai-agent-registry"
-description = "A robust, asynchronous client for interacting with OAI agent servers."
+description = "A powerful, FastAPI-based proxy server for managing and routing requests to multiple OAI agent servers."
 authors = [{ name = "Vinod Kumar KP", email = "vinod.kunnum-purath@capgemini.com" }]
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.11"
-keywords = ["agent-registry", "oai-agent", "async-client", "aiohttp"]
+keywords = ["agent-registry", "oai-agent", "fastapi", "proxy"]
 dynamic = ["version"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -22,9 +22,17 @@ classifiers = [
 
 # Base dependencies
 dependencies = [
-    "aiohttp>=3.8.0",
-    "pydantic>=2.0.0"
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "httpx",
+    "redis",
+    "cryptography",
+    "requests"
 ]
+
+[project.scripts]
+oai-agent-registry = "oai_agent_registry.cli:main"
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -38,9 +46,10 @@ Issues = "https://github.com/Capgemini-Innersource/ptr_agent_server/issues"
 [tool.hatch.version]
 source = "vcs"
 raw-options = { root = "../.." }
+fallback-version = "0.1.0"
 
-[tool.hatch.build.targets.wheel.sources]
-"src" = ""
+[tool.hatch.build.targets.wheel]
+packages = ["src/oai_agent_registry"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
@@ -49,4 +58,3 @@ testpaths = [
     "tests",
 ]
 asyncio_mode = "strict"
-
