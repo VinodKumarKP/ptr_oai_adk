@@ -1,0 +1,52 @@
+# pyproject.toml
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "oai-agent-registry"
+description = "A robust, asynchronous client for interacting with OAI agent servers."
+authors = [{ name = "Vinod Kumar KP", email = "vinod.kunnum-purath@capgemini.com" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["agent-registry", "oai-agent", "async-client", "aiohttp"]
+dynamic = ["version"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+# Base dependencies
+dependencies = [
+    "aiohttp>=3.8.0",
+    "pydantic>=2.0.0"
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[project.urls]
+Homepage = "https://github.com/Capgemini-Innersource/ptr_agent_server"
+Repository = "https://github.com/Capgemini-Innersource/ptr_agent_server.git"
+Issues = "https://github.com/Capgemini-Innersource/ptr_agent_server/issues"
+
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "../.." }
+
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --cov=src --cov-report=term-missing"
+testpaths = [
+    "tests",
+]
+asyncio_mode = "strict"
+
