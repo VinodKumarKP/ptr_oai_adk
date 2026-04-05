@@ -1,9 +1,10 @@
 import os
-from typing import List, Optional
+from typing import List, Optional, Union, Dict, Any, Literal
 
 from fastapi import APIRouter
 from oai_agent_core.core.base_agent import BaseAgent
 from oai_agent_core.utils.logger import get_logger
+from pydantic import BaseModel, Field
 
 try:
     from a2a.server.apps import A2AStarletteApplication
@@ -19,6 +20,27 @@ except ImportError:
     build_agent_card = None
     BaseAgentExecutor = None
     A2A_SDK_AVAILABLE = False
+
+
+# Pydantic model for a JSON-RPC request to improve OpenAPI schema
+class JsonRpcRequest(BaseModel):
+    jsonrpc: Literal["2.0"] = Field(default="2.0", description="JSON-RPC version")
+    method: str = Field(..., description="The name of the method to be invoked.")
+    params: Optional[Union[List[Any], Dict[str, Any]]] = Field(None, description="Parameters for the method.")
+    id: Optional[Union[str, int]] = Field(None, description="Request identifier.")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "jsonrpc": "2.0",
+                "method": "tasks/send",
+                "params": {
+                    "tool_name": "my_tool",
+                    "prompt": "What is the weather in SF?",
+                },
+                "id": "1",
+            }
+        }
 
 
 def create_a2a_router(
@@ -77,12 +99,28 @@ def create_a2a_router(
     a2a_router = APIRouter()
     for route in a2a_asgi_app.routes:
         if hasattr(route, "methods"):  # Exclude websockets, mounts, etc.
+            openapi_extra = None
+            # The JSON-RPC endpoint is a POST to the root of the mounted app.
+            # We manually add the request body to the OpenAPI schema here.
+            if route.path == '/' and 'POST' in route.methods:
+                openapi_extra = {
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": JsonRpcRequest.model_json_schema()
+                            }
+                        },
+                        "required": True
+                    }
+                }
+
             a2a_router.add_api_route(
                 path=route.path,
                 endpoint=route.endpoint,
                 methods=list(route.methods),
                 tags=["a2a"],  # Group in Swagger UI
                 include_in_schema=True,
+                openapi_extra=openapi_extra,
             )
 
     logger.info(
