@@ -1,0 +1,60 @@
+# pyproject.toml
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "oai-mcp-registry"
+description = "A powerful, FastAPI-based proxy server for managing and routing requests to multiple MCP servers."
+authors = [{ name = "Vinod Kumar KP", email = "vinod.kunnum-purath@capgemini.com" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["mcp-registry", "mcp", "fastapi", "proxy"]
+dynamic = ["version"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+# Base dependencies
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "httpx",
+    "fastmcp",
+    "public-ip",
+    "requests"
+]
+
+[project.scripts]
+oai-mcp-registry = "oai_mcp_registry.cli:main"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[project.urls]
+Homepage = "https://github.com/Capgemini-Innersource/ptr_agent_server"
+Repository = "https://github.com/Capgemini-Innersource/ptr_agent_server.git"
+Issues = "https://github.com/Capgemini-Innersource/ptr_agent_server/issues"
+
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "../.." }
+fallback-version = "0.1.0"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oai_mcp_registry"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --cov=src --cov-report=term-missing"
+testpaths = [
+    "tests",
+]
+asyncio_mode = "strict"
