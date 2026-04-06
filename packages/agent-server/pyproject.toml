@@ -26,6 +26,8 @@ dependencies = [
     "uvicorn",
     "pydantic",
     "redis",
+    "asyncpg",
+    "aiosqlite",
     "oai-agent-core"
 ]
 
