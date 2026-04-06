@@ -25,10 +25,15 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "pydantic",
-    "asyncpg",
     "redis",
     "oai-agent-core"
 ]
+
+[project.optional-dependencies]
+sqlite = ["aiosqlite"]
+postgres = ["asyncpg"]
+a2a = ["a2a-sdk[http-server]"]
+all = ["aiosqlite", "asyncpg", "a2a-sdk[http-server]"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -53,4 +58,3 @@ testpaths = [
     "tests",
 ]
 asyncio_mode = "strict"
-

@@ -11,67 +11,42 @@ A robust, FastAPI-based server for hosting and managing OAI Agents. This server 
 *   **Authentication**: Built-in API token validation using `Depends` for security.
 *   **Streaming Support**: Server-Sent Events (SSE) support for real-time agent responses.
 *   **File Uploads**: Support for uploading files alongside chat messages.
-*   **Comprehensive Logging**: Integrated database logging (PostgreSQL) for all interactions, including token usage and latency metrics.
+*   **Comprehensive Logging**: Integrated database logging for all interactions, including token usage and latency metrics. Supports both PostgreSQL and SQLite.
 *   **Graceful Shutdown**: Handles server restarts and shutdowns gracefully, ensuring active requests complete.
 *   **Health Checks**: Standardized `/health` and `/status` endpoints for monitoring.
-
-## Agent-to-Agent (A2A) Support
-
-The server implements the Agent-to-Agent (A2A) communication protocol, allowing it to interact with other compliant agents in a standardized way.
-
-### A2A Endpoints
-
-*   **GET** `/a2a/.well-known/agent.json`: The **Agent Card** discovery endpoint. This provides metadata about the agent, such as its capabilities and authentication requirements. This endpoint does not require authentication.
-*   **POST** `/a2a/`: The main JSON-RPC 2.0 endpoint for all A2A methods.
-
-
-### A2A Methods
-
-The following JSON-RPC methods are supported:
-
-*   `message/send`: Send a message to the agent and receive a complete response synchronously.
-*   `message/stream`: Send a message to the agent and receive a stream of real-time updates.`
-*   `message/sendSubscribe`: Send a message and receive a stream of real-time updates.
-*   `tasks/get`: Retrieve the status and artifacts of a previously created task.
-*   `tasks/cancel`: Request to cancel a running task.
-*   `tasks/pushNotification/set`: Register a webhook URL to receive updates when a task's status changes.
-*   `tasks/pushNotification/get`: Retrieve the current push notification configuration for a task.
-
-### Example: Sending a Message via A2A
-
-You can interact with the A2A endpoint using `curl`:
-
-```bash
-curl -X POST 'http://localhost:8000/a2a/' \
-  -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer your_api_key' \
-  -d '{
-  "jsonrpc": "2.0",
-  "id": "request-1",
-  "method": "message/send",
-  "params": {
-    "id": "task-001",
-    "message": {
-      "role": "user",
-      "parts": [{ "type": "text", "text": "Hello, what is the capital of France?" }]
-    }
-  }
-}'
-```
 
 ## Installation
 
 You can install the server directly from the source:
 
 ```bash
+# For basic functionality
 pip install .
-```
 
-Or install in editable mode for development:
-
-```bash
+# For development
 pip install -e .
 ```
+
+### Optional Dependencies
+
+The server uses optional dependencies for certain features. You can install them as needed:
+
+*   **PostgreSQL Support**: For production-grade database logging.
+    ```bash
+    pip install .[postgres]
+    ```
+*   **SQLite Support**: For lightweight, file-based database logging.
+    ```bash
+    pip install .[sqlite]
+    ```
+*   **Agent-to-Agent (A2A) Protocol**: To enable the A2A communication features.
+    ```bash
+    pip install .[a2a]
+    ```
+*   **All Features**: To install all optional dependencies.
+    ```bash
+    pip install .[all]
+    ```
 
 ## Usage
 
@@ -108,13 +83,14 @@ The server respects the following environment variables:
 *   `AGENT_REINITIALIZE`: If set to `true` in a request header, triggers agent re-initialization.
 *   `AGENT_BASE_URL`: The public base URL for the agent, used to construct the Agent Card URL.
 
-**Database Logging (PostgreSQL):**
+**Database Logging:**
 *   `DB_LOGGING_ENABLED`: Set to `true` to enable database logging (default: `false`).
-*   `LOGGING_DB_HOST`: Database host (default: `localhost`).
-*   `LOGGING_DB_PORT`: Database port (default: `5432`).
-*   `LOGGING_DB_NAME`: Database name (default: `agent_logs`).
-*   `LOGGING_DB_USER`: Database user (default: `postgres`).
-*   `LOGGING_DB_PASSWORD`: Database password (default: `postgres`).
+*   `DB_TYPE`: The type of database to use (`postgres` or `sqlite`).
+*   `LOGGING_DB_HOST`: Database host (for PostgreSQL).
+*   `LOGGING_DB_PORT`: Database port (for PostgreSQL).
+*   `LOGGING_DB_NAME`: Database name (for PostgreSQL) or path to the SQLite file.
+*   `LOGGING_DB_USER`: Database user (for PostgreSQL).
+*   `LOGGING_DB_PASSWORD`: Database password (for PostgreSQL).
 
 **Redis (for Token Management):**
 *   `REDIS_HOST`: Redis host (default: `localhost`).
@@ -133,7 +109,6 @@ The server respects the following environment variables:
 
 *   **GET** `/a2a/.well-known/agent.json`: A2A Agent Card discovery.
 *   **POST** `/a2a/`: JSON-RPC endpoint for A2A methods.
-*   **POST** `/a2a/stream`: SSE endpoint for streaming A2A methods.
 
 ### Management
 
@@ -170,6 +145,7 @@ Tokens are managed via the `TokenManager` utility (backed by Redis).
 ```
 oai_agent_server/
 ├── main.py              # Application entry point
+├── cli.py               # Command-line interface
 ├── config.py            # Configuration
 ├── exceptions.py        # Custom exceptions
 ├── middleware/          # Request processing middleware
@@ -182,8 +158,14 @@ oai_agent_server/
 
 ## Development
 
-To run the server during development:
+To run the server during development, first install the dependencies:
 
 ```bash
-python -m oai_agent_server.main my_agent
+pip install -e .[all]
+```
+
+Then, run the server:
+
+```bash
+python -m oai_agent_server.cli my_agent
 ```
