@@ -13,9 +13,12 @@ This is the ONLY file you write. The SDK owns everything else:
   - Push notifs      → PushNotificationSender
 """
 
+import asyncio
+from datetime import datetime
 import inspect
 import logging
-from typing import Optional
+import time
+from typing import Optional, List
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -29,6 +32,8 @@ from a2a.utils import new_agent_text_message, new_task, new_text_artifact
 from typing_extensions import override
 
 from oai_agent_core.core.base_agent import BaseAgent
+from oai_agent_server.services.llm_judge_service import LLMJudgeService
+from oai_agent_server.utils.database_logger import DatabaseLogger
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +50,8 @@ class BaseAgentExecutor(AgentExecutor):
     decides how to deliver the events to the caller (batch vs SSE).
     """
 
-    def __init__(self, agent: BaseAgent, use_streaming: bool = True):
+    def __init__(self, agent: BaseAgent, db_logger: DatabaseLogger, llm_judge_service: LLMJudgeService,
+                 allowed_modes: List[str], use_streaming: bool = True):
         """
         Args:
             agent:         Your BaseAgent instance.
@@ -54,6 +60,9 @@ class BaseAgentExecutor(AgentExecutor):
                            Set False to always use ainvoke().
         """
         self.agent = agent
+        self.db_logger = db_logger
+        self.llm_judge_service = llm_judge_service
+        self.allowed_modes = allowed_modes
         self.use_streaming = use_streaming and hasattr(agent, "astream")
         self._cancelled_tasks: set[str] = set()
 
@@ -167,8 +176,36 @@ class BaseAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         """Call ainvoke(), emit a single artifact, then complete."""
+        start_time = time.time()
         response = await self.agent.ainvoke(user_message=query, config=config)
         output_text = self._extract_text(response)
+        response_time_ms = (time.time() - start_time) * 1000
+
+        await self.db_logger.log_interaction(
+            interaction_id=task_id,
+            agent_name=self.agent.agent_name,
+            session_id=context_id,
+            user_id="a2a",
+            endpoint="/a2a/tasks/send",
+            input_message=query,
+            output_response=output_text,
+            request_headers={},
+            model_info=response.get('model') if isinstance(response, dict) else None,
+            token_usage=response.get('token_usage') if isinstance(response, dict) else None,
+            response_time_ms=response_time_ms,
+            status="success"
+        )
+
+        if "monitoring" in self.allowed_modes:
+            asyncio.create_task(
+                self.llm_judge_service.judge_interaction(
+                    interaction_id=task_id,
+                    user_message=query,
+                    agent_response=output_text,
+                    session_id=context_id,
+                    user_id="a2a"
+                )
+            )
 
         await event_queue.enqueue_event(
             TaskArtifactUpdateEvent(
@@ -211,6 +248,7 @@ class BaseAgentExecutor(AgentExecutor):
         If the agent doesn't actually stream (returns a coroutine instead
         of an async generator), falls back to batch gracefully.
         """
+        start_time = time.time()
         stream = self.agent.astream(user_message=query, config=config)
 
         # astream() might be a coroutine that returns an async generator
@@ -221,11 +259,38 @@ class BaseAgentExecutor(AgentExecutor):
         if not hasattr(stream, "__aiter__"):
             response = stream
             output_text = self._extract_text(response)
+            response_time_ms = (time.time() - start_time) * 1000
+            await self.db_logger.log_interaction(
+                interaction_id=task_id,
+                agent_name=self.agent.agent_name,
+                session_id=context_id,
+                user_id="a2a",
+                endpoint="/a2a/tasks/stream",
+                input_message=query,
+                output_response=output_text,
+                request_headers={},
+                model_info=response.get('model') if isinstance(response, dict) else None,
+                token_usage=response.get('token_usage') if isinstance(response, dict) else None,
+                response_time_ms=response_time_ms,
+                status="success"
+            )
+            if "monitoring" in self.allowed_modes:
+                asyncio.create_task(
+                    self.llm_judge_service.judge_interaction(
+                        interaction_id=task_id,
+                        user_message=query,
+                        agent_response=output_text,
+                        session_id=context_id,
+                        user_id="a2a"
+                    )
+                )
             await self._emit_single_artifact(output_text, task_id, context_id, event_queue)
             return
 
         chunk_index = 0
         last_text = ""
+        last_response = {}
+        activity_chunks = []
 
         async for chunk in stream:
             # Check for cancellation between chunks
@@ -245,6 +310,7 @@ class BaseAgentExecutor(AgentExecutor):
                 continue
 
             last_text = chunk_text
+            last_response = chunk
             await event_queue.enqueue_event(
                 TaskArtifactUpdateEvent(
                     task_id=task_id,
@@ -257,7 +323,47 @@ class BaseAgentExecutor(AgentExecutor):
                     last_chunk=False,
                 )
             )
+            activity_chunks.append({
+                'chunk_sequence': chunk_index, 'chunk_content': chunk,
+                'chunk_text': chunk_text, 'serialization_warning': '',
+                'timestamp': datetime.utcnow()
+            })
             chunk_index += 1
+
+        response_time_ms = (time.time() - start_time) * 1000
+
+        if activity_chunks:
+            await self.db_logger.log_stream_chunks_batch(
+                interaction_id=task_id,
+                agent_name=self.agent.agent_name, session_id=context_id, user_id='a2a',
+                endpoint="/a2a/tasks/stream", chunks=activity_chunks, request_headers={}
+            )
+
+        await self.db_logger.log_interaction(
+            interaction_id=task_id,
+            agent_name=self.agent.agent_name,
+            session_id=context_id,
+            user_id="a2a",
+            endpoint="/a2a/tasks/stream",
+            input_message=query,
+            output_response=last_text,
+            request_headers={},
+            model_info=last_response.get('model') if isinstance(last_response, dict) else None,
+            token_usage=last_response.get('token_usage') if isinstance(last_response, dict) else None,
+            response_time_ms=response_time_ms,
+            status="success"
+        )
+
+        if "monitoring" in self.allowed_modes:
+            asyncio.create_task(
+                self.llm_judge_service.judge_interaction(
+                    interaction_id=task_id,
+                    user_message=query,
+                    agent_response=last_text,
+                    session_id=context_id,
+                    user_id="a2a"
+                )
+            )
 
         # Final chunk marker
         await event_queue.enqueue_event(

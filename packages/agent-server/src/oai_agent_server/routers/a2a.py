@@ -6,6 +6,8 @@ from oai_agent_core.core.base_agent import BaseAgent
 from oai_agent_core.utils.logger import get_logger
 from pydantic import BaseModel, Field
 
+from oai_agent_server.services.llm_judge_service import LLMJudgeService
+
 try:
     from a2a.server.apps import A2AStarletteApplication
     from a2a.server.request_handlers import DefaultRequestHandler
@@ -48,6 +50,8 @@ def create_a2a_router(
     agent: BaseAgent,
     agent_name: str,
     allowed_modes: List[str],
+    db_logger,
+    llm_judge_service: LLMJudgeService,
     a2a_base_url: Optional[str] = None,
     a2a_streaming: bool = True,
     a2a_push_notifications: bool = True,
@@ -79,6 +83,9 @@ def create_a2a_router(
     # 2. Create your executor
     executor = BaseAgentExecutor(
         agent=agent,
+        db_logger=db_logger,
+        llm_judge_service=llm_judge_service,
+        allowed_modes=allowed_modes,
         use_streaming=a2a_streaming,
     )
 
