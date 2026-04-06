@@ -70,6 +70,9 @@ class PostgresBackend(DatabaseBackend):
         if not _ASYNCPG_AVAILABLE:
             if logger: logger.debug("asyncpg not installed — PostgreSQL backend unavailable.")
             return False
+        else:
+            if logger: logger.debug("PostgreSQL backend available.")
+
         host = os.environ.get("LOGGING_DB_HOST", "localhost")
         port = os.environ.get("LOGGING_DB_PORT", "5432")
         name = os.environ.get("LOGGING_DB_NAME", "agent_logs")
@@ -84,7 +87,7 @@ class PostgresBackend(DatabaseBackend):
                                                    timeout=5)
             async with self._pool.acquire() as conn:
                 await conn.execute("SELECT 1")
-            await self._create_schema()
+            await self._create_schema(logger)
             if logger: logger.info(f"PostgreSQL backend ready: {host}:{port}/{name}")
             return True
         except Exception as exc:
@@ -123,7 +126,8 @@ class PostgresBackend(DatabaseBackend):
             await self._pool.close()
             self._pool = None
 
-    async def _create_schema(self) -> None:
+    async def _create_schema(self, logger: Optional[logging.Logger]) -> None:
+        if logger: logger.info("Creating database schema...")
         chat_logs_ddl = "CREATE TABLE IF NOT EXISTS chat_logs (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255) UNIQUE, timestamp TIMESTAMP WITH TIME ZONE, agent_name VARCHAR(255), session_id VARCHAR(255), user_id VARCHAR(255), endpoint VARCHAR(50), input_message JSONB, output_response JSONB, request_headers JSONB, model_info JSONB, token_usage JSONB, total_tokens INT, response_time_ms FLOAT, status VARCHAR(50), error_message TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
         activity_log_ddl = "CREATE TABLE IF NOT EXISTS agent_activity_log (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255), timestamp TIMESTAMP WITH TIME ZONE, agent_name VARCHAR(255), session_id VARCHAR(255), user_id VARCHAR(255), endpoint VARCHAR(50), chunk_sequence INT, chunk_content JSONB, chunk_text TEXT, serialization_warning TEXT, request_headers JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
         evaluation_log_ddl = "CREATE TABLE IF NOT EXISTS llm_judge_evaluations (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255) NOT NULL REFERENCES chat_logs(interaction_id) ON DELETE CASCADE, quality_score FLOAT, hallucination_detected BOOLEAN, evaluation_data JSONB, timestamp TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
@@ -139,8 +143,8 @@ class PostgresBackend(DatabaseBackend):
                 await conn.execute("ALTER TABLE chat_logs ADD COLUMN IF NOT EXISTS interaction_id VARCHAR(255) UNIQUE DEFAULT gen_random_uuid()")
                 await conn.execute(
                     "ALTER TABLE agent_activity_log ADD COLUMN IF NOT EXISTS interaction_id VARCHAR(255)")
-            except Exception:
-                pass
+            except Exception as ex:
+                if logger: logger.error(f"Schema creation failed {str(ex)}")
 
 
 class SQLiteBackend(DatabaseBackend):
