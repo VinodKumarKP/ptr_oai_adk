@@ -71,7 +71,7 @@ class PostgresBackend(DatabaseBackend):
             if logger: logger.debug("asyncpg not installed — PostgreSQL backend unavailable.")
             return False
         else:
-            if logger: logger.debug("PostgreSQL backend available.")
+            if logger: logger.info("PostgreSQL backend available.")
 
         host = os.environ.get("LOGGING_DB_HOST", "localhost")
         port = os.environ.get("LOGGING_DB_PORT", "5432")
@@ -87,6 +87,7 @@ class PostgresBackend(DatabaseBackend):
                                                    timeout=5)
             async with self._pool.acquire() as conn:
                 await conn.execute("SELECT 1")
+            if logger: logger.info(f"PostgreSQL backend available: {host}:{port}/{name}")
             await self._create_schema(logger)
             if logger: logger.info(f"PostgreSQL backend ready: {host}:{port}/{name}")
             return True
