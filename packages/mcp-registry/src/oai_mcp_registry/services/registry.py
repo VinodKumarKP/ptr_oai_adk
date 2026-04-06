@@ -51,7 +51,7 @@ class MCPRegistry:
         logger.info(f"Starting auto-discovery of MCP servers in port range {start}-{end} on host {host}...")
 
         for port in range(start, end + 1):
-            endpoint = f"http://{host}:{port}/info"
+            endpoint =  f"http://localhost:{port}/info"
             try:
                 async with httpx.AsyncClient() as client:
                     response = await client.get(endpoint, timeout=1.0)
