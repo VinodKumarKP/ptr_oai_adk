@@ -23,13 +23,14 @@ The server implements the Agent-to-Agent (A2A) communication protocol, allowing 
 
 *   **GET** `/a2a/.well-known/agent.json`: The **Agent Card** discovery endpoint. This provides metadata about the agent, such as its capabilities and authentication requirements. This endpoint does not require authentication.
 *   **POST** `/a2a/`: The main JSON-RPC 2.0 endpoint for all A2A methods.
-*   **POST** `/a2a/stream`: The Server-Sent Events (SSE) endpoint for streaming methods like `message/sendSubscribe`.
+
 
 ### A2A Methods
 
 The following JSON-RPC methods are supported:
 
 *   `message/send`: Send a message to the agent and receive a complete response synchronously.
+*   `message/stream`: Send a message to the agent and receive a stream of real-time updates.`
 *   `message/sendSubscribe`: Send a message and receive a stream of real-time updates.
 *   `tasks/get`: Retrieve the status and artifacts of a previously created task.
 *   `tasks/cancel`: Request to cancel a running task.
