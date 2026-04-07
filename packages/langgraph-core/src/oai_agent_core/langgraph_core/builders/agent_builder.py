@@ -116,6 +116,7 @@ class AgentBuilder(BaseAgentBuilder):
             tools=tools if tools else [],
             system_prompt=system_prompt,
             name=agent_name,
+            checkpointer=MemorySaver(),
             response_format=self.structured_output_model_registry.get_model(agent_config.get('structured_output_model', None))
         )
 
@@ -165,7 +166,7 @@ class AgentBuilder(BaseAgentBuilder):
                 output_mode="full_history",
                 parallel_tool_calls=True,
                 response_format=self.structured_output_model_registry.get_model(crew_config.get('structured_output_model', None))
-            ).compile(checkpointer=memory)
+            ).compile(checkpointer=memory)  
 
         elif pattern == Constants.PATTERN_AGENT_AS_TOOL:
             supervisor = create_agent(
@@ -173,6 +174,7 @@ class AgentBuilder(BaseAgentBuilder):
                 tools=sub_agent_tools,
                 system_prompt=system_prompt,
                 name="supervisor",
+                checkpointer=memory,
                 response_format=self.structured_output_model_registry.get_model(crew_config.get('structured_output_model', None))
             )
             if hasattr(supervisor, 'compile'):
