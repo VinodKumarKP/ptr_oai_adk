@@ -10,7 +10,7 @@ from typing import List, Optional, Dict, Any
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
-    AgentSkill, AgentInterface, TransportProtocol,
+    AgentSkill, AgentInterface,
 )
 
 
@@ -38,39 +38,51 @@ def build_agent_card(
 
     # --- Description ---
     description = os.environ.get("AGENT_DESCRIPTION", "")
-    if agent_config:
+    
+    if isinstance(agent_config, dict):
         # Append system prompt from the main agent config
         if agent_config.get("system_prompt"):
-            description += "\n" + agent_config["system_prompt"]
+            description += "\n" + str(agent_config["system_prompt"])
 
         # Append system prompts from the agent list
         agent_list = agent_config.get("agent_list", [])
-        if len(agent_list) > 1:
-            description += "\nYou have access to the following agents:"
-            for agent_data in agent_list:
-                for agent_name_key, config in agent_data.items():
-                    if config.get("system_prompt"):
-                        description += f"\n- {agent_name_key}: {config['system_prompt']}"
-        elif len(agent_list) == 1:
-            for agent_data in agent_list:
-                for _, config in agent_data.items():
-                    if config.get("system_prompt"):
-                        description += "\n" + config["system_prompt"]
+        if isinstance(agent_list, list):
+            if len(agent_list) > 1:
+                description += "\nYou have access to the following agents:"
+                for agent_data in agent_list:
+                    if isinstance(agent_data, dict):
+                        for agent_name_key, config in agent_data.items():
+                            if isinstance(config, dict) and config.get("system_prompt"):
+                                description += f"\n- {agent_name_key}: {config['system_prompt']}"
+            elif len(agent_list) == 1:
+                for agent_data in agent_list:
+                    if isinstance(agent_data, dict):
+                        for _, config in agent_data.items():
+                            if isinstance(config, dict) and config.get("system_prompt"):
+                                description += "\n" + str(config["system_prompt"])
 
-    if not description:
+    if not description or not isinstance(description, str):
+        # Default description if not provided or if mocked unexpectedly
         description = f"{agent_name} — powered by OAI Agent Server"
+    else:
+        description = description.strip()
 
     # --- Skills ---
     resolved_skills = skills
-    if not resolved_skills and agent_config and agent_config.get("tools"):
+    
+    tools = []
+    if isinstance(agent_config, dict) and isinstance(agent_config.get("tools"), list):
+        tools = agent_config.get("tools")
+        
+    if not resolved_skills and tools:
         resolved_skills = [
             AgentSkill(
-                id=tool,
-                name=tool.replace("_", " ").title(),
+                id=str(tool),
+                name=str(tool).replace("_", " ").title(),
                 description=f"Use the {tool} tool",
                 tags=["tool"],
             )
-            for tool in agent_config["tools"]
+            for tool in tools
         ]
 
     if not resolved_skills:
@@ -86,7 +98,7 @@ def build_agent_card(
 
     return AgentCard(
         name=agent_name,
-        description=description.strip(),
+        description=description,
         url=f"{resolved_url}/a2a/",
         version=os.environ.get("AGENT_VERSION", "1.0.0"),
         capabilities=AgentCapabilities(
