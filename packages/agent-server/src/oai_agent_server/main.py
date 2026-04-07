@@ -25,6 +25,7 @@ from oai_agent_server.routers.health import create_health_router
 from oai_agent_server.routers.logs import create_logs_router
 from oai_agent_server.routers.tokens import create_token_router
 from oai_agent_server.routers.a2a import create_a2a_router
+from oai_agent_server.routers.scheduler import create_schedule_router
 from oai_agent_server.security.dependencies import verify_api_key, api_key_header
 from oai_agent_server.services.agent_service import AgentService
 from oai_agent_server.services.chat_service import ChatService
@@ -205,6 +206,13 @@ class AgentHTTPServer:
         if a2a_router:
             self.app.include_router(a2a_router, prefix="/a2a")
             self.a2a_agent_card = agent_card
+
+        schedule_router = create_schedule_router(self.agent, self.allowed_modes)
+        if schedule_router:
+            self.app.include_router(
+                schedule_router,
+                prefix="/schedule",
+            )
 
     # ------------------------------------------------------------------
     # Startup / run (unchanged)
