@@ -1,5 +1,5 @@
 """
-Database logger for tracking agent chat interactions.
+Database logger for tracking agent chat interactions and scheduled jobs.
 """
 
 from __future__ import annotations
@@ -61,6 +61,17 @@ class PostgresBackend(DatabaseBackend):
     CHAT_LOGS_INSERT = "INSERT INTO chat_logs (interaction_id, timestamp, agent_name, session_id, user_id, endpoint, input_message, output_response, request_headers, model_info, token_usage, total_tokens, response_time_ms, status, error_message) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"
     ACTIVITY_LOG_INSERT = "INSERT INTO agent_activity_log (interaction_id, timestamp, agent_name, session_id, user_id, endpoint, chunk_sequence, chunk_content, chunk_text, serialization_warning, request_headers) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
     EVALUATION_LOG_INSERT = "INSERT INTO llm_judge_evaluations (interaction_id, quality_score, hallucination_detected, evaluation_data, timestamp) VALUES ($1, $2, $3, $4, $5)"
+
+    SCHEDULED_JOBS_INSERT = "INSERT INTO scheduled_jobs (job_id, agent_name, cron_expression, run_at, prompt, session_id, user_id, enabled, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (job_id) DO UPDATE SET cron_expression = EXCLUDED.cron_expression, run_at = EXCLUDED.run_at, prompt = EXCLUDED.prompt, session_id = EXCLUDED.session_id, user_id = EXCLUDED.user_id, enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at"
+    SCHEDULED_JOBS_SELECT_ONE = "SELECT * FROM scheduled_jobs WHERE job_id = $1"
+    SCHEDULED_JOBS_SELECT_ALL = "SELECT * FROM scheduled_jobs"
+    SCHEDULED_JOBS_DELETE = "DELETE FROM scheduled_jobs WHERE job_id = $1"
+
+    SCHEDULED_JOB_RUNS_INSERT = "INSERT INTO scheduled_job_runs (job_id, run_id, timestamp, session_id, status, error_message, stream_chunks) VALUES ($1,$2,$3,$4,$5,$6,$7)"
+    SCHEDULED_JOB_RUNS_SELECT_ALL_FOR_JOB = "SELECT * FROM scheduled_job_runs WHERE job_id = $1 ORDER BY timestamp DESC LIMIT $2"
+    SCHEDULED_JOB_RUNS_SELECT_ONE_FOR_JOB = "SELECT * FROM scheduled_job_runs WHERE job_id = $1 ORDER BY timestamp DESC OFFSET $2 LIMIT 1"
+    SCHEDULED_JOB_RUNS_DELETE_FOR_JOB = "DELETE FROM scheduled_job_runs WHERE job_id = $1"
+
     PLACEHOLDER = "$"
 
     def __init__(self) -> None:
@@ -132,13 +143,20 @@ class PostgresBackend(DatabaseBackend):
         chat_logs_ddl = "CREATE TABLE IF NOT EXISTS chat_logs (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255) UNIQUE, timestamp TIMESTAMP WITH TIME ZONE, agent_name VARCHAR(255), session_id VARCHAR(255), user_id VARCHAR(255), endpoint VARCHAR(50), input_message JSONB, output_response JSONB, request_headers JSONB, model_info JSONB, token_usage JSONB, total_tokens INT, response_time_ms FLOAT, status VARCHAR(50), error_message TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
         activity_log_ddl = "CREATE TABLE IF NOT EXISTS agent_activity_log (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255), timestamp TIMESTAMP WITH TIME ZONE, agent_name VARCHAR(255), session_id VARCHAR(255), user_id VARCHAR(255), endpoint VARCHAR(50), chunk_sequence INT, chunk_content JSONB, chunk_text TEXT, serialization_warning TEXT, request_headers JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
         evaluation_log_ddl = "CREATE TABLE IF NOT EXISTS llm_judge_evaluations (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255) NOT NULL REFERENCES chat_logs(interaction_id) ON DELETE CASCADE, quality_score FLOAT, hallucination_detected BOOLEAN, evaluation_data JSONB, timestamp TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
+        scheduled_jobs_ddl = "CREATE TABLE IF NOT EXISTS scheduled_jobs (job_id VARCHAR(255) PRIMARY KEY, agent_name VARCHAR(255), cron_expression VARCHAR(255), run_at TIMESTAMP WITH TIME ZONE, prompt TEXT, session_id VARCHAR(255), user_id VARCHAR(255), enabled BOOLEAN, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
+        scheduled_job_runs_ddl = "CREATE TABLE IF NOT EXISTS scheduled_job_runs (id SERIAL PRIMARY KEY, job_id VARCHAR(255) REFERENCES scheduled_jobs(job_id) ON DELETE CASCADE, run_id VARCHAR(255), timestamp TIMESTAMP WITH TIME ZONE, session_id VARCHAR(255), status VARCHAR(50), error_message TEXT, stream_chunks JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
+
         activity_log_index_ddl = "CREATE INDEX IF NOT EXISTS idx_agent_activity_log_interaction_id ON agent_activity_log(interaction_id);"
+        scheduled_job_runs_job_id_index_ddl = "CREATE INDEX IF NOT EXISTS idx_scheduled_job_runs_job_id ON scheduled_job_runs(job_id);"
 
         async with self._pool.acquire() as conn:
             await conn.execute(chat_logs_ddl)
             await conn.execute(activity_log_ddl)
             await conn.execute(evaluation_log_ddl)
+            await conn.execute(scheduled_jobs_ddl)
+            await conn.execute(scheduled_job_runs_ddl)
             await conn.execute(activity_log_index_ddl)
+            await conn.execute(scheduled_job_runs_job_id_index_ddl)
             try:
                 await conn.execute("ALTER TABLE chat_logs ADD COLUMN IF NOT EXISTS total_tokens INT")
                 await conn.execute("ALTER TABLE chat_logs ADD COLUMN IF NOT EXISTS interaction_id VARCHAR(255) UNIQUE DEFAULT gen_random_uuid()")
@@ -153,6 +171,17 @@ class SQLiteBackend(DatabaseBackend):
     CHAT_LOGS_INSERT = "INSERT INTO chat_logs (interaction_id, timestamp, agent_name, session_id, user_id, endpoint, input_message, output_response, request_headers, model_info, token_usage, total_tokens, response_time_ms, status, error_message) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
     ACTIVITY_LOG_INSERT = "INSERT INTO agent_activity_log (interaction_id, timestamp, agent_name, session_id, user_id, endpoint, chunk_sequence, chunk_content, chunk_text, serialization_warning, request_headers) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
     EVALUATION_LOG_INSERT = "INSERT INTO llm_judge_evaluations (interaction_id, quality_score, hallucination_detected, evaluation_data, timestamp) VALUES (?, ?, ?, ?, ?)"
+
+    SCHEDULED_JOBS_INSERT = "INSERT INTO scheduled_jobs (job_id, agent_name, cron_expression, run_at, prompt, session_id, user_id, enabled, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET cron_expression = EXCLUDED.cron_expression, run_at = EXCLUDED.run_at, prompt = EXCLUDED.prompt, session_id = EXCLUDED.session_id, user_id = EXCLUDED.user_id, enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at"
+    SCHEDULED_JOBS_SELECT_ONE = "SELECT * FROM scheduled_jobs WHERE job_id = ?"
+    SCHEDULED_JOBS_SELECT_ALL = "SELECT * FROM scheduled_jobs"
+    SCHEDULED_JOBS_DELETE = "DELETE FROM scheduled_jobs WHERE job_id = ?"
+
+    SCHEDULED_JOB_RUNS_INSERT = "INSERT INTO scheduled_job_runs (job_id, run_id, timestamp, session_id, status, error_message, stream_chunks) VALUES (?,?,?,?,?,?,?)"
+    SCHEDULED_JOB_RUNS_SELECT_ALL_FOR_JOB = "SELECT * FROM scheduled_job_runs WHERE job_id = ? ORDER BY timestamp DESC LIMIT ?"
+    SCHEDULED_JOB_RUNS_SELECT_ONE_FOR_JOB = "SELECT * FROM scheduled_job_runs WHERE job_id = ? ORDER BY timestamp DESC LIMIT 1 OFFSET ?"
+    SCHEDULED_JOB_RUNS_DELETE_FOR_JOB = "DELETE FROM scheduled_job_runs WHERE job_id = ?"
+
     PLACEHOLDER = "?"
 
     def __init__(self) -> None:
@@ -219,13 +248,21 @@ class SQLiteBackend(DatabaseBackend):
         chat_logs_ddl = "CREATE TABLE IF NOT EXISTS chat_logs (id INTEGER PRIMARY KEY, interaction_id TEXT UNIQUE, timestamp DATETIME, agent_name TEXT, session_id TEXT, user_id TEXT, endpoint TEXT, input_message TEXT, output_response TEXT, request_headers TEXT, model_info TEXT, token_usage TEXT, total_tokens INTEGER, response_time_ms REAL, status TEXT, error_message TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
         activity_log_ddl = "CREATE TABLE IF NOT EXISTS agent_activity_log (id INTEGER PRIMARY KEY, interaction_id TEXT, timestamp DATETIME, agent_name TEXT, session_id TEXT, user_id TEXT, endpoint TEXT, chunk_sequence INTEGER, chunk_content TEXT, chunk_text TEXT, serialization_warning TEXT, request_headers TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
         evaluation_log_ddl = "CREATE TABLE IF NOT EXISTS llm_judge_evaluations (id INTEGER PRIMARY KEY, interaction_id TEXT NOT NULL, quality_score REAL, hallucination_detected INTEGER, evaluation_data TEXT, timestamp DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
+        scheduled_jobs_ddl = "CREATE TABLE IF NOT EXISTS scheduled_jobs (job_id TEXT PRIMARY KEY, agent_name TEXT, cron_expression TEXT, run_at DATETIME, prompt TEXT, session_id TEXT, user_id TEXT, enabled BOOLEAN, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
+        scheduled_job_runs_ddl = "CREATE TABLE IF NOT EXISTS scheduled_job_runs (id INTEGER PRIMARY KEY, job_id TEXT REFERENCES scheduled_jobs(job_id) ON DELETE CASCADE, run_id TEXT, timestamp DATETIME, session_id TEXT, status TEXT, error_message TEXT, stream_chunks TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
+
         activity_log_index_ddl = "CREATE INDEX IF NOT EXISTS idx_agent_activity_log_interaction_id ON agent_activity_log(interaction_id);"
+        scheduled_job_runs_job_id_index_ddl = "CREATE INDEX IF NOT EXISTS idx_scheduled_job_runs_job_id ON scheduled_job_runs(job_id);"
 
         async with aiosqlite.connect(self._db_path) as db:
+            await db.execute("PRAGMA foreign_keys = ON;")
             await db.execute(chat_logs_ddl)
             await db.execute(activity_log_ddl)
             await db.execute(evaluation_log_ddl)
+            await db.execute(scheduled_jobs_ddl)
+            await db.execute(scheduled_job_runs_ddl)
             await db.execute(activity_log_index_ddl)
+            await db.execute(scheduled_job_runs_job_id_index_ddl)
             try:
                 await db.execute("ALTER TABLE chat_logs ADD COLUMN interaction_id TEXT")
                 await db.execute("ALTER TABLE agent_activity_log ADD COLUMN interaction_id TEXT")
@@ -441,6 +478,128 @@ class DatabaseLogger:
             if self.logger: self.logger.error(f"Failed to retrieve logs: {exc}")
             return []
 
+    # --- Scheduled Jobs Logging ---
+    async def log_scheduled_job(
+        self,
+        job_id: str,
+        agent_name: str,
+        cron_expression: Optional[str],
+        run_at: Optional[datetime],
+        prompt: str,
+        session_id: str,
+        user_id: str,
+        enabled: bool,
+    ) -> None:
+        if not self._ready(): return
+        try:
+            now = datetime.now(timezone.utc)
+            params = (
+                job_id, agent_name, cron_expression, run_at, prompt,
+                session_id, user_id, enabled, now, now,
+            )
+            await self._backend.execute(self._backend.SCHEDULED_JOBS_INSERT, params)
+            if self.logger: self.logger.debug(f"Logged scheduled job: {job_id}")
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to log scheduled job {job_id}: {exc}")
+            raise
+
+    async def update_scheduled_job(
+        self,
+        job_id: str,
+        cron_expression: Optional[str],
+        run_at: Optional[datetime],
+        prompt: str,
+        session_id: str,
+        user_id: str,
+        enabled: bool,
+    ) -> None:
+        if not self._ready(): return
+        try:
+            now = datetime.now(timezone.utc)
+            params = (
+                job_id, cron_expression, run_at, prompt,
+                session_id, user_id, enabled, now, job_id, # job_id repeated for ON CONFLICT UPDATE
+            )
+            # Using the same INSERT statement with ON CONFLICT DO UPDATE
+            await self._backend.execute(self._backend.SCHEDULED_JOBS_INSERT, params)
+            if self.logger: self.logger.debug(f"Updated scheduled job: {job_id}")
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to update scheduled job {job_id}: {exc}")
+            raise
+
+    async def get_scheduled_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        if not self._ready(): return None
+        try:
+            row = await self._backend.fetch_one(self._backend.SCHEDULED_JOBS_SELECT_ONE, (job_id,))
+            return self._deserialize_scheduled_job_row(row) if row else None
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to retrieve scheduled job {job_id}: {exc}")
+            return None
+
+    async def get_all_scheduled_jobs(self) -> List[Dict[str, Any]]:
+        if not self._ready(): return []
+        try:
+            rows = await self._backend.fetch(self._backend.SCHEDULED_JOBS_SELECT_ALL, ())
+            return [self._deserialize_scheduled_job_row(r) for r in rows]
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to retrieve all scheduled jobs: {exc}")
+            return []
+
+    async def delete_scheduled_job(self, job_id: str) -> None:
+        if not self._ready(): return
+        try:
+            await self._backend.execute(self._backend.SCHEDULED_JOBS_DELETE, (job_id,))
+            if self.logger: self.logger.debug(f"Deleted scheduled job: {job_id}")
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to delete scheduled job {job_id}: {exc}")
+            raise
+
+    async def log_scheduled_job_run(
+        self,
+        job_id: str,
+        run_id: str,
+        timestamp: datetime,
+        session_id: str,
+        status: str,
+        error_message: Optional[str],
+        stream_chunks: List[Dict[str, Any]],
+    ) -> None:
+        if not self._ready(): return
+        try:
+            params = (
+                job_id, run_id, timestamp, session_id, status,
+                error_message, self._to_json(stream_chunks),
+            )
+            await self._backend.execute(self._backend.SCHEDULED_JOB_RUNS_INSERT, params)
+            if self.logger: self.logger.debug(f"Logged run {run_id} for scheduled job {job_id}")
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to log run {run_id} for scheduled job {job_id}: {exc}")
+            raise
+
+    async def get_scheduled_job_runs(self, job_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        if not self._ready(): return []
+        try:
+            rows = await self._backend.fetch(self._backend.SCHEDULED_JOB_RUNS_SELECT_ALL_FOR_JOB, (job_id, limit))
+            return [self._deserialize_scheduled_job_run_row(r) for r in rows]
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to retrieve runs for scheduled job {job_id}: {exc}")
+            return []
+
+    async def get_scheduled_job_run_stream_chunks(self, job_id: str, run_index: int = -1) -> Optional[List[Dict[str, Any]]]:
+        if not self._ready(): return None
+        try:
+            # SQLite OFFSET is 0-based, so run_index -1 means the last one, which is OFFSET 0 if ordered DESC
+            # For Postgres, it's also 0-based.
+            offset = abs(run_index) - 1 if run_index < 0 else run_index
+            row = await self._backend.fetch_one(self._backend.SCHEDULED_JOB_RUNS_SELECT_ONE_FOR_JOB, (job_id, offset))
+            if row:
+                deserialized_row = self._deserialize_scheduled_job_run_row(row)
+                return deserialized_row.get("stream_chunks")
+            return None
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to retrieve stream chunks for job {job_id} run {run_index}: {exc}")
+            return None
+
     async def close(self) -> None:
         if self._backend is not None:
             await self._backend.close()
@@ -535,6 +694,19 @@ class DatabaseLogger:
         headers = self._parse_json_field(row.get("request_headers"))
         row["request_headers"] = self._redact_headers(headers) if isinstance(headers, dict) else headers
         row["chunk_content"] = self._parse_json_field(row.get("chunk_content"))
+        for key in ["timestamp", "created_at"]:
+            if key in row: row[key] = self._isoformat(row[key])
+        return row
+
+    def _deserialize_scheduled_job_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        if not row: return {}
+        for key in ["run_at", "created_at", "updated_at"]:
+            if key in row: row[key] = self._isoformat(row[key])
+        return row
+
+    def _deserialize_scheduled_job_run_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        if not row: return {}
+        row["stream_chunks"] = self._parse_json_field(row.get("stream_chunks"))
         for key in ["timestamp", "created_at"]:
             if key in row: row[key] = self._isoformat(row[key])
         return row

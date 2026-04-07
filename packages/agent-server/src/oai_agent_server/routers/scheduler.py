@@ -18,8 +18,10 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from oai_agent_core.core.base_agent import BaseAgent
 from oai_agent_server.utils.response_extractor import ResponseContentExtractor
 from oai_agent_server.utils.serialization import make_serializable
+from oai_agent_server.utils.database_logger import DatabaseLogger
 from pydantic import BaseModel, field_validator
 
 logger = logging.getLogger(__name__)
@@ -80,19 +82,139 @@ class ScheduleInfo(BaseModel):
     active: bool
 
 
-# ---------------------------------------------------------------------------
-# In-memory stores (swap with DB / DynamoDB for production)
-# ---------------------------------------------------------------------------
-schedule_store: Dict[str, dict] = {}
-result_store: Dict[str, List[dict]] = {}
 scheduler = AsyncIOScheduler()
+
+
+# ---- helper: stream agent response as SSE (same format as /chat/stream) ----
+async def _stream_agent(agent: BaseAgent, db_logger: DatabaseLogger, message: str, session_id: str,
+                        user_id: str, job_id: Optional[str] = None) -> AsyncGenerator[str, None]:
+    """Yield SSE events identical to /chat/stream.
+
+    When *job_id* is given the collected chunks are stored in ``result_store``.
+    """
+    response_extractor = ResponseContentExtractor(agent)
+    config = {"session_id": session_id, "user_id": user_id}
+
+    stream_result = agent.astream(user_message=message, config=config)
+    if inspect.isasyncgen(stream_result):
+        stream = stream_result
+    elif inspect.iscoroutine(stream_result):
+        stream = await stream_result
+    else:
+        stream = stream_result
+
+    collected_chunks: List[dict] = []
+    async for chunk in stream:
+        content = response_extractor.extract_content(chunk)
+        if content:
+            try:
+                json_data = json.dumps({
+                    "content": content,
+                    "session_id": session_id,
+                })
+                collected_chunks.append(content)
+            except (TypeError, ValueError):
+                try:
+                    serializable = make_serializable(content)
+                    json_data = json.dumps({
+                        "content": serializable,
+                        "session_id": session_id,
+                    })
+                    collected_chunks.append(serializable)
+                except Exception:
+                    json_data = json.dumps({
+                        "content": str(content),
+                        "session_id": session_id,
+                    })
+            yield f"data: {json_data}\n\n"
+
+    # Persist results for later retrieval
+    if job_id and db_logger.is_active:
+        await db_logger.log_scheduled_job_run(
+            job_id=job_id,
+            run_id=uuid.uuid4().hex[:8],
+            timestamp=datetime.now(timezone.utc),
+            session_id=session_id,
+            status="completed",
+            error_message=None,
+            stream_chunks=collected_chunks,
+        )
+
+    yield "data: [DONE]\n\n"
+
+# ---- helper: background execution (stores full result for later retrieval) ----
+async def _execute_agent_job_bg(agent: BaseAgent, db_logger: DatabaseLogger, job_id: str, prompt: str,
+                              session_id: str, user_id: str):
+    message = prompt
+    run_id = uuid.uuid4().hex[:8]
+    logger.info("[Scheduler] job=%s run=%s session=%s running: %s",
+                job_id, run_id, session_id, message)
+    
+    status = "completed"
+    error_message = None
+    stream_chunks: List[dict] = []
+
+    try:
+        response_extractor = ResponseContentExtractor(agent)
+        config = {"session_id": session_id, "user_id": user_id}
+
+        # Stream to capture ALL chunks (tool results, events, final text)
+        stream_result = agent.astream(user_message=message, config=config)
+        if inspect.isasyncgen(stream_result):
+            stream = stream_result
+        elif inspect.iscoroutine(stream_result):
+            stream = await stream_result
+        else:
+            stream = stream_result
+
+        async for chunk in stream:
+            content = response_extractor.extract_content(chunk)
+            if content:
+                try:
+                    serialized = json.loads(json.dumps(content))
+                except (TypeError, ValueError):
+                    serialized = make_serializable(content)
+                stream_chunks.append(serialized)
+
+        logger.info("[Scheduler] job=%s run=%s completed", job_id, run_id)
+    except Exception as exc:
+        logger.error("[Scheduler] job=%s run=%s failed: %s",
+                     job_id, run_id, exc, exc_info=True)
+        status = "failed"
+        error_message = str(exc)
+    finally:
+        if db_logger.is_active:
+            await db_logger.log_scheduled_job_run(
+                job_id=job_id,
+                run_id=run_id,
+                timestamp=datetime.now(timezone.utc),
+                session_id=session_id,
+                status=status,
+                error_message=error_message,
+                stream_chunks=stream_chunks,
+            )
+
+
+# ---- helper: build the right trigger ----
+def _build_trigger(req: ScheduleRequest):
+    if req.cron_expression:
+        parts = req.cron_expression.strip().split()
+        return CronTrigger(
+            minute=parts[0], hour=parts[1],
+            day=parts[2], month=parts[3],
+            day_of_week=parts[4],
+        )
+    if req.run_at:
+        # APScheduler expects datetime objects for DateTrigger
+        return DateTrigger(run_date=datetime.fromisoformat(req.run_at.replace('Z', '+00:00')))
+    return None
 
 
 # ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
 
-def create_schedule_router(agent, allowed_modes: Optional[List[str]] = None) -> Optional[APIRouter]:
+def create_schedule_router(agent: BaseAgent, db_logger: DatabaseLogger, allowed_modes: Optional[List[str]] = None) -> Optional[APIRouter]:
     """Build & return the /schedule router bound to *agent*."""
 
     if allowed_modes is None:
@@ -102,131 +224,6 @@ def create_schedule_router(agent, allowed_modes: Optional[List[str]] = None) -> 
         return None
 
     router = APIRouter(prefix="/schedule", tags=["schedule"])
-    response_extractor = ResponseContentExtractor(agent)
-
-    # ---- helper: stream agent response as SSE (same format as /chat/stream) ----
-    async def _stream_agent(message: str, session_id: str,
-                            user_id: str,
-                            job_id: Optional[str] = None) -> AsyncGenerator[str, None]:
-        """Yield SSE events identical to /chat/stream.
-
-        When *job_id* is given the collected chunks are stored in ``result_store``.
-        """
-        config = {"session_id": session_id, "user_id": user_id}
-
-        stream_result = agent.astream(user_message=message, config=config)
-        if inspect.isasyncgen(stream_result):
-            stream = stream_result
-        elif inspect.iscoroutine(stream_result):
-            stream = await stream_result
-        else:
-            stream = stream_result
-
-        collected_chunks: List[dict] = []
-        async for chunk in stream:
-            content = response_extractor.extract_content(chunk)
-            if content:
-                try:
-                    json_data = json.dumps({
-                        "content": content,
-                        "session_id": session_id,
-                    })
-                    collected_chunks.append(content)
-                except (TypeError, ValueError):
-                    try:
-                        serializable = make_serializable(content)
-                        json_data = json.dumps({
-                            "content": serializable,
-                            "session_id": session_id,
-                        })
-                        collected_chunks.append(serializable)
-                    except Exception:
-                        json_data = json.dumps({
-                            "content": str(content),
-                            "session_id": session_id,
-                        })
-                yield f"data: {json_data}\n\n"
-
-        # Persist results for later retrieval
-        if job_id:
-            run_id = uuid.uuid4().hex[:8]
-            if job_id not in result_store:
-                result_store[job_id] = []
-            result_store[job_id].append({
-                "run_id": run_id,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "session_id": session_id,
-                "status": "completed",
-                "stream_chunks": collected_chunks,
-            })
-
-        yield "data: [DONE]\n\n"
-
-    # ---- helper: background execution (stores full result for later retrieval) ----
-    async def _execute_agent_job_bg(job_id: str, prompt: str,
-                                  session_id: str, user_id: str):
-        message = prompt
-        run_id = uuid.uuid4().hex[:8]
-        logger.info("[Scheduler] job=%s run=%s session=%s running: %s",
-                    job_id, run_id, session_id, message)
-        try:
-            config = {"session_id": session_id, "user_id": user_id}
-
-            # Stream to capture ALL chunks (tool results, events, final text)
-            stream_chunks: List[dict] = []
-            stream_result = agent.astream(user_message=message, config=config)
-            if inspect.isasyncgen(stream_result):
-                stream = stream_result
-            elif inspect.iscoroutine(stream_result):
-                stream = await stream_result
-            else:
-                stream = stream_result
-
-            async for chunk in stream:
-                content = response_extractor.extract_content(chunk)
-                if content:
-                    try:
-                        serialized = json.loads(json.dumps(content))
-                    except (TypeError, ValueError):
-                        serialized = make_serializable(content)
-                    stream_chunks.append(serialized)
-
-            if job_id not in result_store:
-                result_store[job_id] = []
-            result_store[job_id].append({
-                "run_id": run_id,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "session_id": session_id,
-                "status": "completed",
-                "stream_chunks": stream_chunks,
-            })
-            logger.info("[Scheduler] job=%s run=%s completed", job_id, run_id)
-        except Exception as exc:
-            logger.error("[Scheduler] job=%s run=%s failed: %s",
-                         job_id, run_id, exc, exc_info=True)
-            if job_id not in result_store:
-                result_store[job_id] = []
-            result_store[job_id].append({
-                "run_id": run_id,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "session_id": session_id,
-                "error": str(exc),
-                "status": "failed",
-                "stream_chunks": [],
-            })
-
-    # ---- helper: build the right trigger ----
-    def _build_trigger(req: ScheduleRequest):
-        if req.cron_expression:
-            parts = req.cron_expression.strip().split()
-            return CronTrigger(
-                minute=parts[0], hour=parts[1],
-                day=parts[2], month=parts[3],
-                day_of_week=parts[4],
-            )
-        if req.run_at:
-            return DateTrigger(run_date=req.run_at)
-        return None
 
     # ---- endpoints ----
 
@@ -243,22 +240,39 @@ def create_schedule_router(agent, allowed_modes: Optional[List[str]] = None) -> 
         job_id = request.job_id or uuid.uuid4().hex[:8]
         session_id = request.session_id or f"schedule-{job_id}"
         trigger = _build_trigger(request)
+        
+        # Log/update job in DB
+        if db_logger.is_active:
+            await db_logger.log_scheduled_job(
+                job_id=job_id,
+                agent_name=agent.agent_name,
+                cron_expression=request.cron_expression,
+                run_at=datetime.fromisoformat(request.run_at.replace('Z', '+00:00')) if request.run_at else None,
+                prompt=request.prompt,
+                session_id=session_id,
+                user_id=request.user_id,
+                enabled=request.enabled,
+            )
 
         if trigger:
             scheduler.add_job(
                 _execute_agent_job_bg,
                 trigger=trigger,
-                args=[job_id, request.prompt, session_id, request.user_id],
+                args=[agent, db_logger, job_id, request.prompt, session_id, request.user_id],
                 id=job_id,
                 replace_existing=True,
             )
+            # If job was paused, resume it
+            if not request.enabled:
+                scheduler.pause_job(job_id)
+
 
         if not scheduler.running:
             scheduler.start()
 
-        if request.run_now or not trigger:
+        if request.run_now or (not trigger and request.enabled):
             asyncio.create_task(
-                _execute_agent_job_bg(job_id, request.prompt, session_id, request.user_id)
+                _execute_agent_job_bg(agent, db_logger, job_id, request.prompt, session_id, request.user_id)
             )
 
         next_run = None
@@ -266,14 +280,6 @@ def create_schedule_router(agent, allowed_modes: Optional[List[str]] = None) -> 
             job = scheduler.get_job(job_id)
             if job and job.next_run_time:
                 next_run = job.next_run_time.isoformat()
-
-        schedule_store[job_id] = {
-            "cron_expression": request.cron_expression,
-            "prompt": request.prompt,
-            "session_id": session_id,
-            "user_id": request.user_id,
-            "enabled": request.enabled,
-        }
 
         return ScheduleResponse(
             job_id=job_id,
@@ -294,7 +300,7 @@ def create_schedule_router(agent, allowed_modes: Optional[List[str]] = None) -> 
         message = request.prompt
 
         return StreamingResponse(
-            _stream_agent(message, session_id, request.user_id, job_id=job_id),
+            _stream_agent(agent, db_logger, message, session_id, request.user_id, job_id=job_id),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -306,18 +312,25 @@ def create_schedule_router(agent, allowed_modes: Optional[List[str]] = None) -> 
     async def list_schedules():
         """List all registered schedules."""
         jobs = []
-        for job_id, cfg in schedule_store.items():
-            job = scheduler.get_job(job_id)
-            jobs.append(ScheduleInfo(
-                job_id=job_id,
-                cron_expression=cfg.get("cron_expression"),
-                prompt=cfg["prompt"],
-                session_id=cfg["session_id"],
-                user_id=cfg["user_id"],
-                enabled=cfg["enabled"],
-                next_run=job.next_run_time.isoformat() if job and job.next_run_time else None,
-                active=job is not None,
-            ).model_dump())
+        if db_logger.is_active:
+            db_jobs = await db_logger.get_all_scheduled_jobs()
+            for db_job in db_jobs:
+                job_id = db_job["job_id"]
+                aps_job = scheduler.get_job(job_id)
+                
+                next_run = aps_job.next_run_time.isoformat() if aps_job and aps_job.next_run_time else None
+                active = aps_job is not None and not aps_job.pending # APScheduler jobs are "active" if not removed and not paused
+
+                jobs.append(ScheduleInfo(
+                    job_id=job_id,
+                    cron_expression=db_job.get("cron_expression"),
+                    prompt=db_job["prompt"],
+                    session_id=db_job["session_id"],
+                    user_id=db_job["user_id"],
+                    enabled=db_job["enabled"],
+                    next_run=next_run,
+                    active=active,
+                ).model_dump())
         return {"schedules": jobs}
 
     @router.get("/results/{job_id}")
@@ -328,9 +341,12 @@ def create_schedule_router(agent, allowed_modes: Optional[List[str]] = None) -> 
         - run_id, timestamp, status
         - stream_chunks: raw output from the agent stream
         """
-        results = result_store.get(job_id, [])
+        if not db_logger.is_active:
+            raise HTTPException(status_code=500, detail="Database logging not active.")
+        
+        results = await db_logger.get_scheduled_job_runs(job_id, limit)
         sanitized = []
-        for r in results[-limit:]:
+        for r in results:
             sanitized.append({
                 "run_id": r.get("run_id"),
                 "timestamp": r.get("timestamp"),
@@ -347,23 +363,21 @@ def create_schedule_router(agent, allowed_modes: Optional[List[str]] = None) -> 
 
         *run_index* selects which run (-1 = latest).
         """
-        results = result_store.get(job_id, [])
-        if not results:
-            raise HTTPException(status_code=404, detail="No results for this job")
-        try:
-            entry = results[run_index]
-        except IndexError:
-            raise HTTPException(status_code=404, detail=f"Run index {run_index} not found")
-        if entry.get("status") == "failed":
-            raise HTTPException(status_code=500, detail=entry.get("error", "Unknown error"))
+        if not db_logger.is_active:
+            raise HTTPException(status_code=500, detail="Database logging not active.")
+
+        stream_chunks = await db_logger.get_scheduled_job_run_stream_chunks(job_id, run_index)
+        
+        if not stream_chunks:
+            raise HTTPException(status_code=404, detail="No stream chunks found for this run.")
 
         async def _replay() -> AsyncGenerator[str, None]:
-            chunks = entry.get("stream_chunks", [])
-            session_id = entry.get("session_id", "")
-            for chunk_content in chunks:
+            # Assuming stream_chunks is a list of dicts, each dict is a chunk content
+            # And each chunk content already contains 'session_id' if it was logged that way
+            for chunk_content in stream_chunks:
                 json_data = json.dumps({
                     "content": chunk_content,
-                    "session_id": session_id,
+                    "session_id": chunk_content.get("session_id", ""), # Ensure session_id is present
                 })
                 yield f"data: {json_data}\n\n"
             yield "data: [DONE]\n\n"
@@ -377,35 +391,78 @@ def create_schedule_router(agent, allowed_modes: Optional[List[str]] = None) -> 
     @router.put("/{job_id}/pause")
     async def pause_schedule(job_id: str):
         """Pause a recurring schedule."""
+        if not db_logger.is_active:
+            raise HTTPException(status_code=500, detail="Database logging not active.")
+        
+        job_cfg = await db_logger.get_scheduled_job(job_id)
+        if not job_cfg:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        
         try:
             scheduler.pause_job(job_id)
+            await db_logger.update_scheduled_job(
+                job_id=job_id,
+                cron_expression=job_cfg["cron_expression"],
+                run_at=job_cfg["run_at"],
+                prompt=job_cfg["prompt"],
+                session_id=job_cfg["session_id"],
+                user_id=job_cfg["user_id"],
+                enabled=False,
+            )
         except Exception:
-            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found in scheduler")
         return {"job_id": job_id, "status": "paused"}
 
     @router.put("/{job_id}/resume")
     async def resume_schedule(job_id: str):
         """Resume a paused schedule."""
+        if not db_logger.is_active:
+            raise HTTPException(status_code=500, detail="Database logging not active.")
+
+        job_cfg = await db_logger.get_scheduled_job(job_id)
+        if not job_cfg:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
         try:
             scheduler.resume_job(job_id)
+            await db_logger.update_scheduled_job(
+                job_id=job_id,
+                cron_expression=job_cfg["cron_expression"],
+                run_at=job_cfg["run_at"],
+                prompt=job_cfg["prompt"],
+                session_id=job_cfg["session_id"],
+                user_id=job_cfg["user_id"],
+                enabled=True,
+            )
         except Exception:
-            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found in scheduler")
         return {"job_id": job_id, "status": "resumed"}
 
     @router.delete("/{job_id}")
     async def delete_schedule(job_id: str):
         """Delete a schedule and discard its stored results."""
+        if not db_logger.is_active:
+            raise HTTPException(status_code=500, detail="Database logging not active.")
+
         try:
             scheduler.remove_job(job_id)
         except Exception:
-            pass  # already gone
-        schedule_store.pop(job_id, None)
-        result_store.pop(job_id, None)
+            pass  # already gone from scheduler
+
+        await db_logger.delete_scheduled_job(job_id) # This also cascades to delete runs
+
         return {"job_id": job_id, "status": "deleted"}
 
     @router.get("/results")
     async def list_result_job_ids():
         """List all job_ids currently in result_store (debug endpoint)."""
-        return {"job_ids": list(result_store.keys())}
+        if not db_logger.is_active:
+            raise HTTPException(status_code=500, detail="Database logging not active.")
+        
+        # For simplicity, return all job_ids that exist in scheduled_jobs table
+        # A more precise implementation might query scheduled_job_runs for distinct job_ids
+        all_jobs = await db_logger.get_all_scheduled_jobs()
+        job_ids_with_results = [job["job_id"] for job in all_jobs]
+        return {"job_ids": job_ids_with_results}
 
     return router

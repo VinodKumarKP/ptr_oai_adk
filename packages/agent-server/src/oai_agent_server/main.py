@@ -207,7 +207,7 @@ class AgentHTTPServer:
             self.app.include_router(a2a_router, prefix="/a2a")
             self.a2a_agent_card = agent_card
 
-        schedule_router = create_schedule_router(self.agent, self.allowed_modes)
+        schedule_router = create_schedule_router(self.agent, self.db_logger, self.allowed_modes)
         if schedule_router:
             self.app.include_router(
                 schedule_router,
