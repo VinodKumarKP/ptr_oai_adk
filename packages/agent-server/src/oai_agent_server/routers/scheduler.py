@@ -11,11 +11,16 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import AsyncGenerator, List, Optional
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.date import DateTrigger
+try:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.date import DateTrigger
+    _APSCHEDULER_AVAILABLE = True
+except ImportError:
+    _APSCHEDULER_AVAILABLE = False
+    
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from oai_agent_core.core.base_agent import BaseAgent
@@ -82,7 +87,10 @@ class ScheduleInfo(BaseModel):
     active: bool
 
 
-scheduler = AsyncIOScheduler()
+if _APSCHEDULER_AVAILABLE:
+    scheduler = AsyncIOScheduler()
+else:
+    scheduler = None
 
 
 # ---- helper: stream agent response as SSE (same format as /chat/stream) ----
@@ -197,6 +205,8 @@ async def _execute_agent_job_bg(agent: BaseAgent, db_logger: DatabaseLogger, job
 
 # ---- helper: build the right trigger ----
 def _build_trigger(req: ScheduleRequest):
+    if not _APSCHEDULER_AVAILABLE:
+        return None
     if req.cron_expression:
         parts = req.cron_expression.strip().split()
         return CronTrigger(
@@ -221,6 +231,10 @@ def create_schedule_router(agent: BaseAgent, db_logger: DatabaseLogger, allowed_
         allowed_modes = ["schedule"]
 
     if "schedule" not in allowed_modes:
+        return None
+
+    if not _APSCHEDULER_AVAILABLE:
+        logger.warning("APScheduler is not installed. Schedule endpoints will not be available. Install it using `pip install apscheduler`.")
         return None
 
     router = APIRouter(prefix="/schedule", tags=["schedule"])

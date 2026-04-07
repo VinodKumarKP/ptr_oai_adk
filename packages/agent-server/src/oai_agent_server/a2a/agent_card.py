@@ -38,7 +38,7 @@ def build_agent_card(
 
     # --- Description ---
     description = os.environ.get("AGENT_DESCRIPTION", "")
-    
+
     if isinstance(agent_config, dict):
         # Append system prompt from the main agent config
         if agent_config.get("system_prompt"):

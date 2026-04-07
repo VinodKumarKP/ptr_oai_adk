@@ -7,11 +7,12 @@ A robust, FastAPI-based server for hosting and managing OAI Agents. This server 
 *   **FastAPI Powered**: Built on modern, high-performance FastAPI framework.
 *   **Standardized API**: RESTful endpoints for chat (`/chat`), streaming (`/chat/stream`), and agent management.
 *   **Agent-to-Agent (A2A) Protocol**: Compliant with the A2A specification for interoperable agent communication.
+*   **Scheduled Jobs**: Built-in APScheduler integration for creating and managing recurring or one-time agent tasks.
 *   **Request Isolation**: Thread-safe request handling with isolated environment variables for each request.
 *   **Authentication**: Built-in API token validation using `Depends` for security.
 *   **Streaming Support**: Server-Sent Events (SSE) support for real-time agent responses.
 *   **File Uploads**: Support for uploading files alongside chat messages.
-*   **Comprehensive Logging**: Integrated database logging for all interactions, including token usage and latency metrics. Supports both PostgreSQL and SQLite.
+*   **Comprehensive Logging**: Integrated database logging for all interactions, including token usage, latency metrics, and scheduled job runs. Supports both PostgreSQL and SQLite.
 *   **Graceful Shutdown**: Handles server restarts and shutdowns gracefully, ensuring active requests complete.
 *   **Health Checks**: Standardized `/health` and `/status` endpoints for monitoring.
 
@@ -43,6 +44,10 @@ The server uses optional dependencies for certain features. You can install them
     ```bash
     pip install .[a2a]
     ```
+*   **APScheduler Support**: To enable the scheduled jobs (`/schedule`) endpoints.
+    ```bash
+    pip install .[scheduler]
+    ```
 *   **All Features**: To install all optional dependencies.
     ```bash
     pip install .[all]
@@ -65,12 +70,12 @@ oai-agent-server <agent_name>
 *   `--host`: Host to bind the server to (default: 0.0.0.0).
 *   `--temperature`, `-t`: Override agent temperature.
 *   `--max-tokens`, `-m`: Override agent max tokens.
-*   `--allowed-modes`: List of allowed API modes (chat, agent, logs, health, a2a).
+*   `--allowed-modes`: List of allowed API modes (chat, agent, logs, health, a2a, schedule).
 
 **Example:**
 
 ```bash
-oai-agent-server my_agent --port 8080 --allowed-modes chat health a2a
+oai-agent-server my_agent --port 8080 --allowed-modes chat health schedule
 ```
 
 ### Environment Variables
@@ -84,7 +89,7 @@ The server respects the following environment variables:
 *   `AGENT_BASE_URL`: The public base URL for the agent, used to construct the Agent Card URL.
 
 **Database Logging:**
-*   `DB_LOGGING_ENABLED`: Set to `true` to enable database logging (default: `false`).
+*   `DB_LOGGING_ENABLED`: Set to `true` to enable database logging (default: `false`). Note: Database logging is required to persist scheduled jobs and their results.
 *   `DB_TYPE`: The type of database to use (`postgres` or `sqlite`).
 *   `LOGGING_DB_HOST`: Database host (for PostgreSQL).
 *   `LOGGING_DB_PORT`: Database port (for PostgreSQL).
@@ -104,6 +109,17 @@ The server respects the following environment variables:
 *   **POST** `/chat/with-files`: Send a message with file uploads.
 *   **POST** `/chat/stream`: Send a message and receive a streaming response (SSE).
 *   **POST** `/chat/stream/with-files`: Streaming chat with file uploads.
+
+### Scheduled Jobs
+
+*   **POST** `/schedule`: Create a new scheduled agent job (recurring or one-time).
+*   **POST** `/schedule/run`: Run an agent job immediately and stream the result.
+*   **GET** `/schedule`: List all registered schedules.
+*   **GET** `/schedule/results/{job_id}`: Get recent run results for a specific job.
+*   **GET** `/schedule/results/{job_id}/stream`: Replay the SSE stream of a past job run.
+*   **PUT** `/schedule/{job_id}/pause`: Pause a recurring schedule.
+*   **PUT** `/schedule/{job_id}/resume`: Resume a paused schedule.
+*   **DELETE** `/schedule/{job_id}`: Delete a schedule and its stored results.
 
 ### Agent-to-Agent (A2A)
 

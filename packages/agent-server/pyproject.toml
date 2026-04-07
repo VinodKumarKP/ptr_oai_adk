@@ -35,7 +35,8 @@ dependencies = [
 sqlite = ["aiosqlite"]
 postgres = ["asyncpg"]
 a2a = ["a2a-sdk[http-server]"]
-all = ["aiosqlite", "asyncpg", "a2a-sdk[http-server]"]
+scheduler = ["apscheduler"]
+all = ["aiosqlite", "asyncpg", "a2a-sdk[http-server]", "apscheduler"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
