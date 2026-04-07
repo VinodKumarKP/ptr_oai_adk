@@ -62,6 +62,8 @@ class AgentHTTPServer:
       /a2a                                     — A2A protocol (via a2a-sdk)
     """
 
+    ALWAYS_ACTIVE_MODES = {"health", "agent", "chat", "logs", "a2a"}
+
     def __init__(
         self,
         agent: BaseAgent,
@@ -84,11 +86,10 @@ class AgentHTTPServer:
         self.server_state = ServerState()
         self.a2a_agent_card = None
 
-        ALWAYS_ACTIVE_MODES = {"health", "agent", "chat", "logs", "a2a"}
         self.allowed_modes = (
-            list(ALWAYS_ACTIVE_MODES)
+            list(self.ALWAYS_ACTIVE_MODES)
             if allowed_modes is None
-            else list(set(allowed_modes).union(ALWAYS_ACTIVE_MODES))
+            else list(set(allowed_modes).union(self.ALWAYS_ACTIVE_MODES))
         )
 
         self.a2a_base_url = a2a_base_url
@@ -122,6 +123,15 @@ class AgentHTTPServer:
     # ------------------------------------------------------------------
     # Middleware (unchanged)
     # ------------------------------------------------------------------
+
+    def set_allowed_modes(self, allowed_modes: List[str]=None):
+        self.allowed_modes = (
+            list(self.ALWAYS_ACTIVE_MODES)
+            if allowed_modes is None
+            else list(set(allowed_modes).union(self.ALWAYS_ACTIVE_MODES))
+        )
+        self._setup_routes()
+
 
     def _setup_middleware(self):
         self.app.add_middleware(RequestTrackingMiddleware, server_state=self.server_state)
@@ -250,6 +260,7 @@ def main(server: AgentHTTPServer):
         agent_name=agent_name, abort_if_not_found=False
     )
     port = args.port or config.get("port", 8000)
+    server.set_allowed_modes(args.allowed_modes)
     server.run(host=args.host, port=port)
 
 
