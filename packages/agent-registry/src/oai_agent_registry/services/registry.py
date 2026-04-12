@@ -24,6 +24,7 @@ class AgentRegistry:
         self.start_time = time.time()
         self.client: Optional[httpx.AsyncClient] = None
         self.public_ip: Optional[str] = None
+        self.private_ip: Optional[str] = None
         self.load_config()
 
     def load_config(self):
@@ -80,6 +81,9 @@ class AgentRegistry:
     async def get_info(self) -> JSONResponse:
         """Returns information about the registry and its agents."""
         enabled_agents = {name for name, agent in self.agents.items() if agent.enabled}
+        endpoint = self.private_ip if os.environ.get('USE_PRIVATE_IP', 'false').lower() == 'true' else \
+            os.environ.get('AGENT_BASE_URL', "localhost")
+
         info = {
             "message": "Agent Registry",
             "uptime_seconds": int(time.time() - self.start_time),
@@ -88,7 +92,7 @@ class AgentRegistry:
             "agents": {
                 name: {
                     "description": agent.description,
-                    "endpoint": f"{self.public_ip}:{self.registry_config.port}/{name}",
+                    "endpoint": f"{endpoint}:{self.registry_config.port}/{name}",
                     "status": "active" if agent.enabled else "inactive"
                 }
                 for name, agent in self.agents.items()

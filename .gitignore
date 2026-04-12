@@ -10,3 +10,6 @@ dist/
 *hub_registry.json
 *.log
 *.db
+frontend/node_modules/
+frontend/build/
+frontend

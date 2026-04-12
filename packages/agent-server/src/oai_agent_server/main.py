@@ -9,6 +9,7 @@ from typing import Optional, List
 
 import uvicorn
 from fastapi import FastAPI, Depends
+from fastapi.middleware.cors import CORSMiddleware
 
 from oai_agent_core.components.configuration.model_config import ConfigManager
 from oai_agent_core.core.base_agent import BaseAgent
@@ -135,6 +136,13 @@ class AgentHTTPServer:
 
 
     def _setup_middleware(self):
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
         self.app.add_middleware(RequestTrackingMiddleware, server_state=self.server_state)
         self.app.add_middleware(LoggingMiddleware, logger=self.logger)
         self.app.add_middleware(
@@ -268,7 +276,7 @@ def main(server: AgentHTTPServer):
         agent_name=agent_name, abort_if_not_found=False
     )
     port = args.port or config.get("port", 8000)
-    server.set_allowed_modes(args.allowed_modes)
+    # server.set_allowed_modes(args.allowed_modes)
     server.run(host=args.host, port=port)
 
 

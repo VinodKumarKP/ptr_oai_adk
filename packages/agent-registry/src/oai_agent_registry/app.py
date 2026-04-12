@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from oai_agent_registry.routers.registry import router
 from oai_agent_registry.dependencies import registry_instance
 from oai_agent_registry.security.dependencies import verify_api_key, api_key_header
-from oai_agent_registry.utils.util import get_public_ip
+from oai_agent_registry.utils.util import get_public_ip, get_private_ip
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ async def lifespan(app: FastAPI):
         limits=httpx.Limits(max_keepalive_connections=20, max_connections=100)
     )
     registry_instance.public_ip = get_public_ip()
+    registry_instance.private_ip = get_private_ip()
     
     if registry_instance.registry_config.enable_auto_discovery:
         await registry_instance.discover_agents()
