@@ -93,6 +93,7 @@ class AgentService:
             "agent_name": self.agent_name,
             "session_id": self.agent.session_id,
             "cloud_provider": self.agent.agent_config.get('cloud_provider', 'aws'),
+            "description": self.agent.agent_config.get('description', 'No description available'),
             "initialized": self.agent._initialized,
             "agent_config": self.agent.agent_config,
             "auth_enabled": auth_enabled,
