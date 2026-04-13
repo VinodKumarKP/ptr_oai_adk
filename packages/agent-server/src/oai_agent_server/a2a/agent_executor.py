@@ -274,6 +274,15 @@ class BaseAgentExecutor(AgentExecutor):
                     logger.error(f"Error writing file {name} to {temp_dir}: {e}")
         return file_paths, temp_dir
 
+    async def _cleanup_directory(self, path: str):
+        """Asynchronously removes a directory and its contents."""
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, shutil.rmtree, path)
+            logger.info(f"Successfully scheduled cleanup for temp directory: {path}")
+        except Exception as e:
+            logger.error(f"Failed to cleanup temp directory {path}: {e}")
+
     @override
     async def execute(
         self,
@@ -348,7 +357,7 @@ class BaseAgentExecutor(AgentExecutor):
             )
         finally:
             if temp_directory:
-                shutil.rmtree(temp_directory)
+                asyncio.create_task(self._cleanup_directory(temp_directory))
 
     # ------------------------------------------------------------------
     # Batch path  (ainvoke)
