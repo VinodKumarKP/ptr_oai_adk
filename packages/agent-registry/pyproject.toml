@@ -23,12 +23,13 @@ classifiers = [
 # Base dependencies
 dependencies = [
     "fastapi",
-    "uvicorn[standard]",
+    "uvicorn",
     "pydantic",
     "httpx",
     "redis",
     "cryptography",
-    "requests"
+    "requests",
+    "uvloop; sys_platform != 'win32'"
 ]
 
 [project.scripts]

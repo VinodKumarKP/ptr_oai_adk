@@ -1,4 +1,5 @@
 import argparse
+import platform
 import uvicorn
 from oai_agent_registry.app import app, logger
 from oai_agent_registry.dependencies import registry_instance
@@ -32,7 +33,10 @@ def main():
     if args.host:
         registry_instance.registry_config.host = host
 
-    logger.info(f"Starting server on {host}:{port}")
+    # Use uvloop only on non-Windows systems for better performance
+    loop_type = "uvloop" if platform.system() != "Windows" else "asyncio"
+
+    logger.info(f"Starting server on {host}:{port} using {loop_type} loop")
     uvicorn.run(
         app,
         host=host,
@@ -41,7 +45,7 @@ def main():
         proxy_headers=True,
         forwarded_allow_ips="*",
         timeout_keep_alive=300,
-        loop="uvloop",
+        loop=loop_type,
     )
 
 if __name__ == "__main__":
