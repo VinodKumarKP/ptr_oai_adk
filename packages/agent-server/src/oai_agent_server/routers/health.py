@@ -39,7 +39,7 @@ def create_health_router(agent_name, server_state, enable_request_isolation, all
 
         if "agent" in allowed_modes:
             endpoints.update({
-                "GET /agent/info": "Get agent information"
+                "GET /info": "Get agent information"
             })
 
         return {
