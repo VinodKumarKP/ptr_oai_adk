@@ -54,7 +54,7 @@ def test_agent_kill(agent_router_app):
 def test_agent_info(agent_router_app):
     app, service = agent_router_app
     client = TestClient(app)
-    response = client.get("/agent/info")
+    response = client.get("/info")
     assert response.status_code == 200
     service.get_agent_info.assert_called_once()
 
