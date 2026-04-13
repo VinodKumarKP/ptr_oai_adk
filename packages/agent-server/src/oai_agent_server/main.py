@@ -276,6 +276,7 @@ def main(server: AgentHTTPServer):
         agent_name=agent_name, abort_if_not_found=False
     )
     port = args.port or config.get("port", 8000)
+    server.agent.agent_config['port'] = port
     # server.set_allowed_modes(args.allowed_modes)
     server.run(host=args.host, port=port)
 

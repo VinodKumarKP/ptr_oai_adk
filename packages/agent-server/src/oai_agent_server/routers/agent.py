@@ -28,7 +28,7 @@ def create_agent_router(agent_service, enable_request_isolation, allowed_modes: 
             """Kill the server process."""
             return await agent_service.kill_switch()
 
-        @router.get("/agent/info")
+        @router.get("/info")
         async def agent_info():
             """Get agent information."""
             original_environ = get_original_environ()

@@ -97,7 +97,8 @@ class AgentService:
             "initialized": self.agent._initialized,
             "agent_config": self.agent.agent_config,
             "auth_enabled": auth_enabled,
-            "request_isolation": request_isolation
+            "request_isolation": request_isolation,
+            "endpoint": f"http://localhost:{self.agent.agent_config.get("port", 8081)}"
         }
 
     async def get_prompts(self):
