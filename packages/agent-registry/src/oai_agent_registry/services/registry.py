@@ -64,7 +64,7 @@ class AgentRegistry:
             endpoint = f"http://{host}:{port}"
             try:
                 async with httpx.AsyncClient() as client:
-                    response = await client.get(f"{endpoint}/agent/info", timeout=1.0)
+                    response = await client.get(f"{endpoint}/info", timeout=1.0)
                     if response.status_code == 200:
                         agent_info = response.json()
                         agent_name = agent_info.get("agent_name")
