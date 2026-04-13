@@ -11,22 +11,55 @@ This is the ONLY file you write. The SDK owns everything else:
   - HTTP server      → A2AStarletteApplication mounted on your FastAPI app
   - SSE streaming    → EventQueue / EventConsumer
   - Push notifs      → PushNotificationSender
+
+File Attachment Support (A2A protocol):
+  Incoming messages may contain parts of kind='file'. Each file part has:
+    - file.name      (str)            — original filename
+    - file.mimeType  (str)            — MIME type
+    - file.bytes     (str | None)     — base64-encoded content (inline)
+    - file.uri       (str | None)     — remote URI (alternative to bytes)
+
+  _extract_input() assembles a rich input dict passed to ainvoke/astream:
+    {
+      "text":  "<user text>",
+      "files": [
+        {
+          "name":      "report.pdf",
+          "mime_type": "application/pdf",
+          "bytes":     "<base64 string>",   # if inline
+          "uri":       None,                # if URI-based
+          "data":      b"<raw bytes>",      # decoded bytes (inline only)
+        },
+        ...
+      ]
+    }
+
+  Your BaseAgent.ainvoke / astream should accept `user_message` as either
+  a plain str (backward-compatible) or this dict when files are present.
 """
 
 import asyncio
-from datetime import datetime
-import inspect
+import base64
 import logging
+import os
+import shutil
+import tempfile
 import time
-from typing import Optional, List
+import inspect
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import (
+    FilePart,
+    Message,
+    Part,
     TaskArtifactUpdateEvent,
     TaskState,
     TaskStatus,
     TaskStatusUpdateEvent,
+    TextPart,
 )
 from a2a.utils import new_agent_text_message, new_task, new_text_artifact
 from typing_extensions import override
@@ -38,6 +71,86 @@ from oai_agent_server.utils.database_logger import DatabaseLogger
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Helpers for parsing A2A message parts
+# ---------------------------------------------------------------------------
+
+def _parse_file_part(file_part: FilePart) -> Dict[str, Any]:
+    """
+    Convert an A2A FilePart into a normalised dict your agent can consume.
+
+    Returns:
+        {
+            "name":      str,         # original filename (may be empty string)
+            "mime_type": str,         # MIME type (may be empty string)
+            "bytes":     str | None,  # raw base64 string as sent over the wire
+            "uri":       str | None,  # remote URI (mutually exclusive with bytes)
+            "data":      bytes | None # decoded bytes (only when inline bytes present)
+        }
+    """
+    file = file_part.file
+    raw_b64: Optional[str] = getattr(file, "bytes", None)
+    uri: Optional[str] = getattr(file, "uri", None)
+
+    decoded: Optional[bytes] = None
+    if raw_b64:
+        try:
+            decoded = base64.b64decode(raw_b64)
+        except Exception:
+            logger.warning(
+                "Could not base64-decode file part '%s'; 'data' will be None.",
+                getattr(file, "name", "<unknown>"),
+            )
+
+    return {
+        "name": getattr(file, "name", "") or "",
+        "mime_type": getattr(file, "mimeType", "") or "",
+        "bytes": raw_b64,
+        "uri": uri,
+        "data": decoded,
+    }
+
+
+def _extract_input(message: Message) -> Dict[str, Any]:
+    """
+    Walk all parts of an A2A Message and return a structured input dict:
+
+        {
+            "text":  "<concatenated text from all TextParts>",
+            "files": [ <parsed file dicts> ]
+        }
+
+    When there are no file parts the "files" list is empty, so callers can
+    check  `bool(result["files"])`  to decide whether to forward attachments.
+    """
+    texts: List[str] = []
+    files: List[Dict[str, Any]] = []
+
+    parts: List[Part] = getattr(message, "parts", []) or []
+    for part in parts:
+        # A2A SDK wraps each part in a union; access via .root or directly
+        actual = getattr(part, "root", part)
+
+        if isinstance(actual, TextPart):
+            if actual.text:
+                texts.append(actual.text)
+
+        elif isinstance(actual, FilePart):
+            try:
+                files.append(_parse_file_part(actual))
+            except Exception as exc:
+                logger.warning("Failed to parse file part: %s", exc)
+
+    return {
+        "text": "\n".join(texts),
+        "files": files,
+    }
+
+
+# ---------------------------------------------------------------------------
+# BaseAgentExecutor
+# ---------------------------------------------------------------------------
+
 class BaseAgentExecutor(AgentExecutor):
     """
     Adapter between a2a-sdk's AgentExecutor interface and your BaseAgent.
@@ -48,16 +161,28 @@ class BaseAgentExecutor(AgentExecutor):
 
     Both code paths funnel through the same execute() method — the SDK
     decides how to deliver the events to the caller (batch vs SSE).
+
+    File attachments arriving as A2A FilePart(s) are decoded and forwarded
+    to the agent as part of the `user_message` dict (see module docstring).
     """
 
-    def __init__(self, agent: BaseAgent, db_logger: DatabaseLogger, llm_judge_service: LLMJudgeService,
-                 allowed_modes: List[str], use_streaming: bool = True):
+    def __init__(
+        self,
+        agent: BaseAgent,
+        db_logger: DatabaseLogger,
+        llm_judge_service: LLMJudgeService,
+        allowed_modes: List[str],
+        use_streaming: bool = True,
+    ):
         """
         Args:
-            agent:         Your BaseAgent instance.
-            use_streaming: If True and agent has astream(), use it so the
-                           SDK can stream partial results to the caller.
-                           Set False to always use ainvoke().
+            agent:              Your BaseAgent instance.
+            db_logger:          DatabaseLogger for interaction logging.
+            llm_judge_service:  LLMJudgeService for quality monitoring.
+            allowed_modes:      Feature flags (e.g. ["monitoring"]).
+            use_streaming:      If True and agent has astream(), use it so the
+                                SDK can stream partial results to the caller.
+                                Set False to always use ainvoke().
         """
         self.agent = agent
         self.db_logger = db_logger
@@ -99,9 +224,55 @@ class BaseAgentExecutor(AgentExecutor):
     def _is_cancelled(self, task_id: Optional[str]) -> bool:
         return task_id is not None and task_id in self._cancelled_tasks
 
+    @staticmethod
+    def _log_input_summary(extracted: Dict[str, Any], task_id: str) -> None:
+        """Emit a structured log line summarising what arrived."""
+        file_summary = [
+            f"{f['name'] or '<unnamed>'} ({f['mime_type'] or 'unknown'}, "
+            f"{'inline ' + str(len(f['data'])) + 'B' if f['data'] else 'uri=' + str(f['uri'])})"
+            for f in extracted["files"]
+        ]
+        logger.info(
+            "Task '%s' — text length=%d, attachments=[%s]",
+            task_id,
+            len(extracted["text"]),
+            ", ".join(file_summary) if file_summary else "none",
+        )
+
     # ------------------------------------------------------------------
     # execute() — called for BOTH tasks/send and tasks/sendSubscribe
     # ------------------------------------------------------------------
+
+    def _save_files(self, files: List[Dict[str, Any]]) -> Tuple[List[str], Optional[str]]:
+        """
+        Save file data to a temporary directory.
+
+        Args:
+            files: A list of file dictionaries, each from _parse_file_part.
+
+        Returns:
+            A tuple containing:
+            - A list of absolute paths to the saved files.
+            - The path to the temporary directory created, or None.
+        """
+        if not files:
+            return [], None
+
+        temp_dir = tempfile.mkdtemp()
+        file_paths = []
+
+        for file_info in files:
+            data = file_info.get('data')
+            name = file_info.get('name')
+            if data and name:
+                file_path = os.path.join(temp_dir, name)
+                try:
+                    with open(file_path, 'wb') as f:
+                        f.write(data)
+                    file_paths.append(file_path)
+                except IOError as e:
+                    logger.error(f"Error writing file {name} to {temp_dir}: {e}")
+        return file_paths, temp_dir
 
     @override
     async def execute(
@@ -114,42 +285,52 @@ class BaseAgentExecutor(AgentExecutor):
 
         Flow:
           1. Emit the Task object so the SDK registers it in the TaskStore.
-          2. Emit TaskStatusUpdateEvent(working).
-          3. Call ainvoke() or astream() on your BaseAgent.
-          4. Emit TaskArtifactUpdateEvent(s) with the response content.
-          5. Emit TaskStatusUpdateEvent(completed | failed).
+          2. Parse all message parts (text + files) via _extract_input().
+          3. Emit TaskStatusUpdateEvent(working).
+          4. Call ainvoke() or astream() on your BaseAgent.
+          5. Emit TaskArtifactUpdateEvent(s) with the response content.
+          6. Emit TaskStatusUpdateEvent(completed | failed).
         """
-        query = context.get_user_input()
-        config = self._build_config(context)
-
-        # 1. Register the task (required for stateful tracking)
         if not context.current_task:
             task = new_task(context.message)
             await event_queue.enqueue_event(task)
+
         task_id = context.task_id
         context_id = context.context_id
 
-        # 2. Signal working
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(
-                    state=TaskState.working,
-                    message=new_agent_text_message("Processing your request…"),
-                ),
-                final=False,
-            )
-        )
+        extracted = _extract_input(context.message)
+        self._log_input_summary(extracted, task_id)
+        query_text: str = extracted["text"]
+        config = self._build_config(context)
+        temp_directory = None
+        query_for_agent = query_text
 
         try:
+            if extracted.get('files'):
+                file_paths, temp_directory = self._save_files(extracted['files'])
+                if file_paths:
+                    file_list = ", ".join(file_paths)
+                    query_for_agent = f"{query_text}\n\nUploaded files: {file_list}"
+
+            await event_queue.enqueue_event(
+                TaskStatusUpdateEvent(
+                    task_id=task_id,
+                    context_id=context_id,
+                    status=TaskStatus(
+                        state=TaskState.working,
+                        message=new_agent_text_message("Processing your request…"),
+                    ),
+                    final=False,
+                )
+            )
+
             if self.use_streaming:
                 await self._execute_streaming(
-                    query, config, task_id, context_id, event_queue
+                    query_for_agent, query_text, config, task_id, context_id, event_queue
                 )
             else:
                 await self._execute_batch(
-                    query, config, task_id, context_id, event_queue
+                    query_for_agent, query_text, config, task_id, context_id, event_queue
                 )
 
         except Exception as e:
@@ -165,19 +346,22 @@ class BaseAgentExecutor(AgentExecutor):
                     final=True,
                 )
             )
+        finally:
+            if temp_directory:
+                shutil.rmtree(temp_directory)
 
     # ------------------------------------------------------------------
     # Batch path  (ainvoke)
     # ------------------------------------------------------------------
 
     async def _execute_batch(
-        self, query: str, config: dict,
-        task_id: str, context_id: str,
-        event_queue: EventQueue,
+            self, query_for_agent: str, query_for_log: str, config: dict,
+            task_id: str, context_id: str,
+            event_queue: EventQueue,
     ) -> None:
         """Call ainvoke(), emit a single artifact, then complete."""
         start_time = time.time()
-        response = await self.agent.ainvoke(user_message=query, config=config)
+        response = await self.agent.ainvoke(user_message=query_for_agent, config=config)
         output_text = self._extract_text(response)
         response_time_ms = (time.time() - start_time) * 1000
 
@@ -187,7 +371,7 @@ class BaseAgentExecutor(AgentExecutor):
             session_id=context_id,
             user_id="a2a",
             endpoint="/a2a/tasks/send",
-            input_message=query,
+            input_message=query_for_log,
             output_response=output_text,
             request_headers={},
             model_info=response.get('model') if isinstance(response, dict) else None,
@@ -200,7 +384,7 @@ class BaseAgentExecutor(AgentExecutor):
             asyncio.create_task(
                 self.llm_judge_service.judge_interaction(
                     interaction_id=task_id,
-                    user_message=query,
+                    user_message=query_for_log,
                     agent_response=output_text,
                     session_id=context_id,
                     user_id="a2a"
@@ -237,9 +421,9 @@ class BaseAgentExecutor(AgentExecutor):
     # ------------------------------------------------------------------
 
     async def _execute_streaming(
-        self, query: str, config: dict,
-        task_id: str, context_id: str,
-        event_queue: EventQueue,
+            self, query_for_agent: str, query_for_log: str, config: dict,
+            task_id: str, context_id: str,
+            event_queue: EventQueue,
     ) -> None:
         """
         Call astream(), emit one TaskArtifactUpdateEvent per chunk,
@@ -249,13 +433,11 @@ class BaseAgentExecutor(AgentExecutor):
         of an async generator), falls back to batch gracefully.
         """
         start_time = time.time()
-        stream = self.agent.astream(user_message=query, config=config)
+        stream = self.agent.astream(user_message=query_for_agent, config=config)
 
-        # astream() might be a coroutine that returns an async generator
         if inspect.iscoroutine(stream):
             stream = await stream
 
-        # Fallback: if it's not an async generator, treat as batch
         if not hasattr(stream, "__aiter__"):
             response = stream
             output_text = self._extract_text(response)
@@ -266,7 +448,7 @@ class BaseAgentExecutor(AgentExecutor):
                 session_id=context_id,
                 user_id="a2a",
                 endpoint="/a2a/tasks/stream",
-                input_message=query,
+                input_message=query_for_log,
                 output_response=output_text,
                 request_headers={},
                 model_info=response.get('model') if isinstance(response, dict) else None,
@@ -278,7 +460,7 @@ class BaseAgentExecutor(AgentExecutor):
                 asyncio.create_task(
                     self.llm_judge_service.judge_interaction(
                         interaction_id=task_id,
-                        user_message=query,
+                        user_message=query_for_log,
                         agent_response=output_text,
                         session_id=context_id,
                         user_id="a2a"
@@ -293,7 +475,6 @@ class BaseAgentExecutor(AgentExecutor):
         activity_chunks = []
 
         async for chunk in stream:
-            # Check for cancellation between chunks
             if self._is_cancelled(task_id):
                 await event_queue.enqueue_event(
                     TaskStatusUpdateEvent(
@@ -319,7 +500,7 @@ class BaseAgentExecutor(AgentExecutor):
                         name="response",
                         text=chunk_text,
                     ),
-                    append=chunk_index > 0,   # first chunk replaces, rest append
+                    append=chunk_index > 0,
                     last_chunk=False,
                 )
             )
@@ -345,7 +526,7 @@ class BaseAgentExecutor(AgentExecutor):
             session_id=context_id,
             user_id="a2a",
             endpoint="/a2a/tasks/stream",
-            input_message=query,
+            input_message=query_for_log,
             output_response=last_text,
             request_headers={},
             model_info=last_response.get('model') if isinstance(last_response, dict) else None,
@@ -358,14 +539,13 @@ class BaseAgentExecutor(AgentExecutor):
             asyncio.create_task(
                 self.llm_judge_service.judge_interaction(
                     interaction_id=task_id,
-                    user_message=query,
+                    user_message=query_for_log,
                     agent_response=last_text,
                     session_id=context_id,
                     user_id="a2a"
                 )
             )
 
-        # Final chunk marker
         await event_queue.enqueue_event(
             TaskArtifactUpdateEvent(
                 task_id=task_id,
@@ -376,7 +556,6 @@ class BaseAgentExecutor(AgentExecutor):
             )
         )
 
-        # Completed status
         await event_queue.enqueue_event(
             TaskStatusUpdateEvent(
                 task_id=task_id,
