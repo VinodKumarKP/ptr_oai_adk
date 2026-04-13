@@ -17,6 +17,7 @@ agent_list:
         - search_hotels
         - book_hotel
         - book_flight
+        - read_file
 
 crew_config:
   pattern: supervisor

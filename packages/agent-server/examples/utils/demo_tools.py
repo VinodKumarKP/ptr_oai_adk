@@ -134,3 +134,13 @@ def book_hotel(
     hotel = matches[0]
     RESERVATIONS[user_id]["hotel_info"] = hotel
     return f"Successfully booked hotel {hotel_id} ({hotel['name']} in {hotel['location']})"
+
+@tool
+def read_file(file_path):
+    """
+    Read file and return its content
+    Args:
+        file_path: Path to the file to read
+    """
+    with open(file_path, 'r') as f:
+        return f.read()
