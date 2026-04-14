@@ -6,6 +6,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Optional, List
+from urllib.parse import urlparse
 
 import httpx
 import uvicorn
@@ -227,14 +228,37 @@ class AgentHTTPServer:
     # ------------------------------------------------------------------
     # Startup / run (unchanged)
     # ------------------------------------------------------------------
-    async def _register_with_registry(self):
-        """Register the agent with the agent registry if AGENT_BASE_URL is set."""
+    def _get_local_registry_url(self):
+        """
+        Get the local registry URL by parsing AGENT_BASE_URL and forcing localhost.
+        Returns the local URL or None if the environment variable is not set.
+        """
         agent_base_url = os.environ.get("AGENT_BASE_URL")
         if not agent_base_url:
+            return None
+
+        try:
+            parsed_url = urlparse(agent_base_url)
+            port = parsed_url.port
+            if not port:
+                self.logger.warning(f"Could not extract port from AGENT_BASE_URL '{agent_base_url}'. Using original URL.")
+                return agent_base_url.rstrip('/')
+            
+            local_url = f"http://localhost:{port}"
+            self.logger.info(f"AGENT_BASE_URL is set. Forcing registry connection to {local_url}")
+            return local_url
+        except Exception as e:
+            self.logger.error(f"Failed to parse AGENT_BASE_URL '{agent_base_url}': {e}")
+            return None
+
+    async def _register_with_registry(self):
+        """Register the agent with the agent registry if AGENT_BASE_URL is set."""
+        registry_base_url = self._get_local_registry_url()
+        if not registry_base_url:
             self.logger.info("AGENT_BASE_URL not set, skipping registration.")
             return
 
-        registry_url = f"{agent_base_url.rstrip('/')}/register"
+        registry_url = f"{registry_base_url}/register"
         agent_info = {
             "name": self.agent_name,
             "description": self.agent.agent_config.get("description", "No description available"),
@@ -247,7 +271,7 @@ class AgentHTTPServer:
             async with httpx.AsyncClient() as client:
                 response = await client.post(registry_url, json=agent_info)
                 if response.status_code == 200:
-                    self.logger.info(f"Successfully registered agent '{self.agent_name}' with registry at {agent_base_url}")
+                    self.logger.info(f"Successfully registered agent '{self.agent_name}' with registry at {registry_base_url}")
                 else:
                     self.logger.error(f"Failed to register agent. Status: {response.status_code}, Response: {response.text}")
         except httpx.RequestError as e:
@@ -255,11 +279,11 @@ class AgentHTTPServer:
 
     async def _deregister_from_registry(self):
         """Deregister the agent from the agent registry."""
-        agent_base_url = os.environ.get("AGENT_BASE_URL")
-        if not agent_base_url:
+        registry_base_url = self._get_local_registry_url()
+        if not registry_base_url:
             return
 
-        registry_url = f"{agent_base_url.rstrip('/')}/deregister"
+        registry_url = f"{registry_base_url}/deregister"
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(registry_url, json={"name": self.agent_name})
