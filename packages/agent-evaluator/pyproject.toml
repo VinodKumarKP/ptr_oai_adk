@@ -23,7 +23,8 @@ dependencies = [
     "pyyaml",
     "markdown",
     "litellm",
-    "boto3"
+    "boto3",
+    "oai-agent-core"
 ]
 
 [project.optional-dependencies]
@@ -33,7 +34,7 @@ docx = ["python-docx"]
 ppt = ["python-pptx"]
 excel = ["pandas", "openpyxl"]
 ocr = ["pillow", "pytesseract"]
-macros = ["faker", "pypdf", "python-docx", "python-pptx", "pandas", "openpyxl", "pillow", "pytesseract", "oai-agent-core"]
+macros = ["faker", "pypdf", "python-docx", "python-pptx", "pandas", "openpyxl", "pillow", "pytesseract"]
 
 [project.scripts]
 oai-agent-evaluator = "oai_agent_evaluator.cli:main"
