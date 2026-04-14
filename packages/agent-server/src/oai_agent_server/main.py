@@ -7,6 +7,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Optional, List
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -107,6 +108,7 @@ class AgentHTTPServer:
         async def lifespan(app: FastAPI):
             await self.startup()
             yield
+            await self.shutdown()
 
         self.app = FastAPI(
             title=f"Agent HTTP Server - {agent_name}",
@@ -225,6 +227,48 @@ class AgentHTTPServer:
     # ------------------------------------------------------------------
     # Startup / run (unchanged)
     # ------------------------------------------------------------------
+    async def _register_with_registry(self):
+        """Register the agent with the agent registry if AGENT_BASE_URL is set."""
+        agent_base_url = os.environ.get("AGENT_BASE_URL")
+        if not agent_base_url:
+            self.logger.info("AGENT_BASE_URL not set, skipping registration.")
+            return
+
+        registry_url = f"{agent_base_url.rstrip('/')}/register"
+        agent_info = {
+            "name": self.agent_name,
+            "description": self.agent.agent_config.get("description", "No description available"),
+            "endpoint": f"http://localhost:{self.agent.agent_config.get('port', 8000)}",
+            "agent_class": self.agent.agent_config.get("agent_class"),
+            "tools": [tool for tool in self.agent.agent_config.get("tools", [])],
+        }
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(registry_url, json=agent_info)
+                if response.status_code == 200:
+                    self.logger.info(f"Successfully registered agent '{self.agent_name}' with registry at {agent_base_url}")
+                else:
+                    self.logger.error(f"Failed to register agent. Status: {response.status_code}, Response: {response.text}")
+        except httpx.RequestError as e:
+            self.logger.error(f"Error connecting to agent registry at {registry_url}: {e}")
+
+    async def _deregister_from_registry(self):
+        """Deregister the agent from the agent registry."""
+        agent_base_url = os.environ.get("AGENT_BASE_URL")
+        if not agent_base_url:
+            return
+
+        registry_url = f"{agent_base_url.rstrip('/')}/deregister"
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(registry_url, json={"name": self.agent_name})
+                if response.status_code == 200:
+                    self.logger.info(f"Successfully deregistered agent '{self.agent_name}' from registry.")
+                else:
+                    self.logger.error(f"Failed to deregister agent. Status: {response.status_code}, Response: {response.text}")
+        except httpx.RequestError as e:
+            self.logger.error(f"Error connecting to agent registry at {registry_url}: {e}")
 
     async def startup(self):
         self.server_state.start_time = time.time()
@@ -232,10 +276,15 @@ class AgentHTTPServer:
             await self.agent.initialize()
             self.logger.info(f"Agent '{self.agent_name}' initialized successfully")
             await self.db_logger.initialize()
+            await self._register_with_registry()
         except Exception as e:
             self.logger.info(
                 f"Warning: Failed to initialize agent during startup: {e}"
             )
+
+    async def shutdown(self):
+        self.logger.info("Shutting down agent server.")
+        await self._deregister_from_registry()
 
     def run(self, host: str = "0.0.0.0", port: int = 8000):
         if self.a2a_agent_card and "placeholder.url" in self.a2a_agent_card.url:

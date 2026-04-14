@@ -10,7 +10,7 @@ import httpx
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse, Response, JSONResponse
 
-from oai_agent_registry.models import Config, AgentConfig, RegistryConfig
+from oai_agent_registry.models import Config, AgentConfig, RegistryConfig, AgentRegistration, AgentDeregistration
 from oai_agent_registry.security.dependencies import _validate_token
 
 logger = logging.getLogger(__name__)
@@ -133,6 +133,29 @@ class AgentRegistry:
             return JSONResponse({"message": "Configuration reloaded", "agents": list(self.agents.keys())})
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+    async def register_agent(self, agent_registration: AgentRegistration) -> JSONResponse:
+        """Registers a new agent."""
+        agent_name = agent_registration.name
+        if agent_name in self.agents:
+            logger.info(f"Agent '{agent_name}' is already registered. Updating its configuration.")
+        
+        agent_config = AgentConfig(**agent_registration.dict())
+        self.agents[agent_name] = agent_config
+        
+        logger.info(f"Registered agent '{agent_name}' with endpoint {agent_config.endpoint}")
+        return JSONResponse({"message": f"Agent '{agent_name}' registered successfully."})
+
+    async def deregister_agent(self, agent_deregistration: AgentDeregistration) -> JSONResponse:
+        """Deregisters an agent."""
+        agent_name = agent_deregistration.name
+        if agent_name in self.agents:
+            del self.agents[agent_name]
+            logger.info(f"Deregistered agent '{agent_name}'.")
+            return JSONResponse({"message": f"Agent '{agent_name}' deregistered successfully."})
+        else:
+            logger.warning(f"Attempted to deregister agent '{agent_name}', but it was not found.")
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
 
     async def proxy_request(self, agent_name: str, path: str, request: Request) -> Response:
         """Proxies a request to the specified agent."""

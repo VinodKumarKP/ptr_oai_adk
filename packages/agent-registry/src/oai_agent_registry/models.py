@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 from pydantic import BaseModel, Field
 
 class AgentConfig(BaseModel):
@@ -8,6 +8,23 @@ class AgentConfig(BaseModel):
     enabled: bool = True
     timeout: int = 300
     description: Optional[str] = None
+    agent_class: Optional[str] = None
+    tools: List[str] = []
+
+
+class AgentRegistration(BaseModel):
+    """Payload for registering an agent."""
+    name: str
+    description: Optional[str] = None
+    endpoint: str
+    agent_class: Optional[str] = None
+    tools: List[str] = []
+
+
+class AgentDeregistration(BaseModel):
+    """Payload for deregistering an agent."""
+    name: str
+
 
 class RegistryConfig(BaseModel):
     """Configuration for the registry server."""
