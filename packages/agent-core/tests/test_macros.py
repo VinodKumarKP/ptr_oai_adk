@@ -13,9 +13,9 @@ from unittest.mock import patch, MagicMock, mock_open
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Import from the new package structure
-from oai_agent_evaluator.macros import MacroProcessor
+from oai_agent_core.macros import MacroProcessor
 # Import internal functions for direct testing
-from oai_agent_evaluator.macros.file_macros import _read_pdf, _read_ppt, _read_excel, _read_image_ocr, _read_docx
+from oai_agent_core.macros.file_macros import _read_pdf, _read_ppt, _read_excel, _read_image_ocr, _read_docx
 
 
 class TestMacroProcessor(unittest.TestCase):
