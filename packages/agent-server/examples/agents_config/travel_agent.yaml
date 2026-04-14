@@ -1,3 +1,6 @@
+name: simple_agent
+description: Travel concierge which can search for hotels and flights and book them.
+type: langchain
 model:
   model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
   region_name: us-west-2

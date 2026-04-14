@@ -18,7 +18,7 @@ def run_simple_agent():
     print("Example: Simple Agent")
     print("=" * 60)
 
-    config_path = os.path.join(CONFIG_DIR, 'simple_agent.yaml')
+    config_path = os.path.join(CONFIG_DIR, 'travel_agent.yaml')
     
     # Load configuration
     with open(config_path) as f:
@@ -26,7 +26,7 @@ def run_simple_agent():
 
     # Initialize agent
     agent = LangGraphAgent(
-        agent_name="simple_assistant",
+        agent_name="travel_agent",
         agent_config=config,
         config_root=EXAMPLES_DIR
     )
