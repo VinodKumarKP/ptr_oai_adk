@@ -33,7 +33,7 @@ docx = ["python-docx"]
 ppt = ["python-pptx"]
 excel = ["pandas", "openpyxl"]
 ocr = ["pillow", "pytesseract"]
-macros = ["faker", "pypdf", "python-docx", "python-pptx", "pandas", "openpyxl", "pillow", "pytesseract"]
+macros = ["faker", "pypdf", "python-docx", "python-pptx", "pandas", "openpyxl", "pillow", "pytesseract", "oai-agent-core"]
 
 [project.scripts]
 oai-agent-evaluator = "oai_agent_evaluator.cli:main"
@@ -43,6 +43,11 @@ Homepage = "https://github.com/Capgemini-Innersource/ptr_oai_langgraph_agent_cor
 Repository = "https://github.com/Capgemini-Innersource/ptr_oai_langgraph_agent_core.git"
 Issues = "https://github.com/Capgemini-Innersource/ptr_oai_langgraph_agent_core/issues"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oai_agent_core"]
 
 [tool.hatch.version]
 source = "vcs"
