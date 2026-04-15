@@ -9,6 +9,7 @@ from oai_agent_core.components.observability.langfuse_observability_manager impo
 from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.base_model_configuration_manager import BaseModelConfigurationManager
+from oai_agent_core.macros import MacroProcessor
 
 
 class BaseAgent(ABC):
@@ -207,13 +208,29 @@ class BaseAgent(ABC):
                 self.output_model_registry.discover_output_models(output_model_dir=structured_output_models_props.get('script_dir'))
 
 
+        async def _augment_system_prompt():
+            macro_processor = MacroProcessor(project_root=self.config_root, logger=self.logger)
+            system_prompt = self.agent_config.get('system_prompt', None)
+            if system_prompt:
+                self.agent_config['system_prompt'] = macro_processor.process(system_prompt)
+
+            agent_list = self.agent_config.get('agent_list', [])
+            if agent_list:
+                for agent_dict in agent_list:
+                    for agent_name, agent_props in agent_dict.items():
+                        system_prompt = agent_props.get('system_prompt', None)
+                        if system_prompt:
+                            agent_props['system_prompt'] = macro_processor.process(system_prompt)
+
+
         await asyncio.gather(_load_tools_and_mcp(),
                              _init_global_kb(),
                              _init_memory_store(),
                              _init_guardrails(),
                              _init_environment_vars(),
                              _init_agent_skills(),
-                             _init_structured_output_models())
+                             _init_structured_output_models(),
+                             _augment_system_prompt())
 
     def _get_conversation_context(self, current_message: str) -> str:
         """Retrieve and format conversation context for the current message.
