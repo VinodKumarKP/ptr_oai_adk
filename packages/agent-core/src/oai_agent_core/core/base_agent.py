@@ -208,19 +208,8 @@ class BaseAgent(ABC):
                 self.output_model_registry.discover_output_models(output_model_dir=structured_output_models_props.get('script_dir'))
 
 
-        async def _augment_system_prompt():
-            macro_processor = MacroProcessor(project_root=self.config_root, logger=self.logger)
-            system_prompt = self.agent_config.get('system_prompt', None)
-            if system_prompt:
-                self.agent_config['system_prompt'] = macro_processor.process(system_prompt)
-
-            agent_list = self.agent_config.get('agent_list', [])
-            if agent_list:
-                for agent_dict in agent_list:
-                    for agent_name, agent_props in agent_dict.items():
-                        system_prompt = agent_props.get('system_prompt', None)
-                        if system_prompt:
-                            agent_props['system_prompt'] = macro_processor.process(system_prompt)
+        async def _augment_system_prompt_task():
+            self.agent_config = self._augment_system_prompt(self.agent_config)
 
 
         await asyncio.gather(_load_tools_and_mcp(),
@@ -230,7 +219,42 @@ class BaseAgent(ABC):
                              _init_environment_vars(),
                              _init_agent_skills(),
                              _init_structured_output_models(),
-                             _augment_system_prompt())
+                             _augment_system_prompt_task())
+
+    def _augment_system_prompt(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Recursively processes system prompts in the agent configuration to resolve macros.
+        This method is non-mutating and returns a new config dictionary.
+        """
+        macro_processor = MacroProcessor(project_root=self.config_root, logger=self.logger)
+        
+        # Create a deep copy to avoid modifying the original config
+        new_config = config.copy()
+
+        # Process top-level system_prompt
+        system_prompt = new_config.get('system_prompt')
+        if system_prompt and '{{' in system_prompt and '}}' in system_prompt:
+            processed_prompt = macro_processor.process(system_prompt)
+            if processed_prompt.startswith("Error:"):
+                self.logger.warning(f"Macro processing failed for top-level prompt: {processed_prompt}")
+            else:
+                new_config['system_prompt'] = processed_prompt
+
+        # Process agent_list recursively
+        if 'agent_list' in new_config and isinstance(new_config['agent_list'], list):
+            new_agent_list = []
+            for agent_dict in new_config['agent_list']:
+                if isinstance(agent_dict, dict):
+                    processed_agent_dict = {}
+                    for agent_name, agent_props in agent_dict.items():
+                        # Recursively process the nested agent's config
+                        processed_agent_dict[agent_name] = self._augment_system_prompt(agent_props)
+                    new_agent_list.append(processed_agent_dict)
+                else:
+                    new_agent_list.append(agent_dict) # Keep non-dict items as is
+            new_config['agent_list'] = new_agent_list
+
+        return new_config
 
     def _get_conversation_context(self, current_message: str) -> str:
         """Retrieve and format conversation context for the current message.
