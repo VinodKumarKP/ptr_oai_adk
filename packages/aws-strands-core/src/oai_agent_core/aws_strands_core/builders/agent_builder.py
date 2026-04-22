@@ -112,10 +112,14 @@ class AgentBuilder(BaseAgentBuilder):
         if skills:
             skill_list = self.skill_registry.get_skills(skills)
             system_prompt = f"{system_prompt}\n{self.skill_registry.generate_skills_prompt(skill_list)}"
-            from strands_tools import file_read,file_write,shell
+            import sys
+            from strands_tools import file_read, file_write
             tools.append(file_read)
             tools.append(file_write)
-            tools.append(shell)
+            # Only import and use shell tool on non-Windows platforms (termios not available on Windows)
+            if sys.platform != 'win32':
+                from strands_tools import shell
+                tools.append(shell)
 
 
         # Create agent instance with correct parameter names
