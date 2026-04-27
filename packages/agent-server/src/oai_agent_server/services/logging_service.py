@@ -88,6 +88,26 @@ class LoggingService:
 
         return JSONResponse(content=evaluation)
 
+    async def get_evaluations_by_session_id(self, session_id: str):
+        """Retrieve all evaluations for a specific session."""
+        if not self.db_logger.is_active:
+            await self.db_logger.initialize()
+            if not self.db_logger.is_active:
+                raise DatabaseNotAvailableException(operation="get_evaluations_by_session_id")
+
+        evaluations = await self.db_logger.get_evaluations_by_session_id(session_id)
+        return JSONResponse(content=evaluations)
+
+    async def get_evaluations_by_agent_name(self):
+        """Retrieve all evaluations for this agent."""
+        if not self.db_logger.is_active:
+            await self.db_logger.initialize()
+            if not self.db_logger.is_active:
+                raise DatabaseNotAvailableException(operation="get_evaluations_by_agent_name")
+
+        evaluations = await self.db_logger.get_evaluations_by_agent_name(self.agent_name)
+        return JSONResponse(content=evaluations)
+
     async def get_session_logs(self, session_id: str):
         """Retrieve logs for a specific session."""
         if not self.db_logger.is_active:

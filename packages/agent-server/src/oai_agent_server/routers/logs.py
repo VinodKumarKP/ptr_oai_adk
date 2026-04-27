@@ -51,6 +51,16 @@ def create_logs_router(logging_service, allowed_modes: Optional[List[str]] = Non
             return await logging_service.get_user_stats()
 
     if "monitoring" in allowed_modes:
+        @router.get("/evaluations/agent")
+        async def get_evaluations_by_agent_name():
+            """Retrieve all evaluations for this agent."""
+            return await logging_service.get_evaluations_by_agent_name()
+
+        @router.get("/evaluations/session/{session_id}")
+        async def get_evaluations_by_session_id(session_id: str):
+            """Retrieve all evaluations for a specific session."""
+            return await logging_service.get_evaluations_by_session_id(session_id)
+
         @router.get("/evaluations/{interaction_id}")
         async def get_evaluation(interaction_id: str):
             """Retrieve an evaluation for a specific interaction."""

@@ -1,12 +1,13 @@
 import os
 from typing import List, Optional, Union, Dict, Any, Literal, Tuple
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from oai_agent_core.core.base_agent import BaseAgent
 from oai_agent_core.utils.logger import get_logger
 from pydantic import BaseModel, Field
 
 from oai_agent_server.services.llm_judge_service import LLMJudgeService
+from oai_agent_server.services.logging_service import LoggingService
 
 try:
     from a2a.server.apps import A2AStarletteApplication
@@ -52,6 +53,7 @@ def create_a2a_router(
     allowed_modes: List[str],
     db_logger,
     llm_judge_service: LLMJudgeService,
+    logging_service: LoggingService,
     a2a_base_url: Optional[str] = None,
     a2a_streaming: bool = True,
     a2a_push_notifications: bool = True,
@@ -129,6 +131,54 @@ def create_a2a_router(
                 include_in_schema=True,
                 openapi_extra=openapi_extra,
             )
+
+    if "logs" in allowed_modes:
+        @a2a_router.get("/logs", tags=["a2a", "logs"])
+        async def get_logs(
+                session_id: Optional[str] = Query(None),
+                user_id: Optional[str] = Query(None),
+                endpoint: Optional[str] = Query(None),
+                status: Optional[str] = Query(None),
+                limit: int = Query(100, ge=1, le=1000),
+                offset: int = Query(0, ge=0)
+        ):
+            return await logging_service.get_logs(session_id, user_id, endpoint, status, limit, offset)
+
+        @a2a_router.get("/logs/interaction/{interaction_id}", tags=["a2a", "logs"])
+        async def get_chat_log_by_interaction_id(interaction_id: str):
+            return await logging_service.get_chat_log_by_interaction_id(interaction_id)
+
+        @a2a_router.get("/logs/activity/interaction/{interaction_id}", tags=["a2a", "logs"])
+        async def get_activity_logs_by_interaction_id(interaction_id: str):
+            return await logging_service.get_activity_logs_by_interaction_id(interaction_id)
+
+        @a2a_router.get("/logs/sessions/{session_id}", tags=["a2a", "logs"])
+        async def get_session_logs(session_id: str):
+            return await logging_service.get_session_logs(session_id)
+
+        @a2a_router.get("/logs/stats", tags=["a2a", "logs"])
+        async def get_log_stats(user_id: Optional[str] = Query(None)):
+            return await logging_service.get_log_stats(user_id=user_id)
+
+        @a2a_router.get("/logs/stats/users", tags=["a2a", "logs"])
+        async def get_user_stats():
+            return await logging_service.get_user_stats()
+
+    if "monitoring" in allowed_modes:
+        @a2a_router.get("/evaluations/agent", tags=["a2a", "monitoring"])
+        async def get_evaluations_by_agent_name():
+            """Retrieve all evaluations for this agent."""
+            return await logging_service.get_evaluations_by_agent_name()
+
+        @a2a_router.get("/evaluations/session/{session_id}", tags=["a2a", "monitoring"])
+        async def get_evaluations_by_session_id(session_id: str):
+            """Retrieve all evaluations for a specific session."""
+            return await logging_service.get_evaluations_by_session_id(session_id)
+
+        @a2a_router.get("/evaluations/{interaction_id}", tags=["a2a", "monitoring"])
+        async def get_evaluation(interaction_id: str):
+            """Retrieve an evaluation for a specific interaction."""
+            return await logging_service.get_evaluation(interaction_id)
 
     logger.info(
         f"A2A SDK routes included at /a2a "

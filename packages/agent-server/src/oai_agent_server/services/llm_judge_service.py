@@ -84,7 +84,7 @@ class LLMJudgeService:
                 await self.judge_agent.initialize()
                 self.logger.info("LLM Judge Agent initialized.")
 
-    async def judge_interaction(self, interaction_id, user_message, agent_response, session_id, user_id):
+    async def judge_interaction(self, interaction_id, agent_name, session_id, user_message, agent_response, user_id):
         if self.judge_agent is None:
             await self._initialize_judge_agent()
 
@@ -106,7 +106,7 @@ class LLMJudgeService:
                 retry_delay = 0.5  # seconds
                 for attempt in range(max_retries):
                     try:
-                        await self.db_logger.log_llm_judge_evaluation(interaction_id, evaluation_results)
+                        await self.db_logger.log_llm_judge_evaluation(interaction_id, agent_name, session_id, evaluation_results)
                         self.logger.info(f"LLM Judge: Evaluation for {interaction_id} logged successfully.")
                         break  # Success
                     except Exception as db_exc:

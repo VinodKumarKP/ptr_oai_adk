@@ -78,6 +78,7 @@ class ChatService:
                 background_tasks.add_task(
                     self.llm_judge_service.judge_interaction,
                     interaction_id=interaction_id,
+                    agent_name=self.agent_name,
                     user_message=chat_request.message,
                     agent_response=output_response,
                     session_id=session_id,
@@ -147,6 +148,7 @@ class ChatService:
                     background_tasks.add_task(
                         self.llm_judge_service.judge_interaction,
                         interaction_id=interaction_id,
+                        agent_name=self.agent_name,
                         user_message=stream_request.message,
                         agent_response=output_response,
                         session_id=session_id,

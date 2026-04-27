@@ -393,6 +393,7 @@ class BaseAgentExecutor(AgentExecutor):
             asyncio.create_task(
                 self.llm_judge_service.judge_interaction(
                     interaction_id=task_id,
+                    agent_name=self.agent.agent_name,
                     user_message=query_for_log,
                     agent_response=output_text,
                     session_id=context_id,
@@ -469,6 +470,7 @@ class BaseAgentExecutor(AgentExecutor):
                 asyncio.create_task(
                     self.llm_judge_service.judge_interaction(
                         interaction_id=task_id,
+                        agent_name=self.agent.agent_name,
                         user_message=query_for_log,
                         agent_response=output_text,
                         session_id=context_id,
@@ -548,6 +550,7 @@ class BaseAgentExecutor(AgentExecutor):
             asyncio.create_task(
                 self.llm_judge_service.judge_interaction(
                     interaction_id=task_id,
+                    agent_name=self.agent.agent_name,
                     user_message=query_for_log,
                     agent_response=last_text,
                     session_id=context_id,
