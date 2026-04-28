@@ -28,7 +28,8 @@ dependencies = [
     "redis",
     "asyncpg",
     "aiosqlite",
-    "oai-agent-core"
+    "oai-agent-core",
+    "a2a-sdk[http-server]"
 ]
 
 [project.optional-dependencies]
