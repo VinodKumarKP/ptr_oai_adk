@@ -1,7 +1,10 @@
-import os
-from typing import List, Optional, Union, Dict, Any, Literal, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Literal, Union
 
+from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes, create_rest_routes
 from fastapi import APIRouter, Query
+from starlette.applications import Starlette
+from starlette.routing import Route
+
 from oai_agent_core.core.base_agent import BaseAgent
 from oai_agent_core.utils.logger import get_logger
 from pydantic import BaseModel, Field
@@ -10,21 +13,18 @@ from oai_agent_server.services.llm_judge_service import LLMJudgeService
 from oai_agent_server.services.logging_service import LoggingService
 
 try:
-    from a2a.server.apps import A2AStarletteApplication
     from a2a.server.request_handlers import DefaultRequestHandler
     from a2a.server.tasks import InMemoryTaskStore
     from oai_agent_server.a2a.agent_card import build_agent_card, AgentCard
     from oai_agent_server.a2a.agent_executor import BaseAgentExecutor
     A2A_SDK_AVAILABLE = True
 except ImportError:
-    A2AStarletteApplication = None
     DefaultRequestHandler = None
     InMemoryTaskStore = None
     build_agent_card = None
     BaseAgentExecutor = None
     AgentCard = None
     A2A_SDK_AVAILABLE = False
-
 
 # Pydantic model for a JSON-RPC request to improve OpenAPI schema
 class JsonRpcRequest(BaseModel):
@@ -73,16 +73,14 @@ def create_a2a_router(
         )
         return None, None
 
-    # 1. Build the agent card
     agent_card = build_agent_card(
         agent_name=agent_name,
-        base_url=a2a_base_url,  # Pass base_url, but it can be None
+        base_url=a2a_base_url,
         streaming=a2a_streaming,
         push_notifications=a2a_push_notifications,
         agent_config=agent_config,
     )
 
-    # 2. Create your executor
     executor = BaseAgentExecutor(
         agent=agent,
         db_logger=db_logger,
@@ -91,22 +89,23 @@ def create_a2a_router(
         use_streaming=a2a_streaming,
     )
 
-    # 3. Wire up the SDK's request handler
     request_handler = DefaultRequestHandler(
         agent_executor=executor,
         task_store=InMemoryTaskStore(),
+        agent_card=agent_card,
     )
 
-    # 4. Build the a2a ASGI app. It's a Starlette app with the routes.
-    a2a_asgi_app = A2AStarletteApplication(
-        agent_card=agent_card,
-        http_handler=request_handler,
-    ).build()
-
-    # 5. Instead of mounting (which hides routes from OpenAPI), create a
-    #    router and copy the routes from the generated a2a app.
     a2a_router = APIRouter()
-    for route in a2a_asgi_app.routes:
+
+    # Manually add the routes from the SDK to the FastAPI router
+    # This provides better integration with FastAPI's docs and context
+    card_routes = create_agent_card_routes(agent_card)
+    for route in card_routes:
+        a2a_router.add_api_route(route.path, route.endpoint, methods=set(route.methods), tags=["a2a"])
+
+    # Set rpc_url to "/" because the prefix is handled by the router inclusion in main.py
+    jsonrpc_routes = create_jsonrpc_routes(request_handler, rpc_url="/", enable_v0_3_compat=True)
+    for route in jsonrpc_routes:
         if hasattr(route, "methods"):  # Exclude websockets, mounts, etc.
             openapi_extra = None
             # The JSON-RPC endpoint is a POST to the root of the mounted app.
@@ -167,17 +166,14 @@ def create_a2a_router(
     if "monitoring" in allowed_modes:
         @a2a_router.get("/evaluations/agent", tags=["a2a", "monitoring"])
         async def get_evaluations_by_agent_name():
-            """Retrieve all evaluations for this agent."""
             return await logging_service.get_evaluations_by_agent_name()
 
         @a2a_router.get("/evaluations/session/{session_id}", tags=["a2a", "monitoring"])
         async def get_evaluations_by_session_id(session_id: str):
-            """Retrieve all evaluations for a specific session."""
             return await logging_service.get_evaluations_by_session_id(session_id)
 
         @a2a_router.get("/evaluations/{interaction_id}", tags=["a2a", "monitoring"])
         async def get_evaluation(interaction_id: str):
-            """Retrieve an evaluation for a specific interaction."""
             return await logging_service.get_evaluation(interaction_id)
 
     logger.info(

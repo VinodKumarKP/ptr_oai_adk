@@ -312,13 +312,13 @@ class AgentHTTPServer:
         await self._deregister_from_registry()
 
     def run(self, host: str = "0.0.0.0", port: int = 8000):
-        if self.a2a_agent_card and "placeholder.url" in self.a2a_agent_card.url:
+        if self.a2a_agent_card and 'placeholder' in self.a2a_agent_card.supported_interfaces[0].url:
             # URL was not set by env var or config, so build it dynamically
             display_host = "localhost" if host == "0.0.0.0" else host
             base_url = f"http://{display_host}:{port}"
-            self.a2a_agent_card.url = f"{base_url}/a2a/"
-            self.a2a_agent_card.additional_interfaces[0].url = f"{base_url}/chat"
-            self.a2a_agent_card.additional_interfaces[1].url = f"{base_url}/chat/stream"
+            self.a2a_agent_card.supported_interfaces[0].url = f"{base_url}/a2a/"
+            self.a2a_agent_card.supported_interfaces[1].url = f"{base_url}/chat"
+            self.a2a_agent_card.supported_interfaces[2].url = f"{base_url}/chat/stream"
 
         self.logger.info(
             f"Starting Agent HTTP Server for '{self.app.title}' on {host}:{port}"

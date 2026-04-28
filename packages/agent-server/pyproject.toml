@@ -29,15 +29,15 @@ dependencies = [
     "asyncpg",
     "aiosqlite",
     "oai-agent-core",
-    "a2a-sdk[http-server]==0.3.0"
+    "a2a-sdk[http-server]==1.0.2"
 ]
 
 [project.optional-dependencies]
 sqlite = ["aiosqlite"]
 postgres = ["asyncpg"]
-a2a = ["a2a-sdk[http-server]==0.3.0"]
+a2a = ["a2a-sdk[http-server]==1.0.2"]
 scheduler = ["apscheduler"]
-all = ["aiosqlite", "asyncpg", "a2a-sdk[http-server]", "apscheduler"]
+all = ["aiosqlite", "asyncpg", "a2a-sdk[http-server]==1.0.2", "apscheduler"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

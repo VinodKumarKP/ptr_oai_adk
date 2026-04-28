@@ -102,7 +102,6 @@ def build_agent_card(
     return AgentCard(
         name=agent_name,
         description=description,
-        url=f"{resolved_url}/a2a/",
         version=os.environ.get("AGENT_VERSION", "1.0.0"),
         capabilities=AgentCapabilities(
             streaming=streaming,
@@ -111,14 +110,19 @@ def build_agent_card(
         default_input_modes=["text"],
         default_output_modes=["text"],
         skills=resolved_skills,
-        additional_interfaces=[
+        supported_interfaces=[
+            # JSON-RPC
             AgentInterface(
-                transport='HTTP+JSON',
-                url=f"{resolved_url}/chat/"# Standard compatibility
+                protocol_binding='JSONRPC',
+                url=f"{resolved_url}/a2a/",
             ),
             AgentInterface(
-                transport='HTTP+JSON',
-                url=f"{resolved_url}/chat/stream"  # Standard compatibility
+                protocol_binding='HTTP+JSON',
+                url=f"{resolved_url}/chat/",
+            ),
+            AgentInterface(
+                protocol_binding='HTTP+JSON',
+                url=f"{resolved_url}/chat/stream",
             )
-        ]
+        ],
     )

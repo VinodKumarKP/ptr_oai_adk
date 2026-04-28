@@ -52,16 +52,15 @@ from typing import Any, Dict, List, Optional, Tuple
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import (
-    FilePart,
+    Part,
     Message,
     Part,
     TaskArtifactUpdateEvent,
     TaskState,
     TaskStatus,
-    TaskStatusUpdateEvent,
-    TextPart,
+    TaskStatusUpdateEvent
 )
-from a2a.utils import new_agent_text_message, new_task, new_text_artifact
+from a2a.helpers import new_task, new_text_artifact, new_text_message
 from typing_extensions import override
 
 from oai_agent_core.core.base_agent import BaseAgent
@@ -75,7 +74,7 @@ logger = logging.getLogger(__name__)
 # Helpers for parsing A2A message parts
 # ---------------------------------------------------------------------------
 
-def _parse_file_part(file_part: FilePart) -> Dict[str, Any]:
+def _parse_file_part(file_part: Part) -> Dict[str, Any]:
     """
     Convert an A2A FilePart into a normalised dict your agent can consume.
 
@@ -88,26 +87,16 @@ def _parse_file_part(file_part: FilePart) -> Dict[str, Any]:
             "data":      bytes | None # decoded bytes (only when inline bytes present)
         }
     """
-    file = file_part.file
-    raw_b64: Optional[str] = getattr(file, "bytes", None)
+    file = file_part.filename
+    raw_b64: Optional[str] = getattr(file_part, "raw", None)
     uri: Optional[str] = getattr(file, "uri", None)
 
-    decoded: Optional[bytes] = None
-    if raw_b64:
-        try:
-            decoded = base64.b64decode(raw_b64)
-        except Exception:
-            logger.warning(
-                "Could not base64-decode file part '%s'; 'data' will be None.",
-                getattr(file, "name", "<unknown>"),
-            )
-
     return {
-        "name": getattr(file, "name", "") or "",
-        "mime_type": getattr(file, "mimeType", "") or "",
+        "name": getattr(file_part, "filename", "") or "",
+        "mime_type": getattr(file_part, "mimeType", "") or "",
         "bytes": raw_b64,
         "uri": uri,
-        "data": decoded,
+        "data": raw_b64,
     }
 
 
@@ -131,15 +120,17 @@ def _extract_input(message: Message) -> Dict[str, Any]:
         # A2A SDK wraps each part in a union; access via .root or directly
         actual = getattr(part, "root", part)
 
-        if isinstance(actual, TextPart):
+        if isinstance(actual, Part):
             if actual.text:
                 texts.append(actual.text)
-
-        elif isinstance(actual, FilePart):
-            try:
+            elif actual.filename:
                 files.append(_parse_file_part(actual))
-            except Exception as exc:
-                logger.warning("Failed to parse file part: %s", exc)
+
+        # elif isinstance(actual, Part):
+        #     try:
+        #         files.append(_parse_file_part(actual))
+        #     except Exception as exc:
+        #         logger.warning("Failed to parse file part: %s", exc)
 
     return {
         "text": "\n".join(texts),
@@ -301,7 +292,7 @@ class BaseAgentExecutor(AgentExecutor):
           6. Emit TaskStatusUpdateEvent(completed | failed).
         """
         if not context.current_task:
-            task = new_task(context.message)
+            task = new_task(context.task_id, context.context_id, state=TaskState.TASK_STATE_WORKING)
             await event_queue.enqueue_event(task)
 
         task_id = context.task_id
@@ -326,10 +317,9 @@ class BaseAgentExecutor(AgentExecutor):
                     task_id=task_id,
                     context_id=context_id,
                     status=TaskStatus(
-                        state=TaskState.working,
-                        message=new_agent_text_message("Processing your request…"),
-                    ),
-                    final=False,
+                        state=TaskState.TASK_STATE_WORKING,
+                        message=new_text_message("Processing your request…"),
+                    )
                 )
             )
 
@@ -349,10 +339,9 @@ class BaseAgentExecutor(AgentExecutor):
                     task_id=task_id,
                     context_id=context_id,
                     status=TaskStatus(
-                        state=TaskState.failed,
-                        message=new_agent_text_message(f"Error: {str(e)}"),
-                    ),
-                    final=True,
+                        state=TaskState.TASK_STATE_FAILED,
+                        message=new_text_message(f"Error: {str(e)}"),
+                    )
                 )
             )
         finally:
@@ -394,9 +383,9 @@ class BaseAgentExecutor(AgentExecutor):
                 self.llm_judge_service.judge_interaction(
                     interaction_id=task_id,
                     agent_name=self.agent.agent_name,
+                    session_id=context_id,
                     user_message=query_for_log,
                     agent_response=output_text,
-                    session_id=context_id,
                     user_id="a2a"
                 )
             )
@@ -419,10 +408,9 @@ class BaseAgentExecutor(AgentExecutor):
                 task_id=task_id,
                 context_id=context_id,
                 status=TaskStatus(
-                    state=TaskState.completed,
-                    message=new_agent_text_message(output_text),
-                ),
-                final=True,
+                    state=TaskState.TASK_STATE_COMPLETED,
+                    message=new_text_message(output_text),
+                )
             )
         )
 
@@ -471,9 +459,9 @@ class BaseAgentExecutor(AgentExecutor):
                     self.llm_judge_service.judge_interaction(
                         interaction_id=task_id,
                         agent_name=self.agent.agent_name,
+                        session_id=context_id,
                         user_message=query_for_log,
                         agent_response=output_text,
-                        session_id=context_id,
                         user_id="a2a"
                     )
                 )
@@ -491,8 +479,7 @@ class BaseAgentExecutor(AgentExecutor):
                     TaskStatusUpdateEvent(
                         task_id=task_id,
                         context_id=context_id,
-                        status=TaskStatus(state=TaskState.canceled),
-                        final=True,
+                        status=TaskStatus(state=TaskState.TASK_STATE_CANCELED),
                     )
                 )
                 return
@@ -551,9 +538,9 @@ class BaseAgentExecutor(AgentExecutor):
                 self.llm_judge_service.judge_interaction(
                     interaction_id=task_id,
                     agent_name=self.agent.agent_name,
+                    session_id=context_id,
                     user_message=query_for_log,
                     agent_response=last_text,
-                    session_id=context_id,
                     user_id="a2a"
                 )
             )
@@ -573,10 +560,9 @@ class BaseAgentExecutor(AgentExecutor):
                 task_id=task_id,
                 context_id=context_id,
                 status=TaskStatus(
-                    state=TaskState.completed,
-                    message=new_agent_text_message(last_text),
-                ),
-                final=True,
+                    state=TaskState.TASK_STATE_COMPLETED,
+                    message=new_text_message(last_text),
+                )
             )
         )
 
@@ -597,10 +583,9 @@ class BaseAgentExecutor(AgentExecutor):
                 task_id=task_id,
                 context_id=context_id,
                 status=TaskStatus(
-                    state=TaskState.completed,
-                    message=new_agent_text_message(text),
+                    state=TaskState.TASK_STATE_COMPLETED,
+                    message=new_text_message(text),
                 ),
-                final=True,
             )
         )
 
@@ -627,7 +612,6 @@ class BaseAgentExecutor(AgentExecutor):
             TaskStatusUpdateEvent(
                 task_id=task_id,
                 context_id=context.context_id,
-                status=TaskStatus(state=TaskState.canceled),
-                final=True,
+                status=TaskStatus(state=TaskState.TASK_STATE_CANCELED)
             )
         )
