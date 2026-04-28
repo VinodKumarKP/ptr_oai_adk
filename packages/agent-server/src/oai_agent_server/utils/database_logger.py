@@ -60,7 +60,7 @@ class PostgresBackend(DatabaseBackend):
     name = "postgres"
     CHAT_LOGS_INSERT = "INSERT INTO chat_logs (interaction_id, timestamp, agent_name, session_id, user_id, endpoint, input_message, output_response, request_headers, model_info, token_usage, total_tokens, response_time_ms, status, error_message) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"
     ACTIVITY_LOG_INSERT = "INSERT INTO agent_activity_log (interaction_id, timestamp, agent_name, session_id, user_id, endpoint, chunk_sequence, chunk_content, chunk_text, serialization_warning, request_headers) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
-    EVALUATION_LOG_INSERT = "INSERT INTO llm_judge_evaluations (interaction_id, quality_score, hallucination_detected, evaluation_data, timestamp) VALUES ($1, $2, $3, $4, $5)"
+    EVALUATION_LOG_INSERT = "INSERT INTO llm_judge_evaluations (interaction_id, agent_name, session_id, quality_score, hallucination_detected, evaluation_data, timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7)"
 
     SCHEDULED_JOBS_INSERT = "INSERT INTO scheduled_jobs (job_id, agent_name, cron_expression, run_at, prompt, session_id, user_id, enabled, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (job_id) DO UPDATE SET cron_expression = EXCLUDED.cron_expression, run_at = EXCLUDED.run_at, prompt = EXCLUDED.prompt, session_id = EXCLUDED.session_id, user_id = EXCLUDED.user_id, enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at"
     SCHEDULED_JOBS_SELECT_ONE = "SELECT * FROM scheduled_jobs WHERE job_id = $1"
@@ -142,7 +142,7 @@ class PostgresBackend(DatabaseBackend):
         if logger: logger.info("Creating database schema...")
         chat_logs_ddl = "CREATE TABLE IF NOT EXISTS chat_logs (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255) UNIQUE, timestamp TIMESTAMP WITH TIME ZONE, agent_name VARCHAR(255), session_id VARCHAR(255), user_id VARCHAR(255), endpoint VARCHAR(50), input_message JSONB, output_response JSONB, request_headers JSONB, model_info JSONB, token_usage JSONB, total_tokens INT, response_time_ms FLOAT, status VARCHAR(50), error_message TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
         activity_log_ddl = "CREATE TABLE IF NOT EXISTS agent_activity_log (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255), timestamp TIMESTAMP WITH TIME ZONE, agent_name VARCHAR(255), session_id VARCHAR(255), user_id VARCHAR(255), endpoint VARCHAR(50), chunk_sequence INT, chunk_content JSONB, chunk_text TEXT, serialization_warning TEXT, request_headers JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
-        evaluation_log_ddl = "CREATE TABLE IF NOT EXISTS llm_judge_evaluations (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255) NOT NULL REFERENCES chat_logs(interaction_id) ON DELETE CASCADE, quality_score FLOAT, hallucination_detected BOOLEAN, evaluation_data JSONB, timestamp TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
+        evaluation_log_ddl = "CREATE TABLE IF NOT EXISTS llm_judge_evaluations (id SERIAL PRIMARY KEY, interaction_id VARCHAR(255) NOT NULL REFERENCES chat_logs(interaction_id) ON DELETE CASCADE, agent_name VARCHAR(255), session_id VARCHAR(255), quality_score FLOAT, hallucination_detected BOOLEAN, evaluation_data JSONB, timestamp TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
         scheduled_jobs_ddl = "CREATE TABLE IF NOT EXISTS scheduled_jobs (job_id VARCHAR(255) PRIMARY KEY, agent_name VARCHAR(255), cron_expression VARCHAR(255), run_at TIMESTAMP WITH TIME ZONE, prompt TEXT, session_id VARCHAR(255), user_id VARCHAR(255), enabled BOOLEAN, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
         scheduled_job_runs_ddl = "CREATE TABLE IF NOT EXISTS scheduled_job_runs (id SERIAL PRIMARY KEY, job_id VARCHAR(255) REFERENCES scheduled_jobs(job_id) ON DELETE CASCADE, run_id VARCHAR(255), timestamp TIMESTAMP WITH TIME ZONE, session_id VARCHAR(255), status VARCHAR(50), error_message TEXT, stream_chunks JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);"
 
@@ -170,7 +170,7 @@ class SQLiteBackend(DatabaseBackend):
     name = "sqlite"
     CHAT_LOGS_INSERT = "INSERT INTO chat_logs (interaction_id, timestamp, agent_name, session_id, user_id, endpoint, input_message, output_response, request_headers, model_info, token_usage, total_tokens, response_time_ms, status, error_message) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
     ACTIVITY_LOG_INSERT = "INSERT INTO agent_activity_log (interaction_id, timestamp, agent_name, session_id, user_id, endpoint, chunk_sequence, chunk_content, chunk_text, serialization_warning, request_headers) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
-    EVALUATION_LOG_INSERT = "INSERT INTO llm_judge_evaluations (interaction_id, quality_score, hallucination_detected, evaluation_data, timestamp) VALUES (?, ?, ?, ?, ?)"
+    EVALUATION_LOG_INSERT = "INSERT INTO llm_judge_evaluations (interaction_id, agent_name, session_id, quality_score, hallucination_detected, evaluation_data, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)"
 
     SCHEDULED_JOBS_INSERT = "INSERT INTO scheduled_jobs (job_id, agent_name, cron_expression, run_at, prompt, session_id, user_id, enabled, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET cron_expression = EXCLUDED.cron_expression, run_at = EXCLUDED.run_at, prompt = EXCLUDED.prompt, session_id = EXCLUDED.session_id, user_id = EXCLUDED.user_id, enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at"
     SCHEDULED_JOBS_SELECT_ONE = "SELECT * FROM scheduled_jobs WHERE job_id = ?"
@@ -247,7 +247,7 @@ class SQLiteBackend(DatabaseBackend):
     async def _create_schema(self) -> None:
         chat_logs_ddl = "CREATE TABLE IF NOT EXISTS chat_logs (id INTEGER PRIMARY KEY, interaction_id TEXT UNIQUE, timestamp DATETIME, agent_name TEXT, session_id TEXT, user_id TEXT, endpoint TEXT, input_message TEXT, output_response TEXT, request_headers TEXT, model_info TEXT, token_usage TEXT, total_tokens INTEGER, response_time_ms REAL, status TEXT, error_message TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
         activity_log_ddl = "CREATE TABLE IF NOT EXISTS agent_activity_log (id INTEGER PRIMARY KEY, interaction_id TEXT, timestamp DATETIME, agent_name TEXT, session_id TEXT, user_id TEXT, endpoint TEXT, chunk_sequence INTEGER, chunk_content TEXT, chunk_text TEXT, serialization_warning TEXT, request_headers TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
-        evaluation_log_ddl = "CREATE TABLE IF NOT EXISTS llm_judge_evaluations (id INTEGER PRIMARY KEY, interaction_id TEXT NOT NULL, quality_score REAL, hallucination_detected INTEGER, evaluation_data TEXT, timestamp DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
+        evaluation_log_ddl = "CREATE TABLE IF NOT EXISTS llm_judge_evaluations (id INTEGER PRIMARY KEY, interaction_id TEXT NOT NULL, agent_name TEXT, session_id TEXT, quality_score REAL, hallucination_detected INTEGER, evaluation_data TEXT, timestamp DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
         scheduled_jobs_ddl = "CREATE TABLE IF NOT EXISTS scheduled_jobs (job_id TEXT PRIMARY KEY, agent_name TEXT, cron_expression TEXT, run_at DATETIME, prompt TEXT, session_id TEXT, user_id TEXT, enabled BOOLEAN, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
         scheduled_job_runs_ddl = "CREATE TABLE IF NOT EXISTS scheduled_job_runs (id INTEGER PRIMARY KEY, job_id TEXT REFERENCES scheduled_jobs(job_id) ON DELETE CASCADE, run_id TEXT, timestamp DATETIME, session_id TEXT, status TEXT, error_message TEXT, stream_chunks TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
 
@@ -324,14 +324,14 @@ class DatabaseLogger:
             if self.logger: self.logger.error(f"Failed to log interaction {interaction_id}: {exc}")
             raise
 
-    async def log_llm_judge_evaluation(self, interaction_id: str, evaluation_data: Dict) -> None:
+    async def log_llm_judge_evaluation(self, interaction_id: str, agent_name: str, session_id: str, evaluation_data: Dict) -> None:
         if not self._ready(): return
         try:
             now = datetime.now(timezone.utc)
             quality_score = evaluation_data.get("quality_score", 0)
             hallucination_detected = str(evaluation_data.get("hallucination_detected", "false")).lower() == "true"
             params = (
-                interaction_id, float(quality_score) if quality_score is not None else None,
+                interaction_id, agent_name, session_id, float(quality_score) if quality_score is not None else None,
                 hallucination_detected, self._to_json(evaluation_data), now,
             )
             await self._backend.execute(self._backend.EVALUATION_LOG_INSERT, params)
@@ -363,6 +363,30 @@ class DatabaseLogger:
         except Exception as exc:
             if self.logger: self.logger.error(f"Failed to retrieve evaluation for interaction {interaction_id}: {exc}")
             return None
+
+    async def get_evaluations_by_session_id(self, session_id: str) -> List[Dict[str, Any]]:
+        if not self._ready(): return []
+        try:
+            query = "SELECT * FROM llm_judge_evaluations WHERE session_id = ?"
+            if isinstance(self._backend, PostgresBackend):
+                query = "SELECT * FROM llm_judge_evaluations WHERE session_id = $1"
+            rows = await self._backend.fetch(query, (session_id,))
+            return [self._deserialize_evaluation_row(row) for row in rows]
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to retrieve evaluations for session {session_id}: {exc}")
+            return []
+
+    async def get_evaluations_by_agent_name(self, agent_name: str) -> List[Dict[str, Any]]:
+        if not self._ready(): return []
+        try:
+            query = "SELECT * FROM llm_judge_evaluations WHERE agent_name = ?"
+            if isinstance(self._backend, PostgresBackend):
+                query = "SELECT * FROM llm_judge_evaluations WHERE agent_name = $1"
+            rows = await self._backend.fetch(query, (agent_name,))
+            return [self._deserialize_evaluation_row(row) for row in rows]
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to retrieve evaluations for agent {agent_name}: {exc}")
+            return []
 
     async def log_stream_chunks_batch(self, **kwargs) -> None:
         if not self._ready() or not kwargs.get("chunks"): return
@@ -694,6 +718,13 @@ class DatabaseLogger:
         headers = self._parse_json_field(row.get("request_headers"))
         row["request_headers"] = self._redact_headers(headers) if isinstance(headers, dict) else headers
         row["chunk_content"] = self._parse_json_field(row.get("chunk_content"))
+        for key in ["timestamp", "created_at"]:
+            if key in row: row[key] = self._isoformat(row[key])
+        return row
+
+    def _deserialize_evaluation_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        if not row: return {}
+        row["evaluation_data"] = self._parse_json_field(row.get("evaluation_data"))
         for key in ["timestamp", "created_at"]:
             if key in row: row[key] = self._isoformat(row[key])
         return row
