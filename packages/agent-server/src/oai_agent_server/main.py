@@ -66,7 +66,7 @@ class AgentHTTPServer:
       /a2a                                     — A2A protocol (via a2a-sdk)
     """
 
-    ALWAYS_ACTIVE_MODES = {"health", "agent", "chat", "logs", "a2a"}
+    ALWAYS_ACTIVE_MODES = {"health", "agent", "chat", "logs", "a2a", "monitoring", "token"}
 
     def __init__(
         self,
@@ -209,6 +209,7 @@ class AgentHTTPServer:
             allowed_modes=self.allowed_modes,
             db_logger=self.db_logger,
             llm_judge_service=self.llm_judge_service,
+            logging_service=self.logging_service,
             a2a_base_url=self.a2a_base_url,
             a2a_streaming=self.a2a_streaming,
             a2a_push_notifications=self.a2a_push_notifications,
