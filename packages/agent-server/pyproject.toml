@@ -29,13 +29,13 @@ dependencies = [
     "asyncpg",
     "aiosqlite",
     "oai-agent-core",
-    "a2a-sdk[http-server]"
+    "a2a-sdk[http-server]==0.3.0"
 ]
 
 [project.optional-dependencies]
 sqlite = ["aiosqlite"]
 postgres = ["asyncpg"]
-a2a = ["a2a-sdk[http-server]"]
+a2a = ["a2a-sdk[http-server]==0.3.0"]
 scheduler = ["apscheduler"]
 all = ["aiosqlite", "asyncpg", "a2a-sdk[http-server]", "apscheduler"]
 
