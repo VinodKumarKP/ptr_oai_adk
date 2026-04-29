@@ -58,6 +58,8 @@ class AgentRegistry:
         await self.db_logger.initialize()
         if self.db_logger.is_active:
             logger.info("RegistryDatabaseLogger initialized successfully.")
+            # Sync agents loaded from config to the database
+            await self._sync_agents_to_db()
         else:
             logger.warning("RegistryDatabaseLogger could not be initialized.")
 
@@ -65,6 +67,25 @@ class AgentRegistry:
         """Shuts down the AgentRegistry, including closing the database logger."""
         await self.db_logger.close()
         logger.info("RegistryDatabaseLogger closed.")
+
+    async def _sync_agents_to_db(self):
+        """Synchronizes agents loaded from config to the database."""
+        if not self.db_logger.is_active:
+            logger.warning("Database logger is not active, skipping agent sync to DB.")
+            return
+
+        for agent_name, agent_config in self.agents.items():
+            try:
+                await self.db_logger.log_agent_registration(
+                    agent_name=agent_name,
+                    endpoint_url=agent_config.endpoint,
+                    port=agent_config.port,
+                    git_source_url=agent_config.git_source_url,
+                    active=agent_config.enabled
+                )
+                logger.debug(f"Synced agent '{agent_name}' from config to DB.")
+            except Exception as e:
+                logger.error(f"Failed to sync agent '{agent_name}' to DB from config: {e}")
 
     async def discover_agents(self):
         """Discover agents by scanning a range of ports."""
@@ -154,6 +175,8 @@ class AgentRegistry:
         """Reloads the configuration from the config file."""
         try:
             self.load_config()
+            # After reloading config, re-sync to DB
+            await self._sync_agents_to_db()
             return JSONResponse({"message": "Configuration reloaded", "agents": list(self.agents.keys())})
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -181,16 +204,18 @@ class AgentRegistry:
         return JSONResponse({"message": f"Agent '{agent_name}' registered successfully."})
 
     async def deregister_agent(self, agent_deregistration: AgentDeregistration) -> JSONResponse:
-        """Deregisters an agent."""
+        """Deregisters an agent by setting its active flag to False."""
         agent_name = agent_deregistration.name
+        
         if agent_name in self.agents:
-            del self.agents[agent_name]
-            logger.info(f"Deregistered agent '{agent_name}'.")
+            # Update the in-memory agent config
+            self.agents[agent_name].enabled = False
+            logger.info(f"Deactivating agent '{agent_name}'.")
             
-            # Log the agent deregistration
+            # Update the active flag in the database
             await self.db_logger.deregister_agent(agent_name=agent_name)
 
-            return JSONResponse({"message": f"Agent '{agent_name}' deregistered successfully."})
+            return JSONResponse({"message": f"Agent '{agent_name}' deactivated successfully."})
         else:
             logger.warning(f"Attempted to deregister agent '{agent_name}', but it was not found.")
             raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")

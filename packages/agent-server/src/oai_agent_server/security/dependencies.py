@@ -54,6 +54,10 @@ async def verify_api_key(
         AuthenticationException: If token is missing or invalid.
         HTTPException: If authentication service is unavailable.
     """
+    # Bypass authentication for /health and /status endpoints
+    if request.url.path in ["/health", "/status"]:
+        return True
+
     # 1. Check if Auth is globally enabled
     original_environ = get_original_environ()
     auth_enabled = original_environ.get('AGENT_AUTH_ENABLED', 'true').lower() == 'true'

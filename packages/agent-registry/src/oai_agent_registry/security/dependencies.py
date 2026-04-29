@@ -29,6 +29,10 @@ def _validate_token(request: Request, registry_config: RegistryConfig, agent_nam
     """
     Core logic to validate the API token.
     """
+
+    if '/status' in request.url.path:
+        return True
+
     auth_enabled = os.environ.get('AGENT_AUTH_ENABLED', 'true').lower() == 'true'
 
     if not auth_enabled:
@@ -84,6 +88,9 @@ async def verify_api_key(request: Request):
     """
     Dependency to validate API tokens.
     """
+    if '/status' in request.url.path:
+        return True
+
     from oai_agent_registry.dependencies import registry_instance
     # For requests to the registry itself, we can use a generic agent name
     agent_name = "agent-registry"
