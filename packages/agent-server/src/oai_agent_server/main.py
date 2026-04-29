@@ -274,7 +274,7 @@ class AgentHTTPServer:
                 if response.status_code == 200:
                     self.logger.info(f"Successfully registered agent '{self.agent_name}' with registry at {registry_base_url}")
                 else:
-                    self.logger.error(f"Failed to register agent. Status: {response.status_code}, Response: {response.text}")
+                    self.logger.error(f"Failed to register agent using {registry_url}. Status: {response.status_code}, Response: {response.text}")
         except httpx.RequestError as e:
             self.logger.error(f"Error connecting to agent registry at {registry_url}: {e}")
 

@@ -154,8 +154,13 @@ async def verify_jwt_token(
     if not auth_enabled:
         return {}
 
-    if 'localhost' in str(request.url) and original_environ.get('FORCE_AUTH', 'false').lower() == 'false':
-        return {}
+    if ('localhost' in str(request.url) or
+        '0.0.0.0' in str(request.url) or
+        '127.0.0.1' in str(request.url) or
+        '::1' in str(request.url) or
+        'host.docker.internal' in str(request.url)) and original_environ.get('FORCE_AUTH',
+                                                                             'false').lower() == 'false':
+        return True
 
     if not credentials:
         raise AuthenticationException(reason="Authorization header required")
