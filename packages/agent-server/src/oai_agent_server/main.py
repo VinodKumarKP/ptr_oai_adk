@@ -234,7 +234,7 @@ class AgentHTTPServer:
         Get the local registry URL by parsing AGENT_BASE_URL and forcing localhost.
         Returns the local URL or None if the environment variable is not set.
         """
-        agent_base_url = os.environ.get("AGENT_BASE_URL")
+        agent_base_url = os.environ.get('AGENT_LOCAL_REGISTRY_URL') or os.environ.get("AGENT_BASE_URL")
         if not agent_base_url:
             return None
 
@@ -245,7 +245,7 @@ class AgentHTTPServer:
                 self.logger.warning(f"Could not extract port from AGENT_BASE_URL '{agent_base_url}'. Using original URL.")
                 return agent_base_url.rstrip('/')
             
-            local_url = f"http://localhost:{port}"
+            local_url = os.environ.get('AGENT_LOCAL_REGISTRY_URL') or f"http://localhost:{port}" 
             self.logger.info(f"AGENT_BASE_URL is set. Forcing registry connection to {local_url}")
             return local_url
         except Exception as e:
