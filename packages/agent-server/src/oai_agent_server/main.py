@@ -264,7 +264,8 @@ class AgentHTTPServer:
             "name": self.agent_name,
             "description": self.agent.agent_config.get("description", "No description available"),
             "endpoint": f"http://localhost:{self.agent.agent_config.get('port', 8000)}",
-            "port": self.agent.agent_config.get('port', 8000)
+            "port": self.agent.agent_config.get('port', 8000),
+            "registered_via": "dynamic"
         }
 
         try:

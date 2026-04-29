@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional, Any, List, Literal
 from pydantic import BaseModel, Field
 
 class AgentConfig(BaseModel):
@@ -24,6 +24,7 @@ class AgentRegistration(BaseModel):
     agent_class: Optional[str] = None
     tools: List[str] = []
     active: bool = True
+    registered_via: Literal["config", "dynamic", "registry"] = "dynamic"
 
 
 class AgentDeregistration(BaseModel):

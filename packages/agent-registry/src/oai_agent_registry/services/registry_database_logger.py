@@ -4,7 +4,6 @@ Database logger for tracking agent registry events.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from abc import ABC, abstractmethod
@@ -54,10 +53,24 @@ class DatabaseBackend(ABC):
 class PostgresBackend(DatabaseBackend):
     name = "postgres"
 
-    AGENT_REGISTRY_UPSERT = "INSERT INTO agent_registry (agent_name, endpoint_url, port, git_source_url, active, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (agent_name) DO UPDATE SET endpoint_url = EXCLUDED.endpoint_url, port = EXCLUDED.port, git_source_url = EXCLUDED.git_source_url, active = EXCLUDED.active, updated_at = EXCLUDED.updated_at"
+    # registered_via is excluded from the upsert ON CONFLICT update — we never want to overwrite
+    # 'config' with 'dynamic' if an agent name collides, and a re-registering dynamic agent
+    # should keep its original source value.
+    AGENT_REGISTRY_UPSERT = """
+        INSERT INTO agent_registry
+            (agent_name, endpoint_url, port, git_source_url, active, registered_via, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (agent_name) DO UPDATE SET
+            endpoint_url   = EXCLUDED.endpoint_url,
+            port           = EXCLUDED.port,
+            git_source_url = EXCLUDED.git_source_url,
+            active         = EXCLUDED.active,
+            updated_at     = EXCLUDED.updated_at
+    """
     AGENT_REGISTRY_DEACTIVATE = "UPDATE agent_registry SET active = FALSE, updated_at = $2 WHERE agent_name = $1"
     AGENT_REGISTRY_SELECT_ONE = "SELECT * FROM agent_registry WHERE agent_name = $1"
     AGENT_REGISTRY_SELECT_ALL = "SELECT * FROM agent_registry"
+    AGENT_REGISTRY_SELECT_ACTIVE_DYNAMIC = "SELECT * FROM agent_registry WHERE active = TRUE AND registered_via = 'dynamic'"
 
     PLACEHOLDER = "$"
 
@@ -129,27 +142,47 @@ class PostgresBackend(DatabaseBackend):
         if logger: logger.info("Creating agent registry database schema...")
         agent_registry_ddl = """
             CREATE TABLE IF NOT EXISTS agent_registry (
-                agent_name VARCHAR(255) PRIMARY KEY,
-                endpoint_url VARCHAR(255),
-                port INTEGER,
+                agent_name     VARCHAR(255) PRIMARY KEY,
+                endpoint_url   VARCHAR(255),
+                port           INTEGER,
                 git_source_url VARCHAR(255),
-                active BOOLEAN,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                active         BOOLEAN,
+                registered_via VARCHAR(50) NOT NULL DEFAULT 'dynamic',
+                created_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
+        """
+        # ADD COLUMN is idempotent via the IF NOT EXISTS guard — safe to run on every startup
+        # against an existing DB that pre-dates the registered_via column.
+        migrate_ddl = """
+            ALTER TABLE agent_registry
+                ADD COLUMN IF NOT EXISTS registered_via VARCHAR(50) NOT NULL DEFAULT 'dynamic';
         """
         async with self._pool.acquire() as conn:
             await conn.execute(agent_registry_ddl)
+            await conn.execute(migrate_ddl)
             if logger: logger.info("Agent registry database schema created/updated.")
 
 
 class SQLiteBackend(DatabaseBackend):
     name = "sqlite"
 
-    AGENT_REGISTRY_UPSERT = "INSERT INTO agent_registry (agent_name, endpoint_url, port, git_source_url, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(agent_name) DO UPDATE SET endpoint_url = EXCLUDED.endpoint_url, port = EXCLUDED.port, git_source_url = EXCLUDED.git_source_url, active = EXCLUDED.active, updated_at = EXCLUDED.updated_at"
+    # Same registered_via exclusion from ON CONFLICT update as Postgres — see comment above.
+    AGENT_REGISTRY_UPSERT = """
+        INSERT INTO agent_registry
+            (agent_name, endpoint_url, port, git_source_url, active, registered_via, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(agent_name) DO UPDATE SET
+            endpoint_url   = EXCLUDED.endpoint_url,
+            port           = EXCLUDED.port,
+            git_source_url = EXCLUDED.git_source_url,
+            active         = EXCLUDED.active,
+            updated_at     = EXCLUDED.updated_at
+    """
     AGENT_REGISTRY_DEACTIVATE = "UPDATE agent_registry SET active = 0, updated_at = ? WHERE agent_name = ?"
     AGENT_REGISTRY_SELECT_ONE = "SELECT * FROM agent_registry WHERE agent_name = ?"
     AGENT_REGISTRY_SELECT_ALL = "SELECT * FROM agent_registry"
+    AGENT_REGISTRY_SELECT_ACTIVE_DYNAMIC = "SELECT * FROM agent_registry WHERE active = 1 AND registered_via = 'dynamic'"
 
     PLACEHOLDER = "?"
 
@@ -216,18 +249,27 @@ class SQLiteBackend(DatabaseBackend):
     async def _create_schema(self) -> None:
         agent_registry_ddl = """
             CREATE TABLE IF NOT EXISTS agent_registry (
-                agent_name TEXT PRIMARY KEY,
-                endpoint_url TEXT,
-                port INTEGER,
+                agent_name     TEXT PRIMARY KEY,
+                endpoint_url   TEXT,
+                port           INTEGER,
                 git_source_url TEXT,
-                active BOOLEAN,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                active         BOOLEAN,
+                registered_via TEXT NOT NULL DEFAULT 'dynamic',
+                created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """
+        # SQLite doesn't support ADD COLUMN IF NOT EXISTS, so we attempt the migration
+        # and swallow the "duplicate column" error — safe for existing DBs.
+        migrate_ddl = "ALTER TABLE agent_registry ADD COLUMN registered_via TEXT NOT NULL DEFAULT 'dynamic'"
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON;")
             await db.execute(agent_registry_ddl)
+            try:
+                await db.execute(migrate_ddl)
+                await db.commit()
+            except Exception:
+                pass  # Column already exists — expected on all runs after the first
 
 
 class RegistryDatabaseLogger:
@@ -259,13 +301,12 @@ class RegistryDatabaseLogger:
             port: int,
             git_source_url: str,
             active: bool = True,
+            registered_via: str = "dynamic",
     ) -> None:
         if not self._ready(): return
         try:
             now = datetime.now(timezone.utc)
-            params = (
-                agent_name, endpoint_url, port, git_source_url, active, now, now,
-            )
+            params = (agent_name, endpoint_url, port, git_source_url, active, registered_via, now, now)
             await self._backend.execute(self._backend.AGENT_REGISTRY_UPSERT, params)
             if self.logger: self.logger.debug(f"Logged agent registration/update for: {agent_name}")
         except Exception as exc:
@@ -276,10 +317,8 @@ class RegistryDatabaseLogger:
         if not self._ready(): return
         try:
             now = datetime.now(timezone.utc)
-            # SQLite parameters are position based. $2 is for Postgres.
-            # AGENT_REGISTRY_DEACTIVATE for Postgres is "UPDATE agent_registry SET active = FALSE, updated_at = $2 WHERE agent_name = $1"
-            # AGENT_REGISTRY_DEACTIVATE for SQLite is "UPDATE agent_registry SET active = 0, updated_at = ? WHERE agent_name = ?"
-            # Therefore, we need to pass updated_at (now) first, then agent_name.
+            # Parameter order differs between backends due to positional vs named placeholders.
+            # Postgres: $1=agent_name, $2=updated_at  |  SQLite: ?=updated_at, ?=agent_name
             params = (now, agent_name)
             if isinstance(self._backend, PostgresBackend):
                 params = (agent_name, now)
@@ -293,7 +332,7 @@ class RegistryDatabaseLogger:
         if not self._ready(): return None
         try:
             row = await self._backend.fetch_one(self._backend.AGENT_REGISTRY_SELECT_ONE, (agent_name,))
-            return self._deserialize_agent_registry_row(row) if row else None
+            return self._deserialize_row(row) if row else None
         except Exception as exc:
             if self.logger: self.logger.error(f"Failed to retrieve agent details for {agent_name}: {exc}")
             return None
@@ -302,9 +341,24 @@ class RegistryDatabaseLogger:
         if not self._ready(): return []
         try:
             rows = await self._backend.fetch(self._backend.AGENT_REGISTRY_SELECT_ALL, ())
-            return [self._deserialize_agent_registry_row(r) for r in rows]
+            return [self._deserialize_row(r) for r in rows]
         except Exception as exc:
             if self.logger: self.logger.error(f"Failed to retrieve all registered agents: {exc}")
+            return []
+
+    async def get_active_dynamic_agents(self) -> List[Dict[str, Any]]:
+        """
+        Returns all agents that were dynamically registered and are still marked active.
+        Used at registry startup to restore dynamic agents that survived a registry restart.
+        Only agents the registry itself didn't register via config are returned — config
+        agents are always reloaded from the config file, never from the DB.
+        """
+        if not self._ready(): return []
+        try:
+            rows = await self._backend.fetch(self._backend.AGENT_REGISTRY_SELECT_ACTIVE_DYNAMIC, ())
+            return [self._deserialize_row(r) for r in rows]
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to retrieve active dynamic agents: {exc}")
             return []
 
     async def close(self) -> None:
@@ -317,11 +371,11 @@ class RegistryDatabaseLogger:
     def _ready(self) -> bool:
         return self._db_logging_enabled and self.is_active and self._backend is not None
 
-    def _deserialize_agent_registry_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+    def _deserialize_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
         if not row: return {}
         for key in ["created_at", "updated_at"]:
             if key in row: row[key] = self._isoformat(row[key])
-        # SQLite returns 0/1 for boolean, convert to actual boolean
+        # SQLite stores booleans as 0/1 integers
         if self._backend and self._backend.name == "sqlite" and "active" in row:
             row["active"] = bool(row["active"])
         return row
