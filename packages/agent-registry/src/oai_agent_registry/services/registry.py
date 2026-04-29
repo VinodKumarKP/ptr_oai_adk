@@ -254,7 +254,7 @@ class AgentRegistry:
                     "status": "active" if agent.enabled else 'inactive',
                     "description": getattr(agent, "description", None),
                 }
-                for name, agent in self.agents.items()
+                for name, agent in self.agents.items() if agent.endpoint is not None
             }
         }
         return JSONResponse(info)
