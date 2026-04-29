@@ -24,12 +24,17 @@ async def lifespan(app: FastAPI):
     registry_instance.public_ip = get_public_ip()
     registry_instance.private_ip = get_private_ip()
     
+    # Initialize the database logger
+    await registry_instance.initialize()
+    
     if registry_instance.registry_config.enable_auto_discovery:
         await registry_instance.discover_agents()
 
     yield
     logger.info("Closing HTTP client...")
     await registry_instance.client.aclose()
+    # Close the database logger
+    await registry_instance.shutdown()
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""

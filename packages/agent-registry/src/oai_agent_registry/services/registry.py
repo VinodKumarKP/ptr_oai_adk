@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse, Response, JSONResponse
 
 from oai_agent_registry.models import Config, AgentConfig, RegistryConfig, AgentRegistration, AgentDeregistration
 from oai_agent_registry.security.dependencies import _validate_token
+from oai_agent_registry.services.registry_database_logger import RegistryDatabaseLogger
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class AgentRegistry:
         self.client: Optional[httpx.AsyncClient] = None
         self.public_ip: Optional[str] = None
         self.private_ip: Optional[str] = None
+        self.db_logger: RegistryDatabaseLogger = RegistryDatabaseLogger(logger=logger)
         self.load_config()
 
     def load_config(self):
@@ -51,6 +53,19 @@ class AgentRegistry:
             logger.error(f"Error loading config: {e}")
             raise
 
+    async def initialize(self):
+        """Initializes the AgentRegistry, including the database logger."""
+        await self.db_logger.initialize()
+        if self.db_logger.is_active:
+            logger.info("RegistryDatabaseLogger initialized successfully.")
+        else:
+            logger.warning("RegistryDatabaseLogger could not be initialized.")
+
+    async def shutdown(self):
+        """Shuts down the AgentRegistry, including closing the database logger."""
+        await self.db_logger.close()
+        logger.info("RegistryDatabaseLogger closed.")
+
     async def discover_agents(self):
         """Discover agents by scanning a range of ports."""
         start = self.registry_config.start_port
@@ -69,12 +84,21 @@ class AgentRegistry:
                         agent_info = response.json()
                         agent_name = agent_info.get("agent_name")
                         if agent_name and agent_name not in self.agents:
-                            self.agents[agent_name] = AgentConfig(
+                            agent_config = AgentConfig(
                                 name=agent_name,
                                 endpoint=endpoint,
                                 description=agent_info.get("description", "Auto-discovered agent")
                             )
+                            self.agents[agent_name] = agent_config
                             logger.info(f"Discovered agent '{agent_name}' at {endpoint}")
+                            # Log the discovered agent
+                            await self.db_logger.log_agent_registration(
+                                agent_name=agent_name,
+                                endpoint_url=endpoint,
+                                port=port,
+                                git_source_url=agent_info.get("git_source_url"), # Assuming agent_info might contain this
+                                active=True
+                            )
             except (httpx.RequestError, json.JSONDecodeError) as e:
                 pass
 
@@ -144,6 +168,16 @@ class AgentRegistry:
         self.agents[agent_name] = agent_config
         
         logger.info(f"Registered agent '{agent_name}' with endpoint {agent_config.endpoint}")
+        
+        # Log the agent registration
+        await self.db_logger.log_agent_registration(
+            agent_name=agent_name,
+            endpoint_url=agent_registration.endpoint,
+            port=agent_registration.port,
+            git_source_url=agent_registration.git_source_url,
+            active=True
+        )
+        
         return JSONResponse({"message": f"Agent '{agent_name}' registered successfully."})
 
     async def deregister_agent(self, agent_deregistration: AgentDeregistration) -> JSONResponse:
@@ -152,6 +186,10 @@ class AgentRegistry:
         if agent_name in self.agents:
             del self.agents[agent_name]
             logger.info(f"Deregistered agent '{agent_name}'.")
+            
+            # Log the agent deregistration
+            await self.db_logger.deregister_agent(agent_name=agent_name)
+
             return JSONResponse({"message": f"Agent '{agent_name}' deregistered successfully."})
         else:
             logger.warning(f"Attempted to deregister agent '{agent_name}', but it was not found.")

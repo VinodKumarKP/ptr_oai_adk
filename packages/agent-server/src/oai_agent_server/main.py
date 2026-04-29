@@ -264,8 +264,7 @@ class AgentHTTPServer:
             "name": self.agent_name,
             "description": self.agent.agent_config.get("description", "No description available"),
             "endpoint": f"http://localhost:{self.agent.agent_config.get('port', 8000)}",
-            "agent_class": self.agent.agent_config.get("agent_class"),
-            "tools": [tool for tool in self.agent.agent_config.get("tools", [])],
+            "port": self.agent.agent_config.get('port', 8000)
         }
 
         try:
