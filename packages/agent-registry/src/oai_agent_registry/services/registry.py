@@ -44,9 +44,14 @@ class AgentRegistry:
             self.agents = {}
             for agent_name, agent_data in self.config.agents.items():
                 if isinstance(agent_data, str):
-                    self.agents[agent_name] = AgentConfig(endpoint=agent_data, name=agent_name)
+                    # Initialize agent as disabled until status check confirms it's active
+                    self.agents[agent_name] = AgentConfig(endpoint=agent_data, name=agent_name, enabled=False)
                 elif isinstance(agent_data, dict):
-                    self.agents[agent_name] = AgentConfig(**agent_data)
+                    # Ensure 'enabled' is explicitly set to False if not provided, or override if provided
+                    agent_data_copy = agent_data.copy()
+                    if 'enabled' not in agent_data_copy:
+                        agent_data_copy['enabled'] = False
+                    self.agents[agent_name] = AgentConfig(**agent_data_copy)
 
             logger.info(f"Loaded configuration with {len(self.agents)} agents.")
         except Exception as e:
@@ -54,7 +59,8 @@ class AgentRegistry:
             raise
 
     async def initialize(self):
-        """Initializes the AgentRegistry, including the database logger."""
+        """Initializes the AgentRegistry, including the database logger and HTTP client."""
+        self.client = httpx.AsyncClient() # Initialize httpx client here
         await self.db_logger.initialize()
         if self.db_logger.is_active:
             logger.info("RegistryDatabaseLogger initialized successfully.")
@@ -62,9 +68,13 @@ class AgentRegistry:
             await self._sync_agents_to_db()
         else:
             logger.warning("RegistryDatabaseLogger could not be initialized.")
+        
+        await self._check_agent_statuses() # Call the new method here
 
     async def shutdown(self):
-        """Shuts down the AgentRegistry, including closing the database logger."""
+        """Shuts down the AgentRegistry, including closing the database logger and HTTP client."""
+        if self.client:
+            await self.client.aclose() # Close the httpx client
         await self.db_logger.close()
         logger.info("RegistryDatabaseLogger closed.")
 
@@ -86,6 +96,30 @@ class AgentRegistry:
                 logger.debug(f"Synced agent '{agent_name}' from config to DB.")
             except Exception as e:
                 logger.error(f"Failed to sync agent '{agent_name}' to DB from config: {e}")
+
+    async def _check_agent_statuses(self):
+        """Checks the /status endpoint of each agent and updates its enabled status."""
+        logger.info("Checking agent statuses...")
+        if not self.client:
+            logger.error("HTTP client not initialized. Cannot check agent statuses.")
+            return
+
+        for agent_name, agent_config in self.agents.items():
+            status_url = f"{agent_config.endpoint}/status"
+            try:
+                response = await self.client.get(status_url, timeout=agent_config.timeout)
+                if response.status_code == 200:
+                    agent_config.enabled = True
+                    logger.info(f"Agent '{agent_name}' at {agent_config.endpoint} is active.")
+                else:
+                    agent_config.enabled = False
+                    logger.warning(f"Agent '{agent_name}' at {agent_config.endpoint} returned status {response.status_code}. Marking as inactive.")
+            except httpx.RequestError as e:
+                agent_config.enabled = False
+                logger.warning(f"Could not reach agent '{agent_name}' at {agent_config.endpoint} ({e}). Marking as inactive.")
+            except Exception as e:
+                agent_config.enabled = False
+                logger.error(f"Error checking status for agent '{agent_name}' at {agent_config.endpoint}: {e}. Marking as inactive.")
 
     async def discover_agents(self):
         """Discover agents by scanning a range of ports."""
@@ -177,6 +211,7 @@ class AgentRegistry:
             self.load_config()
             # After reloading config, re-sync to DB
             await self._sync_agents_to_db()
+            await self._check_agent_statuses() # Re-check statuses after reload
             return JSONResponse({"message": "Configuration reloaded", "agents": list(self.agents.keys())})
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
