@@ -11,7 +11,7 @@ class AgentConfig(BaseModel):
     agent_class: Optional[str] = None
     tools: List[str] = []
     port: Optional[int] = None
-    git_source_url: Optional[str] = None
+    source_url: Optional[str] = None
 
 
 class AgentRegistration(BaseModel):
@@ -20,7 +20,7 @@ class AgentRegistration(BaseModel):
     description: Optional[str] = None
     endpoint: str
     port: Optional[int] = None
-    git_source_url: Optional[str] = None
+    source_url: Optional[str] = None
     agent_class: Optional[str] = None
     tools: List[str] = []
     active: bool = True

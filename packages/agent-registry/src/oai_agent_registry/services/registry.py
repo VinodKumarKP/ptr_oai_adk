@@ -93,7 +93,7 @@ class AgentRegistry:
                     agent_name=agent_name,
                     endpoint_url=agent_config.endpoint,
                     port=agent_config.port,
-                    git_source_url=agent_config.git_source_url,
+                    source_url=agent_config.source_url,
                     active=agent_config.enabled,
                     registered_via="config",
                 )
@@ -140,7 +140,7 @@ class AgentRegistry:
                     name=agent_name,
                     endpoint=row.get("endpoint_url", ""),
                     port=row.get("port"),
-                    git_source_url=row.get("git_source_url"),
+                    source_url=row.get("source_url"),
                     # Start as disabled — _check_agent_statuses() will enable if the
                     # container is actually reachable. This prevents stale DB entries
                     # from being treated as routable without a liveness confirmation.
@@ -231,7 +231,7 @@ class AgentRegistry:
                             agent_name=agent_name,
                             endpoint_url=endpoint,
                             port=port,
-                            git_source_url=agent_info.get("git_source_url"),
+                            source_url=agent_info.get("source_url"),
                             active=True,
                             registered_via="dynamic",
                         )
@@ -310,7 +310,7 @@ class AgentRegistry:
             agent_name=agent_name,
             endpoint_url=agent_registration.endpoint,
             port=agent_registration.port,
-            git_source_url=agent_registration.git_source_url,
+            source_url=agent_registration.source_url,
             active=True,
             registered_via=agent_registration.registered_via or "dynamic",
         )

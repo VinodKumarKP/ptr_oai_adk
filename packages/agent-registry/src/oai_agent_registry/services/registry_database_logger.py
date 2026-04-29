@@ -58,12 +58,12 @@ class PostgresBackend(DatabaseBackend):
     # should keep its original source value.
     AGENT_REGISTRY_UPSERT = """
         INSERT INTO agent_registry
-            (agent_name, endpoint_url, port, git_source_url, active, registered_via, created_at, updated_at)
+            (agent_name, endpoint_url, port, source_url, active, registered_via, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (agent_name) DO UPDATE SET
             endpoint_url   = EXCLUDED.endpoint_url,
             port           = EXCLUDED.port,
-            git_source_url = EXCLUDED.git_source_url,
+            source_url = EXCLUDED.source_url,
             active         = EXCLUDED.active,
             updated_at     = EXCLUDED.updated_at
     """
@@ -145,7 +145,7 @@ class PostgresBackend(DatabaseBackend):
                 agent_name     VARCHAR(255) PRIMARY KEY,
                 endpoint_url   VARCHAR(255),
                 port           INTEGER,
-                git_source_url VARCHAR(255),
+                source_url VARCHAR(255),
                 active         BOOLEAN,
                 registered_via VARCHAR(50) NOT NULL DEFAULT 'dynamic',
                 created_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -170,12 +170,12 @@ class SQLiteBackend(DatabaseBackend):
     # Same registered_via exclusion from ON CONFLICT update as Postgres — see comment above.
     AGENT_REGISTRY_UPSERT = """
         INSERT INTO agent_registry
-            (agent_name, endpoint_url, port, git_source_url, active, registered_via, created_at, updated_at)
+            (agent_name, endpoint_url, port, source_url, active, registered_via, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(agent_name) DO UPDATE SET
             endpoint_url   = EXCLUDED.endpoint_url,
             port           = EXCLUDED.port,
-            git_source_url = EXCLUDED.git_source_url,
+            source_url = EXCLUDED.source_url,
             active         = EXCLUDED.active,
             updated_at     = EXCLUDED.updated_at
     """
@@ -252,7 +252,7 @@ class SQLiteBackend(DatabaseBackend):
                 agent_name     TEXT PRIMARY KEY,
                 endpoint_url   TEXT,
                 port           INTEGER,
-                git_source_url TEXT,
+                source_url TEXT,
                 active         BOOLEAN,
                 registered_via TEXT NOT NULL DEFAULT 'dynamic',
                 created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -299,14 +299,14 @@ class RegistryDatabaseLogger:
             agent_name: str,
             endpoint_url: str,
             port: int,
-            git_source_url: str,
+            source_url: str,
             active: bool = True,
             registered_via: str = "dynamic",
     ) -> None:
         if not self._ready(): return
         try:
             now = datetime.now(timezone.utc)
-            params = (agent_name, endpoint_url, port, git_source_url, active, registered_via, now, now)
+            params = (agent_name, endpoint_url, port, source_url, active, registered_via, now, now)
             await self._backend.execute(self._backend.AGENT_REGISTRY_UPSERT, params)
             if self.logger: self.logger.debug(f"Logged agent registration/update for: {agent_name}")
         except Exception as exc:
