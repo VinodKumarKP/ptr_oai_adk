@@ -4,12 +4,10 @@ from pydantic import BaseModel, Field
 class AgentConfig(BaseModel):
     """Configuration for a single agent."""
     name: Optional[str] = None
-    endpoint: str
+    endpoint: Optional[str] = None
     enabled: bool = True
     timeout: int = 300
     description: Optional[str] = None
-    agent_class: Optional[str] = None
-    tools: List[str] = []
     port: Optional[int] = None
     source_url: Optional[str] = None
 
@@ -18,11 +16,9 @@ class AgentRegistration(BaseModel):
     """Payload for registering an agent."""
     name: str
     description: Optional[str] = None
-    endpoint: str
+    endpoint: Optional[str] = None
     port: Optional[int] = None
     source_url: Optional[str] = None
-    agent_class: Optional[str] = None
-    tools: List[str] = []
     active: bool = True
     registered_via: Literal["config", "dynamic", "registry"] = "dynamic"
 
