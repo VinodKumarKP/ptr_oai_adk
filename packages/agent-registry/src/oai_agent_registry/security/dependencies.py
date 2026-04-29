@@ -38,7 +38,7 @@ def _validate_token(request: Request, registry_config: RegistryConfig, agent_nam
         '0.0.0.0' in str(request.url) or
         '127.0.0.1' in str(request.url) or
         '::1' in str(request.url) or
-        'host.docker.internal' in str(request.url)) and os.get('FORCE_AUTH',
+        'host.docker.internal' in str(request.url)) and os.environ.get('FORCE_AUTH',
                                                                              'false').lower() == 'false':
         return True
 
