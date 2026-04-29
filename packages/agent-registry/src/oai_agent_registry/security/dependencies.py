@@ -34,8 +34,13 @@ def _validate_token(request: Request, registry_config: RegistryConfig, agent_nam
     if not auth_enabled:
         return True
 
-    if ('localhost' in str(request.url) or '0.0.0.0' in str(request.url)) and not registry_config.force_auth:
-        return
+    if ('localhost' in str(request.url) or
+        '0.0.0.0' in str(request.url) or
+        '127.0.0.1' in str(request.url) or
+        '::1' in str(request.url) or
+        'host.docker.internal' in str(request.url)) and os.get('FORCE_AUTH',
+                                                                             'false').lower() == 'false':
+        return True
 
     token = request.headers.get("api-token") or \
             request.headers.get("api_token") or \
