@@ -9,8 +9,10 @@ class AgentConfig(BaseModel):
     timeout: int = 300
     description: str = None
     port: Optional[int] = None
-    source_url: Optional[str] = None
+    source: Optional[str] = None
     framework: Optional[Literal["langgraph", "openai", "crewai", "strands"]] = None
+    prompts: Optional[List[str]] = Field(default_factory=list)
+    tags: Optional[List[str]] = Field(default_factory=list)
 
 
 class AgentRegistration(BaseModel):
@@ -19,10 +21,12 @@ class AgentRegistration(BaseModel):
     description: str = None
     endpoint: Optional[str] = None
     port: Optional[int] = None
-    source_url: Optional[str] = None
+    source: Optional[str] = None
     active: bool = True
     registered_via: Literal["config", "dynamic", "registry"] = "dynamic"
     framework: Optional[Literal["langgraph", "openai", "crewai", "strands"]] = None
+    prompts: Optional[List[str]] = Field(default_factory=list)
+    tags: Optional[List[str]] = Field(default_factory=list)
 
 
 class AgentDeregistration(BaseModel):

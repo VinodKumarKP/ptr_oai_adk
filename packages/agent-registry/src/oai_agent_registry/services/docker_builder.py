@@ -90,7 +90,7 @@ async def build_agent_image(docker_client, agent_name: str, github_url: str, fra
         return
 
     if not github_url:
-        logger.error(f"Cannot build image for agent '{agent_name}': missing source_url.")
+        logger.error(f"Cannot build image for agent '{agent_name}': missing source.")
         return
 
     os.environ['DOCKER_BUILDKIT'] = '1'

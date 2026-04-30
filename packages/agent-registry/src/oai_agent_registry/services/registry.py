@@ -100,10 +100,12 @@ class AgentRegistry:
                     agent_name=agent_name,
                     endpoint_url=agent_config.endpoint,
                     port=agent_config.port,
-                    source_url=agent_config.source_url,
+                    source=agent_config.source,
                     active=agent_config.enabled,
                     registered_via="config",
                     framework=agent_config.framework,
+                    prompts=agent_config.prompts,
+                    tags=agent_config.tags,
                 )
                 logger.debug(f"Synced config agent '{agent_name}' to DB.")
             except Exception as e:
@@ -148,9 +150,11 @@ class AgentRegistry:
                     name=agent_name,
                     endpoint=row.get("endpoint_url", ""),
                     port=row.get("port"),
-                    source_url=row.get("source_url"),
+                    source=row.get("source"),
                     enabled=False, # Start as disabled — _check_agent_statuses() will enable if the container is actually reachable.
                     framework=row.get("framework"),
+                    prompts=row.get("prompts", []),
+                    tags=row.get("tags", []),
                 )
                 self.agents[agent_name] = agent_config
                 restored += 1
@@ -231,6 +235,9 @@ class AgentRegistry:
                             endpoint=endpoint,
                             description=agent_info.get("description", "Auto-discovered agent"),
                             framework=agent_info.get("framework"),
+                            source=agent_info.get("source"),
+                            prompts=agent_info.get("prompts", []),
+                            tags=agent_info.get("tags", []),
                         )
                         self.agents[agent_name] = agent_config
                         logger.info(f"Discovered agent '{agent_name}' at {endpoint}")
@@ -238,10 +245,12 @@ class AgentRegistry:
                             agent_name=agent_name,
                             endpoint_url=endpoint,
                             port=port,
-                            source_url=agent_info.get("source_url"),
+                            source=agent_info.get("source"),
                             active=True,
                             registered_via="dynamic",
                             framework=agent_info.get("framework"),
+                            prompts=agent_info.get("prompts", []),
+                            tags=agent_info.get("tags", []),
                         )
             except (httpx.RequestError, json.JSONDecodeError):
                 pass
@@ -322,7 +331,7 @@ class AgentRegistry:
             asyncio.create_task(build_agent_image(
                 docker_client=self.docker_client,
                 agent_name=agent_name,
-                github_url=agent_registration.source_url,
+                github_url=agent_registration.source,
                 framework=agent_registration.framework
             ))
 
@@ -330,10 +339,12 @@ class AgentRegistry:
             agent_name=agent_name,
             endpoint_url=agent_registration.endpoint,
             port=agent_registration.port,
-            source_url=agent_registration.source_url,
+            source=agent_registration.source,
             active=True,
             registered_via=registered_via,
             framework=agent_registration.framework,
+            prompts=agent_registration.prompts,
+            tags=agent_registration.tags,
         )
 
         return JSONResponse({"message": f"Agent '{agent_name}' registered successfully."})
