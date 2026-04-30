@@ -4,11 +4,12 @@ import os
 import time
 import asyncio
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Optional
 
 import httpx
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse, Response, JSONResponse
+import docker
 
 from oai_agent_registry.models import Config, AgentConfig, RegistryConfig, AgentRegistration, AgentDeregistration
 from oai_agent_registry.security.dependencies import _validate_token
@@ -27,6 +28,11 @@ class AgentRegistry:
         self.public_ip: Optional[str] = None
         self.private_ip: Optional[str] = None
         self.db_logger: RegistryDatabaseLogger = RegistryDatabaseLogger(logger=logger)
+        self.docker_client = None
+        try:
+            self.docker_client = docker.from_env()
+        except Exception as e:
+            logger.warning(f"Failed to initialize Docker client: {e}")
         self.load_config()
 
     def load_config(self):
@@ -108,7 +114,7 @@ class AgentRegistry:
         Restores dynamic agents from the DB that were active before the registry restarted.
 
         Agents registered via the /register endpoint are ephemeral from the registry's
-        perspective — they live in memory only. When the registry restarts, those agents
+        perspective — they live in memory only. When the registry restarts, list of agents
         are lost even though their containers may still be running. This method bridges
         that gap by reading active dynamic entries from the DB and re-populating
         self.agents, giving those containers a chance to continue serving traffic until
@@ -304,10 +310,21 @@ class AgentRegistry:
         if agent_name in self.agents:
             logger.info(f"Agent '{agent_name}' is already registered. Updating its configuration.")
 
-        agent_config = AgentConfig(**agent_registration.dict())
+        agent_config = AgentConfig(**agent_registration.model_dump())
         self.agents[agent_name] = agent_config
 
         logger.info(f"Registered agent '{agent_name}' with endpoint {agent_config.endpoint}")
+
+        registered_via = agent_registration.registered_via or "dynamic"
+
+        if registered_via == "registry":
+            from oai_agent_registry.services.docker_builder import build_agent_image
+            asyncio.create_task(build_agent_image(
+                docker_client=self.docker_client,
+                agent_name=agent_name,
+                github_url=agent_registration.source_url,
+                framework=agent_registration.framework
+            ))
 
         await self.db_logger.log_agent_registration(
             agent_name=agent_name,
@@ -315,7 +332,7 @@ class AgentRegistry:
             port=agent_registration.port,
             source_url=agent_registration.source_url,
             active=True,
-            registered_via=agent_registration.registered_via or "dynamic",
+            registered_via=registered_via,
             framework=agent_registration.framework,
         )
 
@@ -400,7 +417,8 @@ class AgentRegistry:
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Proxy error: {e}")
 
-    async def _proxy_streaming_request(self, url: str, method: str, headers: dict, body: bytes, timeout: int) -> StreamingResponse:
+    @staticmethod
+    async def _proxy_streaming_request(url: str, method: str, headers: dict, body: bytes, timeout: int) -> StreamingResponse:
         async def stream_generator():
             try:
                 async with httpx.AsyncClient(timeout=timeout) as stream_client:
@@ -412,6 +430,7 @@ class AgentRegistry:
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
-    def _clean_response_headers(self, headers: httpx.Headers) -> dict:
+    @staticmethod
+    def _clean_response_headers(headers: httpx.Headers) -> dict:
         excluded = {'content-encoding', 'content-length', 'transfer-encoding', 'connection'}
         return {k: v for k, v in headers.items() if k.lower() not in excluded}

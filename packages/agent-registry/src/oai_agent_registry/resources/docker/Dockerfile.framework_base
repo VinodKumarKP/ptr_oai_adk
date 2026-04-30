@@ -1,0 +1,31 @@
+# ============================================================
+# Dockerfile.framework_base — extends base with a framework package
+#
+# Build examples:
+#   # CrewAI
+#   docker build \
+#     --build-arg FRAMEWORK_PACKAGE=oai-crewai-core \
+#     --build-arg FRAMEWORK_SUBDIR=packages/crewai-core \
+#     --build-arg ADK_VERSION=v1.2.3 \
+#     -t oai-adk-crewai-base-image:latest \
+#     -f Dockerfile.framework_base .
+#
+#   # LangGraph
+#   docker build \
+#     --build-arg FRAMEWORK_PACKAGE=oai-langgraph-core \
+#     --build-arg FRAMEWORK_SUBDIR=packages/langgraph-core \
+#     --build-arg ADK_VERSION=v1.2.3 \
+#     -t oai-adk-langgraph-base-image:latest \
+#     -f Dockerfile.framework_base .
+# ============================================================
+
+FROM oai-adk-base-image:latest
+
+ARG ADK_VERSION=main
+ARG ADK_REPO=https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit.git
+ARG FRAMEWORK_PACKAGE
+ARG FRAMEWORK_SUBDIR
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system \
+        "${FRAMEWORK_PACKAGE} @ git+${ADK_REPO}@${ADK_VERSION}#subdirectory=${FRAMEWORK_SUBDIR}"

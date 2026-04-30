@@ -1,0 +1,50 @@
+# ============================================================
+# Dockerfile.base — common foundation for all OAI ADK agents
+#
+# Build:
+#   docker build \
+#     --secret id=github_token,env=GITHUB_TOKEN \
+#     --build-arg ADK_VERSION=v1.2.3 \
+#     -t oai-adk-base-image:latest \
+#     -f Dockerfile.base .
+# ============================================================
+
+FROM python:3.13-slim
+
+# Pin the ADK repo ref so base image builds are deterministic.
+# Override at build time to upgrade: --build-arg ADK_VERSION=v1.2.4
+ARG ADK_VERSION=main
+ARG ADK_REPO=https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit.git
+
+# ── System dependencies ──────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        curl \
+        ca-certificates \
+        build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pin uv to a specific digest for reproducibility
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# ── Git auth (secret never written to any image layer) ───────
+# Pass token via: --secret id=github_token,env=GITHUB_TOKEN
+RUN --mount=type=secret,id=github_token \
+    TOKEN=$(cat /run/secrets/github_token 2>/dev/null || true) && \
+    if [ -n "$TOKEN" ]; then \
+        git config --system \
+            url."https://oauth2:${TOKEN}@github.com/Capgemini-Innersource".insteadOf \
+            "https://github.com/Capgemini-Innersource"; \
+    fi
+
+# ── Common OAI packages ──────────────────────────────────────
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system \
+        "oai-agent-server @ git+${ADK_REPO}@${ADK_VERSION}#subdirectory=packages/agent-server" \
+        "oai-agent-core   @ git+${ADK_REPO}@${ADK_VERSION}#subdirectory=packages/agent-core"
+
+# ── Unprivileged runtime user ────────────────────────────────
+RUN useradd -m -u 1000 agentuser
+
+WORKDIR /app
+RUN chown agentuser:agentuser /app
