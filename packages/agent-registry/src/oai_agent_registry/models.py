@@ -10,7 +10,7 @@ class AgentConfig(BaseModel):
     description: str = None
     port: Optional[int] = None
     source_url: Optional[str] = None
-    framework: Optional[Literal["Langgraph", "OpenAI", "CrewAI", "Strands"]] = None
+    framework: Optional[Literal["langgraph", "openai", "crewai", "strands"]] = None
 
 
 class AgentRegistration(BaseModel):
@@ -22,7 +22,7 @@ class AgentRegistration(BaseModel):
     source_url: Optional[str] = None
     active: bool = True
     registered_via: Literal["config", "dynamic", "registry"] = "dynamic"
-    framework: Optional[Literal["Langgraph", "OpenAI", "CrewAI", "Strands"]] = None
+    framework: Optional[Literal["langgraph", "openai", "crewai", "strands"]] = None
 
 
 class AgentDeregistration(BaseModel):
