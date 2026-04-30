@@ -3,24 +3,26 @@ from pydantic import BaseModel, Field
 
 class AgentConfig(BaseModel):
     """Configuration for a single agent."""
-    name: Optional[str] = None
+    name: str = None
     endpoint: Optional[str] = None
     enabled: bool = True
     timeout: int = 300
-    description: Optional[str] = None
+    description: str = None
     port: Optional[int] = None
     source_url: Optional[str] = None
+    framework: Optional[Literal["Langgraph", "OpenAI", "CrewAI", "Strands"]] = None
 
 
 class AgentRegistration(BaseModel):
     """Payload for registering an agent."""
     name: str
-    description: Optional[str] = None
+    description: str = None
     endpoint: Optional[str] = None
     port: Optional[int] = None
     source_url: Optional[str] = None
     active: bool = True
     registered_via: Literal["config", "dynamic", "registry"] = "dynamic"
+    framework: Optional[Literal["Langgraph", "OpenAI", "CrewAI", "Strands"]] = None
 
 
 class AgentDeregistration(BaseModel):

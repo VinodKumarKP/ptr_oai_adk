@@ -44,6 +44,7 @@ class AgentRegistry:
             self.agents = {}
             for agent_name, agent_data in self.config.agents.items():
                 if isinstance(agent_data, str):
+                    # Initialize agent as disabled until status check confirms it's active
                     self.agents[agent_name] = AgentConfig(endpoint=agent_data, name=agent_name, enabled=False)
                 elif isinstance(agent_data, dict):
                     agent_data_copy = agent_data.copy()
@@ -96,6 +97,7 @@ class AgentRegistry:
                     source_url=agent_config.source_url,
                     active=agent_config.enabled,
                     registered_via="config",
+                    framework=agent_config.framework,
                 )
                 logger.debug(f"Synced config agent '{agent_name}' to DB.")
             except Exception as e:
@@ -141,10 +143,8 @@ class AgentRegistry:
                     endpoint=row.get("endpoint_url", ""),
                     port=row.get("port"),
                     source_url=row.get("source_url"),
-                    # Start as disabled — _check_agent_statuses() will enable if the
-                    # container is actually reachable. This prevents stale DB entries
-                    # from being treated as routable without a liveness confirmation.
-                    enabled=False,
+                    enabled=False, # Start as disabled — _check_agent_statuses() will enable if the container is actually reachable.
+                    framework=row.get("framework"),
                 )
                 self.agents[agent_name] = agent_config
                 restored += 1
@@ -223,7 +223,8 @@ class AgentRegistry:
                         agent_config = AgentConfig(
                             name=agent_name,
                             endpoint=endpoint,
-                            description=agent_info.get("description", "Auto-discovered agent")
+                            description=agent_info.get("description", "Auto-discovered agent"),
+                            framework=agent_info.get("framework"),
                         )
                         self.agents[agent_name] = agent_config
                         logger.info(f"Discovered agent '{agent_name}' at {endpoint}")
@@ -234,6 +235,7 @@ class AgentRegistry:
                             source_url=agent_info.get("source_url"),
                             active=True,
                             registered_via="dynamic",
+                            framework=agent_info.get("framework"),
                         )
             except (httpx.RequestError, json.JSONDecodeError):
                 pass
@@ -253,6 +255,7 @@ class AgentRegistry:
                     "enabled": agent.enabled,
                     "status": "active" if agent.enabled else 'inactive',
                     "description": getattr(agent, "description", None),
+                    "framework": getattr(agent, "framework", None),
                 }
                 for name, agent in self.agents.items() if agent.endpoint is not None
             }
@@ -313,6 +316,7 @@ class AgentRegistry:
             source_url=agent_registration.source_url,
             active=True,
             registered_via=agent_registration.registered_via or "dynamic",
+            framework=agent_registration.framework,
         )
 
         return JSONResponse({"message": f"Agent '{agent_name}' registered successfully."})

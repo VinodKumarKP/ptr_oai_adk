@@ -53,13 +53,13 @@ class DatabaseBackend(ABC):
 class PostgresBackend(DatabaseBackend):
     name = "postgres"
 
-    # registered_via is excluded from the upsert ON CONFLICT update — we never want to overwrite
+    # registered_via and framework are excluded from the upsert ON CONFLICT update — we never want to overwrite
     # 'config' with 'dynamic' if an agent name collides, and a re-registering dynamic agent
     # should keep its original source value.
     AGENT_REGISTRY_UPSERT = """
         INSERT INTO agent_registry
-            (agent_name, endpoint_url, port, source_url, active, registered_via, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            (agent_name, endpoint_url, port, source_url, active, registered_via, framework, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (agent_name) DO UPDATE SET
             endpoint_url   = EXCLUDED.endpoint_url,
             port           = EXCLUDED.port,
@@ -148,19 +148,25 @@ class PostgresBackend(DatabaseBackend):
                 source_url VARCHAR(255),
                 active         BOOLEAN,
                 registered_via VARCHAR(50) NOT NULL DEFAULT 'dynamic',
+                framework      VARCHAR(255),
                 created_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         """
         # ADD COLUMN is idempotent via the IF NOT EXISTS guard — safe to run on every startup
         # against an existing DB that pre-dates the registered_via column.
-        migrate_ddl = """
+        migrate_ddl_registered_via = """
             ALTER TABLE agent_registry
                 ADD COLUMN IF NOT EXISTS registered_via VARCHAR(50) NOT NULL DEFAULT 'dynamic';
         """
+        migrate_ddl_framework = """
+            ALTER TABLE agent_registry
+                ADD COLUMN IF NOT EXISTS framework VARCHAR(255);
+        """
         async with self._pool.acquire() as conn:
             await conn.execute(agent_registry_ddl)
-            await conn.execute(migrate_ddl)
+            await conn.execute(migrate_ddl_registered_via)
+            await conn.execute(migrate_ddl_framework)
             if logger: logger.info("Agent registry database schema created/updated.")
 
 
@@ -170,8 +176,8 @@ class SQLiteBackend(DatabaseBackend):
     # Same registered_via exclusion from ON CONFLICT update as Postgres — see comment above.
     AGENT_REGISTRY_UPSERT = """
         INSERT INTO agent_registry
-            (agent_name, endpoint_url, port, source_url, active, registered_via, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (agent_name, endpoint_url, port, source_url, active, registered_via, framework, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(agent_name) DO UPDATE SET
             endpoint_url   = EXCLUDED.endpoint_url,
             port           = EXCLUDED.port,
@@ -255,18 +261,25 @@ class SQLiteBackend(DatabaseBackend):
                 source_url TEXT,
                 active         BOOLEAN,
                 registered_via TEXT NOT NULL DEFAULT 'dynamic',
+                framework      TEXT,
                 created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """
         # SQLite doesn't support ADD COLUMN IF NOT EXISTS, so we attempt the migration
         # and swallow the "duplicate column" error — safe for existing DBs.
-        migrate_ddl = "ALTER TABLE agent_registry ADD COLUMN registered_via TEXT NOT NULL DEFAULT 'dynamic'"
+        migrate_ddl_registered_via = "ALTER TABLE agent_registry ADD COLUMN registered_via TEXT NOT NULL DEFAULT 'dynamic'"
+        migrate_ddl_framework = "ALTER TABLE agent_registry ADD COLUMN framework TEXT"
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON;")
             await db.execute(agent_registry_ddl)
             try:
-                await db.execute(migrate_ddl)
+                await db.execute(migrate_ddl_registered_via)
+                await db.commit()
+            except Exception:
+                pass  # Column already exists — expected on all runs after the first
+            try:
+                await db.execute(migrate_ddl_framework)
                 await db.commit()
             except Exception:
                 pass  # Column already exists — expected on all runs after the first
@@ -302,11 +315,12 @@ class RegistryDatabaseLogger:
             source_url: str,
             active: bool = True,
             registered_via: str = "dynamic",
+            framework: Optional[str] = None,
     ) -> None:
         if not self._ready(): return
         try:
             now = datetime.now(timezone.utc)
-            params = (agent_name, endpoint_url, port, source_url, active, registered_via, now, now)
+            params = (agent_name, endpoint_url, port, source_url, active, registered_via, framework, now, now)
             await self._backend.execute(self._backend.AGENT_REGISTRY_UPSERT, params)
             if self.logger: self.logger.debug(f"Logged agent registration/update for: {agent_name}")
         except Exception as exc:
