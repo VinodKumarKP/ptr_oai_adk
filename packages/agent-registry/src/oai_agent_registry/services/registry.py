@@ -486,7 +486,7 @@ class AgentRegistry:
                                 # Stop the agent first
                                 self.compose_manager._run_compose_down_agent(agent_name)
                                 self.agents[agent_name].enabled = False
-                                yield f"Agent '{agent_name}' stopped. Rebuilding image...\n"
+                                yield f"data: Agent '{agent_name}' stopped. Rebuilding image...\n\n"
 
                                 # Stream the rebuild process
                                 async for line in self.compose_manager.stream_deploy_agent(
@@ -498,20 +498,20 @@ class AgentRegistry:
                                     tags=agent_config.tags,
                                     refresh_repo=True,
                                 ):
-                                    yield line
+                                    yield f"data: {line.strip()}\n\n"
 
                                 # Mark as enabled after successful rebuild
                                 self.agents[agent_name].enabled = True
-                                yield f"Agent '{agent_name}' rebuild completed successfully!\n"
+                                yield f"data: Agent '{agent_name}' rebuild completed successfully!\n\n"
 
                             except Exception as e:
-                                yield f"Error during rebuild: {str(e)}\n"
+                                yield f"data: Error during rebuild: {str(e)}\n\n"
                                 raise
 
                         return StreamingResponse(
                             stream_generator(),
-                            media_type="text/plain",
-                            headers={"Content-Type": "text/plain; charset=utf-8"}
+                            media_type="text/event-stream",
+                            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
                         )
                     else:
                         # Regular synchronous rebuild
@@ -534,17 +534,51 @@ class AgentRegistry:
                 elif action == "redeploy":
                     # Redeploy with async task (for backward compatibility)
                     agent_config = self.agents[agent_name]
-                    asyncio.create_task(
-                        self.compose_manager.deploy_agent(
-                            agent_name=agent_name,
-                            source_url=agent_config.source,
-                            framework=agent_config.framework,
-                            env={},
-                            description=agent_config.description,
-                            tags=agent_config.tags,
-                            refresh_repo=True,
+
+                    if stream_output:
+                        # Return streaming response for redeploy
+                        async def stream_generator():
+                            try:
+                                yield f"data: Starting async redeploy for agent '{agent_name}'...\n\n"
+                                
+                                # Start the async redeploy task
+                                asyncio.create_task(
+                                    self.compose_manager.deploy_agent(
+                                        agent_name=agent_name,
+                                        source_url=agent_config.source,
+                                        framework=agent_config.framework,
+                                        env={},
+                                        description=agent_config.description,
+                                        tags=agent_config.tags,
+                                        refresh_repo=True,
+                                    )
+                                )
+                                
+                                yield f"data: ✅ Redeploy task initiated for '{agent_name}'\n\n"
+                                yield f"data: Note: This is asynchronous - the agent will be updated in the background\n\n"
+                                
+                            except Exception as e:
+                                yield f"data: Error initiating redeploy: {str(e)}\n\n"
+                                raise
+
+                        return StreamingResponse(
+                            stream_generator(),
+                            media_type="text/event-stream",
+                            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
                         )
-                    )
+                    else:
+                        # Regular async redeploy
+                        asyncio.create_task(
+                            self.compose_manager.deploy_agent(
+                                agent_name=agent_name,
+                                source_url=agent_config.source,
+                                framework=agent_config.framework,
+                                env={},
+                                description=agent_config.description,
+                                tags=agent_config.tags,
+                                refresh_repo=True,
+                            )
+                        )
                 else:
                     raise HTTPException(status_code=400, detail=f"Unknown action '{action}'. Supported actions: start, stop, restart, rebuild, redeploy")
 
@@ -671,3 +705,4 @@ class AgentRegistry:
                 "description": "",
             }
         return seed
+

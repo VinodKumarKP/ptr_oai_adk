@@ -744,19 +744,24 @@ class DockerComposeManager:
         yield f"Command: {' '.join(cmd)}\n\n"
 
         try:
-            # Use asyncio subprocess for streaming
+            # Use asyncio subprocess for streaming with unbuffered output
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,  # Combine stdout and stderr
+                env={**os.environ, "PYTHONUNBUFFERED": "1"},  # Unbuffered output
             )
 
-            # Read output line by line
+            # Read output line by line with smaller buffer
             while True:
                 line = await process.stdout.readline()
                 if not line:
                     break
-                yield line
+                # Decode and yield immediately
+                decoded_line = line.decode('utf-8', errors='replace')
+                yield decoded_line
+                # Force immediate yield (though asyncio should handle this)
+                await asyncio.sleep(0)
 
             # Wait for process to complete
             return_code = await process.wait()
