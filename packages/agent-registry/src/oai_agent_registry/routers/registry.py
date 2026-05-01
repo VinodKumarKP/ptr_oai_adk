@@ -52,7 +52,7 @@ async def execute_lifecycle_action(
     registry: AgentRegistry = Depends(get_registry)
 ):
     """Executes a lifecycle action on an agent."""
-    return await registry.execute_lifecycle_action(agent_name, action_payload.action)
+    return await registry.execute_lifecycle_action(agent_name, action_payload.action, action_payload.stream_output)
 
 @router.api_route("/{agent_name}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy_request(agent_name: str, path: str, request: Request, registry: AgentRegistry = Depends(get_registry)):

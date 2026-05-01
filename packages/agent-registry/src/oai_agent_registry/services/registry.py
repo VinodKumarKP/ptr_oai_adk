@@ -4,7 +4,7 @@ import os
 import time
 import asyncio
 from datetime import datetime
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Union
 
 import httpx
 from fastapi import HTTPException, Request
@@ -438,7 +438,7 @@ class AgentRegistry:
 
         return JSONResponse({"message": f"Agent '{agent_name}' deactivated successfully."})
 
-    async def execute_lifecycle_action(self, agent_name: str, action: str) -> JSONResponse:
+    async def execute_lifecycle_action(self, agent_name: str, action: str, stream_output: bool = False) -> Union[JSONResponse, StreamingResponse]:
         """
         Executes a lifecycle action on an agent.
 
@@ -457,7 +457,7 @@ class AgentRegistry:
         if self.compose_manager:
             try:
                 if action == "stop":
-                    self.compose_manager._run_compose_down_agent(agent_name)
+                    self.compose_manager._run_compose_stop_agent(agent_name)
                     self.agents[agent_name].enabled = False
 
                 elif action == "start":
@@ -478,21 +478,58 @@ class AgentRegistry:
                 elif action == "rebuild":
                     # Rebuild is a full redeploy with refresh_repo (synchronous)
                     agent_config = self.agents[agent_name]
-                    # Stop the agent first
-                    self.compose_manager._run_compose_down_agent(agent_name)
-                    self.agents[agent_name].enabled = False
-                    logger.info(f"Agent '{agent_name}' stopped. Rebuilding image...")
-                    # Rebuild and restart
-                    await self.compose_manager.deploy_agent(
-                        agent_name=agent_name,
-                        source_url=agent_config.source,
-                        framework=agent_config.framework,
-                        env={},
-                        description=agent_config.description,
-                        tags=agent_config.tags,
-                        refresh_repo=True,
-                    )
-                    self.agents[agent_name].enabled = True
+
+                    if stream_output:
+                        # Return streaming response for real-time output
+                        async def stream_generator():
+                            try:
+                                # Stop the agent first
+                                self.compose_manager._run_compose_down_agent(agent_name)
+                                self.agents[agent_name].enabled = False
+                                yield f"Agent '{agent_name}' stopped. Rebuilding image...\n"
+
+                                # Stream the rebuild process
+                                async for line in self.compose_manager.stream_deploy_agent(
+                                    agent_name=agent_name,
+                                    source_url=agent_config.source,
+                                    framework=agent_config.framework,
+                                    env={},
+                                    description=agent_config.description,
+                                    tags=agent_config.tags,
+                                    refresh_repo=True,
+                                ):
+                                    yield line
+
+                                # Mark as enabled after successful rebuild
+                                self.agents[agent_name].enabled = True
+                                yield f"Agent '{agent_name}' rebuild completed successfully!\n"
+
+                            except Exception as e:
+                                yield f"Error during rebuild: {str(e)}\n"
+                                raise
+
+                        return StreamingResponse(
+                            stream_generator(),
+                            media_type="text/plain",
+                            headers={"Content-Type": "text/plain; charset=utf-8"}
+                        )
+                    else:
+                        # Regular synchronous rebuild
+                        # Stop the agent first
+                        self.compose_manager._run_compose_down_agent(agent_name)
+                        self.agents[agent_name].enabled = False
+                        logger.info(f"Agent '{agent_name}' stopped. Rebuilding image...")
+                        # Rebuild and restart
+                        await self.compose_manager.deploy_agent(
+                            agent_name=agent_name,
+                            source_url=agent_config.source,
+                            framework=agent_config.framework,
+                            env={},
+                            description=agent_config.description,
+                            tags=agent_config.tags,
+                            refresh_repo=True,
+                        )
+                        self.agents[agent_name].enabled = True
 
                 elif action == "redeploy":
                     # Redeploy with async task (for backward compatibility)

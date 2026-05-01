@@ -37,7 +37,8 @@ class AgentDeregistration(BaseModel):
 
 class AgentLifecycleAction(BaseModel):
     """Payload for executing a lifecycle action on an agent."""
-    action: Literal["start", "stop", "redeploy", "refresh", "restart"]
+    action: Literal["start", "stop", "redeploy", "refresh", "restart", "rebuild"]
+    stream_output: Optional[bool] = False
 
 
 class RegistryConfig(BaseModel):

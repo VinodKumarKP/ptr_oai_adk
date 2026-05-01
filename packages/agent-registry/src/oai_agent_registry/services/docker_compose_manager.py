@@ -13,6 +13,7 @@ Responsibilities:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import socket
@@ -685,6 +686,90 @@ class DockerComposeManager:
 
         logger.info(f"Agent '{agent_name}' paused successfully.")
         return result.stdout
+
+    async def stream_deploy_agent(
+        self,
+        agent_name: str,
+        source_url: str,
+        framework: Optional[str] = None,
+        env: Optional[Dict[str, Any]] = None,
+        description: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        port: Optional[int] = None,
+        refresh_repo: bool = False,
+    ):
+        """
+        Streams the output of the full deployment pipeline for a newly registered agent.
+        Yields output lines in real-time for UI consumption.
+
+        Pipeline:
+          1. Stage the agent config (auto-assigning port if not provided).
+          2. Regenerate the compose file (all seed + all dynamic agents).
+          3. Run `docker compose up -d --no-deps --build <service>` with streaming output.
+
+        If port is not provided, automatically assigns the next available port
+        starting from 8000 and skipping 8080, 8081, 8082.
+
+        Yields:
+            str: Lines of output from the docker compose command
+        """
+        # Stage the agent config
+        self.add_agent_from_registration(
+            agent_name=agent_name,
+            source_url=source_url,
+            framework=framework,
+            env=env,
+            description=description,
+            tags=tags,
+            port=port,
+        )
+        yield f"Staged agent '{agent_name}' for deployment\n"
+
+        # Regenerate compose file
+        self.write_compose_file(refresh_repo=refresh_repo)
+        yield f"Generated docker-compose file\n"
+
+        # Stream the docker compose up command
+        service_name = agent_name
+        cmd = [
+            "docker", "compose",
+            "-f", str(self._output_path),  # generated agents
+            "up", "-d",
+            "--no-deps",    # don't restart valkey/postgres/etc.
+            "--build",      # build the image if not cached
+            service_name,
+        ]
+
+        yield f"Starting docker compose build and deployment...\n"
+        yield f"Command: {' '.join(cmd)}\n\n"
+
+        try:
+            # Use asyncio subprocess for streaming
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,  # Combine stdout and stderr
+            )
+
+            # Read output line by line
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                yield line
+
+            # Wait for process to complete
+            return_code = await process.wait()
+
+            if return_code != 0:
+                yield f"\n❌ Deployment failed with exit code {return_code}\n"
+                raise RuntimeError(f"docker compose up failed for '{agent_name}' with exit code {return_code}")
+            else:
+                yield f"\n✅ Agent '{agent_name}' deployed successfully!\n"
+
+        except Exception as e:
+            yield f"\n❌ Error during deployment: {str(e)}\n"
+            raise
 
     @staticmethod
     def _write_yaml(data: Dict[str, Any], path: Path) -> None:
