@@ -159,6 +159,10 @@ def _build_service(service_name: str, config: Dict[str, Any],
         base_image = 'oai-adk-langgraph-base-image:latest'
     elif framework == 'crewai':
         base_image = 'oai-adk-crewai-base-image:latest'
+    elif framework == 'strands':
+        base_image = 'oai-adk-strands-base-image:latest'
+    elif framework == 'openai':
+        base_image = 'oai-adk-openai-base-image:latest'
     else:
         base_image = 'oai-adk-base-image:latest'
 
@@ -412,6 +416,59 @@ class DockerComposeManager:
                 "args": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
             },
             "image": "oai-adk-base-image:latest",
+        }
+
+        # Base image builder — always present
+        services["base-langgraph"] = {
+            "build": {
+                "context": ".",
+                "dockerfile": "Dockerfile.framework_base",
+                "args": {
+                    "FRAMEWORK_PACKAGE": "oai-langgraph-core",
+                    "FRAMEWORK_SUBDIR": "packages/langgraph-core",
+                    "ADK_VERSION": "main"
+                },
+            },
+            "image": "oai-adk-langgraph-base-image:latest",
+        }
+
+        services["base-crewai"] = {
+            "build": {
+                "context": ".",
+                "dockerfile": "Dockerfile.framework_base",
+                "args": {
+                    "FRAMEWORK_PACKAGE": "oai-crewai-core",
+                    "FRAMEWORK_SUBDIR": "packages/crewai-core",
+                    "ADK_VERSION": "main"
+                },
+            },
+            "image": "oai-adk-crewai-base-image:latest",
+        }
+
+        services["base-strands"] = {
+            "build": {
+                "context": ".",
+                "dockerfile": "Dockerfile.framework_base",
+                "args": {
+                    "FRAMEWORK_PACKAGE": "oai-aws-strands-core",
+                    "FRAMEWORK_SUBDIR": "packages/aws-strands-core",
+                    "ADK_VERSION": "main"
+                },
+            },
+            "image": "oai-adk-strands-base-image:latest",
+        }
+
+        services["base-openai"] = {
+            "build": {
+                "context": ".",
+                "dockerfile": "Dockerfile.framework_base",
+                "args": {
+                    "FRAMEWORK_PACKAGE": "oai-openai-core",
+                    "FRAMEWORK_SUBDIR": "packages/openai-core",
+                    "ADK_VERSION": "main"
+                },
+            },
+            "image": "oai-adk-openai-base-image:latest",
         }
 
         # Agent services
