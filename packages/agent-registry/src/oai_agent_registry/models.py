@@ -35,6 +35,11 @@ class AgentDeregistration(BaseModel):
     name: str
 
 
+class AgentLifecycleAction(BaseModel):
+    """Payload for executing a lifecycle action on an agent."""
+    action: Literal["start", "stop", "redeploy"]
+
+
 class RegistryConfig(BaseModel):
     """Configuration for the registry server."""
     host: str = "0.0.0.0"

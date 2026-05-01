@@ -31,11 +31,6 @@ class AgentRegistry:
         self.db_logger: RegistryDatabaseLogger = RegistryDatabaseLogger(logger=logger)
         self.compose_manager: Optional[DockerComposeManager] = None
 
-        self.docker_client = None
-        try:
-            self.docker_client = docker.from_env()
-        except Exception as e:
-            logger.warning(f"Failed to initialize Docker client: {e}")
         self.load_config()
 
     def load_config(self):
@@ -436,6 +431,41 @@ class AgentRegistry:
         await self.db_logger.deregister_agent(agent_name=agent_name)
 
         return JSONResponse({"message": f"Agent '{agent_name}' deactivated successfully."})
+
+    async def execute_lifecycle_action(self, agent_name: str, action: str) -> JSONResponse:
+        """Executes a lifecycle action (start, stop, redeploy) on an agent."""
+        if agent_name not in self.agents:
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
+
+        logger.info(f"Executing lifecycle action '{action}' for agent '{agent_name}'")
+
+        if self.compose_manager:
+            try:
+                if action == "stop":
+                    self.compose_manager._run_compose_down_agent(agent_name)
+                    self.agents[agent_name].enabled = False
+                elif action == "start":
+                    # You can expand this to start a specific agent
+                    self.compose_manager._run_compose_up_agent(agent_name)
+                    self.agents[agent_name].enabled = True
+                elif action == "redeploy":
+                    agent_config = self.agents[agent_name]
+                    asyncio.create_task(
+                        self.compose_manager.deploy_agent(
+                            agent_name=agent_name,
+                            source_url=agent_config.source,
+                            framework=agent_config.framework,
+                            env={},
+                            description=agent_config.description,
+                            tags=agent_config.tags,
+                            refresh_repo=True,
+                        )
+                    )
+            except Exception as e:
+                logger.error(f"Failed to execute lifecycle action '{action}' for agent '{agent_name}': {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        return JSONResponse({"message": f"Lifecycle action '{action}' triggered for agent '{agent_name}'."})
 
     async def proxy_request(self, agent_name: str, path: str, request: Request) -> Response:
         """Proxies a request to the specified agent."""

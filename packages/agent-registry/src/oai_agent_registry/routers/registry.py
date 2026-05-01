@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request, Depends
 from oai_agent_registry.services.registry import AgentRegistry
 from oai_agent_registry.dependencies import get_registry
-from oai_agent_registry.models import AgentRegistration, AgentDeregistration
+from oai_agent_registry.models import AgentRegistration, AgentDeregistration, AgentLifecycleAction
 
 router = APIRouter()
 
@@ -15,7 +15,8 @@ async def root():
             "GET /health": "Health check endpoint.",
             "POST /reload-config": "Reload configuration from file.",
             "POST /register": "Register a new agent.",
-            "POST /deregister": "Deregister an agent."
+            "POST /deregister": "Deregister an agent.",
+            "POST /lifecycle/{agent_name}": "Execute a lifecycle action on an agent."
         }
     }
 
@@ -43,6 +44,15 @@ async def register_agent(agent_registration: AgentRegistration, registry: AgentR
 async def deregister_agent(agent_deregistration: AgentDeregistration, registry: AgentRegistry = Depends(get_registry)):
     """Deregisters an agent."""
     return await registry.deregister_agent(agent_deregistration)
+
+@router.post("/lifecycle/{agent_name}")
+async def execute_lifecycle_action(
+    agent_name: str, 
+    action_payload: AgentLifecycleAction, 
+    registry: AgentRegistry = Depends(get_registry)
+):
+    """Executes a lifecycle action on an agent."""
+    return await registry.execute_lifecycle_action(agent_name, action_payload.action)
 
 @router.api_route("/{agent_name}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy_request(agent_name: str, path: str, request: Request, registry: AgentRegistry = Depends(get_registry)):
