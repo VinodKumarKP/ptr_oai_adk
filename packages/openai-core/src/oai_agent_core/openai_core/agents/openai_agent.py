@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List
 
 from oai_agent_core.core.base_agent import BaseAgent
+from oai_agent_core.core.constants import Constants
 from oai_agent_core.processing.message_formatter import MessageFormatter
 from oai_agent_core.processing.output_serializer import OutputSerializer
 
@@ -45,7 +46,7 @@ class OpenAIAgent(BaseAgent):
         """
         self.pre_loaded_tools = tools
         self.crew_config = None
-        self.agent_type = 'OPENAI'
+        self.agent_type = Constants.OPENAI
         # Initialize utility managers
         self.model_manager = ModelConfigurationManager()
         super().__init__(

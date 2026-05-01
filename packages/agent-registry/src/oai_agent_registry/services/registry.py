@@ -131,6 +131,7 @@ class AgentRegistry:
                     framework=agent_config.framework,
                     prompts=agent_config.prompts,
                     tags=agent_config.tags,
+                    description=agent_config.description
                 )
                 logger.debug(f"Synced config agent '{agent_name}' to DB.")
             except Exception as e:
@@ -264,6 +265,7 @@ class AgentRegistry:
             'framework': agent_registration.framework if agent_registration.framework is not None else existing.get('framework'),
             'prompts': agent_registration.prompts if agent_registration.prompts is not None else existing.get('prompts', []),
             'tags': agent_registration.tags if agent_registration.tags is not None else existing.get('tags', []),
+            'description': agent_registration.description if agent_registration.description is not None else existing.get('description', '')
         }
 
         logger.debug(f"Merged values for agent '{agent_name}': {merged}")
@@ -312,6 +314,7 @@ class AgentRegistry:
                             framework=agent_info.get("framework"),
                             prompts=agent_info.get("prompts", []),
                             tags=agent_info.get("tags", []),
+                            description=agent_info.get("description")
                         )
             except (httpx.RequestError, json.JSONDecodeError):
                 pass
@@ -414,6 +417,7 @@ class AgentRegistry:
             framework=db_values['framework'],
             prompts=db_values['prompts'],
             tags=db_values['tags'],
+            description=db_values['description']
         )
 
         return JSONResponse({"message": f"Agent '{agent_name}' registered successfully."})

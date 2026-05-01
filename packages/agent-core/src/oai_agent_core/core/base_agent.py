@@ -71,7 +71,7 @@ class BaseAgent(ABC):
 
         self.session_id = session_id
         self.user_id = user_id
-        self.agent_type = agent_config.get('type') if 'type' in agent_config else agent_type
+        self.agent_type = agent_type
         self._initialized = False
 
         # Initialize any additional attributes from kwargs
