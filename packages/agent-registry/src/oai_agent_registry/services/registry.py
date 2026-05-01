@@ -252,7 +252,7 @@ class AgentRegistry:
 
         # Build merged values: use new value if not None, otherwise use existing
         merged = {
-            'endpoint_url': agent_registration.endpoint if agent_registration.endpoint is not None else existing.get('endpoint_url', ''),
+            'endpoint': agent_registration.endpoint if agent_registration.endpoint is not None else existing.get('endpoint', ''),
             'port': agent_registration.port if agent_registration.port is not None else existing.get('port'),
             'source': agent_registration.source if agent_registration.source is not None else existing.get('source', ''),
             'active': True,  # Registration always sets to active
@@ -379,11 +379,6 @@ class AgentRegistry:
         if agent_name in self.agents:
             logger.info(f"Agent '{agent_name}' is already registered. Updating its configuration.")
 
-        agent_config = AgentConfig(**agent_registration.model_dump())
-        self.agents[agent_name] = agent_config
-
-        logger.info(f"Registered agent '{agent_name}' with endpoint {agent_config.endpoint}")
-
         registered_via = agent_registration.registered_via or "dynamic"
 
         if registered_via == "registry" and self.compose_manager:
@@ -402,9 +397,14 @@ class AgentRegistry:
         # Merge incoming values with existing database values for partial updates
         db_values = await self._get_merged_agent_values(agent_name, agent_registration, registered_via)
 
+        agent_config = AgentConfig(**db_values)
+        self.agents[agent_name] = agent_config
+
+        logger.info(f"Registered agent '{agent_name}' with endpoint {agent_config.endpoint}")
+
         await self.db_logger.log_agent_registration(
             agent_name=agent_name,
-            endpoint_url=db_values['endpoint_url'],
+            endpoint_url=db_values['endpoint'],
             port=db_values['port'],
             source=db_values['source'],
             active=db_values['active'],
