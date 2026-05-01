@@ -4,7 +4,7 @@ import os
 import time
 import asyncio
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 import httpx
 from fastapi import HTTPException, Request
@@ -14,6 +14,7 @@ import docker
 from oai_agent_registry.models import Config, AgentConfig, RegistryConfig, AgentRegistration, AgentDeregistration
 from oai_agent_registry.security.dependencies import _validate_token
 from oai_agent_registry.services.registry_database_logger import RegistryDatabaseLogger
+from oai_agent_registry.services.docker_compose_manager import DockerComposeManager
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ class AgentRegistry:
         self.public_ip: Optional[str] = None
         self.private_ip: Optional[str] = None
         self.db_logger: RegistryDatabaseLogger = RegistryDatabaseLogger(logger=logger)
+        self.compose_manager: Optional[DockerComposeManager] = None
+
         self.docker_client = None
         try:
             self.docker_client = docker.from_env()
@@ -56,6 +59,7 @@ class AgentRegistry:
                     agent_data_copy = agent_data.copy()
                     if 'enabled' not in agent_data_copy:
                         agent_data_copy['enabled'] = False
+                    agent_data_copy['registered_via'] = 'config'
                     self.agents[agent_name] = AgentConfig(**agent_data_copy)
 
             logger.info(f"Loaded configuration with {len(self.agents)} agents.")
@@ -74,9 +78,26 @@ class AgentRegistry:
             # Restore dynamic agents that were running before the registry restarted.
             # This must run after config agents are synced so we can safely skip any
             # name collision — config always wins when there's a conflict.
-            await self._load_dynamic_agents_from_db()
+            await self._load_agents_from_db()
         else:
             logger.warning("RegistryDatabaseLogger could not be initialized.")
+
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        build_dir = os.path.abspath(os.path.join(current_dir, '..', 'resources', 'docker'))
+
+        seed_config = self._build_seed_config_from_agents()
+        self.compose_manager = DockerComposeManager(
+            seed_config=seed_config,
+            compose_output_path=os.path.join(build_dir, "docker-compose.generated.yaml"),
+            base_compose_path=os.path.join(build_dir, "docker-compose.yaml"),
+            agent_base_url="http://192.168.1.132:8081",
+            agent_local_registry_url="http://host.docker.internal:8081",
+        )
+        logger.info(
+            f"DockerComposeManager initialized with {len(seed_config)} seed agents."
+        )
+        self.compose_manager.write_compose_file()
+        self.compose_manager._run_compose_up()
 
         # Status check runs last so it validates both config and restored dynamic agents.
         await self._check_agent_statuses()
@@ -85,6 +106,10 @@ class AgentRegistry:
         """Shuts down the AgentRegistry, including closing the database logger and HTTP client."""
         if self.client:
             await self.client.aclose()
+        for agent, agent_config in self.agents.items():
+            logger.info(agent_config)
+            if agent_config.registered_via != 'dynamic':
+                self.compose_manager._run_compose_down_agent(agent)
         await self.db_logger.close()
         logger.info("RegistryDatabaseLogger closed.")
 
@@ -111,7 +136,7 @@ class AgentRegistry:
             except Exception as e:
                 logger.error(f"Failed to sync agent '{agent_name}' to DB from config: {e}")
 
-    async def _load_dynamic_agents_from_db(self):
+    async def _load_agents_from_db(self):
         """
         Restores dynamic agents from the DB that were active before the registry restarted.
 
@@ -127,23 +152,23 @@ class AgentRegistry:
         """
         logger.info("Restoring active dynamic agents from database...")
         try:
-            dynamic_agents = await self.db_logger.get_active_dynamic_agents()
+            agents = await self.db_logger.get_all_agents()
         except Exception as e:
             logger.error(f"Failed to load dynamic agents from DB: {e}")
             return
 
         restored = 0
         skipped = 0
-        for row in dynamic_agents:
+        for row in agents:
             agent_name = row.get("agent_name")
             if not agent_name:
                 continue
 
-            if agent_name in self.agents:
-                # Config agent takes precedence — don't overwrite it with a DB snapshot.
-                logger.debug(f"Skipping DB restore for '{agent_name}' — already declared in config.")
-                skipped += 1
-                continue
+            # if agent_name in self.agents:
+            #     # Config agent takes precedence — don't overwrite it with a DB snapshot.
+            #     logger.debug(f"Skipping DB restore for '{agent_name}' — already declared in config.")
+            #     skipped += 1
+            #     continue
 
             try:
                 agent_config = AgentConfig(
@@ -155,10 +180,11 @@ class AgentRegistry:
                     framework=row.get("framework"),
                     prompts=row.get("prompts", []),
                     tags=row.get("tags", []),
+                    registered_via=row.get("registered_via", 'dynamic')
                 )
                 self.agents[agent_name] = agent_config
                 restored += 1
-                logger.debug(f"Restored dynamic agent '{agent_name}' from DB (pending status check).")
+                logger.debug(f"Restored agent '{agent_name}' from DB (pending status check).")
             except Exception as e:
                 logger.error(f"Failed to restore dynamic agent '{agent_name}' from DB: {e}")
 
@@ -207,6 +233,41 @@ class AgentRegistry:
             await self.db_logger.deregister_agent(agent_name=agent_name)
         except Exception as e:
             logger.error(f"Failed to mark agent '{agent_name}' inactive in DB after status check: {e}")
+
+    async def _get_merged_agent_values(self, agent_name: str, agent_registration: AgentRegistration, registered_via: str) -> Dict[str, Any]:
+        """
+        Merges new registration values with existing database values.
+        If a value in the new registration is None/null, the existing database value is preserved.
+        This allows for partial updates without overwriting existing data.
+
+        Args:
+            agent_name: Name of the agent
+            agent_registration: New registration data
+            registered_via: How the agent was registered (config, dynamic, registry, etc.)
+
+        Returns:
+            Dictionary with merged values ready to pass to log_agent_registration()
+        """
+        # Try to fetch existing agent values from database
+        existing = await self.db_logger.get_agent_details(agent_name) if self.db_logger.is_active else None
+
+        if existing is None:
+            existing = {}
+
+        # Build merged values: use new value if not None, otherwise use existing
+        merged = {
+            'endpoint_url': agent_registration.endpoint if agent_registration.endpoint is not None else existing.get('endpoint_url', ''),
+            'port': agent_registration.port if agent_registration.port is not None else existing.get('port'),
+            'source': agent_registration.source if agent_registration.source is not None else existing.get('source', ''),
+            'active': True,  # Registration always sets to active
+            'registered_via': registered_via if registered_via is not None else existing.get('registered_via', 'dynamic'),
+            'framework': agent_registration.framework if agent_registration.framework is not None else existing.get('framework'),
+            'prompts': agent_registration.prompts if agent_registration.prompts is not None else existing.get('prompts', []),
+            'tags': agent_registration.tags if agent_registration.tags is not None else existing.get('tags', []),
+        }
+
+        logger.debug(f"Merged values for agent '{agent_name}': {merged}")
+        return merged
 
     async def discover_agents(self):
         """Discover agents by scanning a range of ports."""
@@ -271,6 +332,7 @@ class AgentRegistry:
                     "status": "active" if agent.enabled else 'inactive',
                     "description": getattr(agent, "description", None),
                     "framework": getattr(agent, "framework", None),
+                    "registered_via": getattr(agent, "registered_via", "dynamic")
                 }
                 for name, agent in self.agents.items() if agent.endpoint is not None
             }
@@ -326,25 +388,32 @@ class AgentRegistry:
 
         registered_via = agent_registration.registered_via or "dynamic"
 
-        if registered_via == "registry":
-            from oai_agent_registry.services.docker_builder import build_agent_image
-            asyncio.create_task(build_agent_image(
-                docker_client=self.docker_client,
-                agent_name=agent_name,
-                github_url=agent_registration.source,
-                framework=agent_registration.framework
-            ))
+        if registered_via == "registry" and self.compose_manager:
+            asyncio.create_task(
+                self.compose_manager.deploy_agent(
+                    agent_name=agent_name,
+                    source_url=agent_registration.source,
+                    framework=agent_registration.framework,
+                    env={},  # pass agent-specific env if available
+                    description=getattr(agent_registration, "description", ""),
+                    tags=getattr(agent_registration, "tags", []),
+                    refresh_repo=False,
+                )
+            )
+
+        # Merge incoming values with existing database values for partial updates
+        db_values = await self._get_merged_agent_values(agent_name, agent_registration, registered_via)
 
         await self.db_logger.log_agent_registration(
             agent_name=agent_name,
-            endpoint_url=agent_registration.endpoint,
-            port=agent_registration.port,
-            source=agent_registration.source,
-            active=True,
-            registered_via=registered_via,
-            framework=agent_registration.framework,
-            prompts=agent_registration.prompts,
-            tags=agent_registration.tags,
+            endpoint_url=db_values['endpoint_url'],
+            port=db_values['port'],
+            source=db_values['source'],
+            active=db_values['active'],
+            registered_via=db_values['registered_via'],
+            framework=db_values['framework'],
+            prompts=db_values['prompts'],
+            tags=db_values['tags'],
         )
 
         return JSONResponse({"message": f"Agent '{agent_name}' registered successfully."})
@@ -445,3 +514,33 @@ class AgentRegistry:
     def _clean_response_headers(headers: httpx.Headers) -> dict:
         excluded = {'content-encoding', 'content-length', 'transfer-encoding', 'connection'}
         return {k: v for k, v in headers.items() if k.lower() not in excluded}
+
+    def _build_seed_config_from_agents(self) -> dict:
+        """
+        Translates the in-memory AgentConfig objects into the flat dict shape
+        that DockerComposeManager / generate_service_config() expects:
+            {
+                "agent_name": {
+                    "port":        8010,
+                    "source":      "https://github.com/org/repo",
+                    "framework":   "langgraph",
+                    "tags":        ["langgraph"],
+                    "env":         {},
+                    "description": "",
+                }
+            }
+        Only config-declared agents (registered_via="config") are included
+        because dynamic agents are re-added via add_agent_from_registration()
+        in register_agent().
+        """
+        seed: dict = {}
+        for agent_name, agent_config in self.agents.items():
+            seed[agent_name] = {
+                "port": agent_config.port,
+                "source": agent_config.source or "",
+                "framework": agent_config.framework or "",
+                "tags": [agent_config.framework.lower()] if agent_config.framework else [],
+                "env": {},  # env vars come from the config file; expand here if needed
+                "description": "",
+            }
+        return seed

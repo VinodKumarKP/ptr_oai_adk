@@ -13,6 +13,7 @@ class AgentConfig(BaseModel):
     framework: Optional[Literal["langgraph", "openai", "crewai", "strands"]] = None
     prompts: Optional[List[str]] = Field(default_factory=list)
     tags: Optional[List[str]] = Field(default_factory=list)
+    registered_via: Literal["config", "dynamic", "registry"] = "dynamic"
 
 
 class AgentRegistration(BaseModel):

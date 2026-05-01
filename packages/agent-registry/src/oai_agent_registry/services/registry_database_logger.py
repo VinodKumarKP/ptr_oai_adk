@@ -375,7 +375,7 @@ class RegistryDatabaseLogger:
             if self.logger: self.logger.error(f"Failed to retrieve agent details for {agent_name}: {exc}")
             return None
 
-    async def get_all_registered_agents(self) -> List[Dict[str, Any]]:
+    async def get_all_agents(self) -> List[Dict[str, Any]]:
         if not self._ready(): return []
         try:
             rows = await self._backend.fetch(self._backend.AGENT_REGISTRY_SELECT_ALL, ())
