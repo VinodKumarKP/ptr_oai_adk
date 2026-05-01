@@ -640,15 +640,14 @@ class DockerComposeManager:
 
     def _run_compose_down_agent(self, agent_name: str) -> str:
         """
-        Runs `docker compose up -d --no-deps --build <service>` for the
-        single named agent service without disturbing other containers.
+        Stops and removes the agent's container using docker compose down.
+        This ensures a clean shutdown, not just a pause.
         """
-        # service_name = agent_name.replace("_", "-")
         service_name = agent_name
         cmd = [
             "docker", "compose",
             "-f", str(self._output_path),
-            "stop",
+            "down",
             service_name,
         ]
         logger.info(f"Running: {' '.join(cmd)}")
@@ -661,6 +660,30 @@ class DockerComposeManager:
             )
 
         logger.info(f"Agent '{agent_name}' shutdown successfully.")
+        return result.stdout
+
+    def _run_compose_stop_agent(self, agent_name: str) -> str:
+        """
+        Pauses the agent's container using docker compose stop (doesn't remove).
+        Use this if you want to keep the container artifact but pause execution.
+        """
+        service_name = agent_name
+        cmd = [
+            "docker", "compose",
+            "-f", str(self._output_path),
+            "stop",
+            service_name,
+        ]
+        logger.info(f"Running: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            logger.error(f"docker compose stop failed for '{agent_name}':\n{result.stderr}")
+            raise RuntimeError(
+                f"docker compose stop failed for '{agent_name}': {result.stderr}"
+            )
+
+        logger.info(f"Agent '{agent_name}' paused successfully.")
         return result.stdout
 
     @staticmethod

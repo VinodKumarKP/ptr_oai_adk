@@ -18,3 +18,4 @@ frontend/
 *examples*
 *docker-compose-generated*
 packages/agent-registry/src/oai_agent_registry/resources/docker/docker-compose.generated.yaml
+*.md
