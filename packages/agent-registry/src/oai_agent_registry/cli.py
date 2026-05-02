@@ -33,6 +33,9 @@ def main():
     if args.host:
         registry_instance.registry_config.host = host
 
+    if args.port:
+        registry_instance.registry_config.port = port
+
     # Use uvloop only on non-Windows systems for better performance
     loop_type = "uvloop" if platform.system() != "Windows" else "asyncio"
 

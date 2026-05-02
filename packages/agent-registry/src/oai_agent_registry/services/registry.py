@@ -85,8 +85,8 @@ class AgentRegistry:
             seed_config=seed_config,
             compose_output_path=os.path.join(build_dir, "docker-compose.generated.yaml"),
             base_compose_path=os.path.join(build_dir, "docker-compose.yaml"),
-            agent_base_url=f"{os.environ.get('AGENT_BASE_URL', 'localhost')}:8081",
-            agent_local_registry_url=f"http://host.docker.internal:8081",
+            agent_base_url=f"{os.environ.get('AGENT_BASE_URL', 'localhost')}:{self.registry_config.port}",
+            agent_local_registry_url=f"http://host.docker.internal:{self.registry_config.port}",
         )
         logger.info(
             f"DockerComposeManager initialized with {len(seed_config)} seed agents."
