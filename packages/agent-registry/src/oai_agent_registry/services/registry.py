@@ -85,8 +85,8 @@ class AgentRegistry:
             seed_config=seed_config,
             compose_output_path=os.path.join(build_dir, "docker-compose.generated.yaml"),
             base_compose_path=os.path.join(build_dir, "docker-compose.yaml"),
-            agent_base_url="http://192.168.1.132:8081",
-            agent_local_registry_url="http://host.docker.internal:8081",
+            agent_base_url=f"{os.environ.get('AGENT_BASE_URL', 'localhost')}:8081",
+            agent_local_registry_url=f"http://host.docker.internal:8081",
         )
         logger.info(
             f"DockerComposeManager initialized with {len(seed_config)} seed agents."
@@ -317,6 +317,8 @@ class AgentRegistry:
     async def get_info(self) -> JSONResponse:
         """Returns information about the registry and its agents."""
         enabled_agents = {name for name, agent in self.agents.items() if agent.enabled}
+        endpoint = self.private_ip if os.environ.get('USE_PRIVATE_IP', 'false').lower() == 'true' else \
+            os.environ.get('AGENT_BASE_URL', "localhost")
         info = {
             "registry": {
                 "uptime_seconds": time.time() - self.start_time,
@@ -325,7 +327,7 @@ class AgentRegistry:
             },
             "agents": {
                 name: {
-                    "endpoint": agent.endpoint,
+                    "endpoint": f"{endpoint}:{self.registry_config.port}/{name}",
                     "enabled": agent.enabled,
                     "status": "active" if agent.enabled else 'inactive',
                     "description": getattr(agent, "description", None),

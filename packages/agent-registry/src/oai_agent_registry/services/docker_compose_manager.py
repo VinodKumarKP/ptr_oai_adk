@@ -153,6 +153,7 @@ def _build_service(service_name: str, config: Dict[str, Any],
         }
     """
     port = config["port"]
+
     tags = config.get("tags", [])
     framework = config.get("framework", "")
 
@@ -274,6 +275,7 @@ class DockerComposeManager:
         self._base_path = Path(base_compose_path)
         self._base_url = agent_base_url
         self._local_registry_url = agent_local_registry_url
+        self.used_ports = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -305,6 +307,7 @@ class DockerComposeManager:
         # Auto-assign port if not provided
         if port is None:
             port = self._find_available_port()
+            self.used_ports.append(port)
             logger.info(f"Auto-assigned port {port} to agent '{agent_name}'")
 
         config = {
@@ -395,13 +398,12 @@ class DockerComposeManager:
         seed and dynamic configurations.
         Starts from 8000 and skips 8080, 8081, 8082.
         """
-        used_ports = []
         all_agents = {**self._seed_config, **self._dynamic_agents}
         for agent_config in all_agents.values():
             if isinstance(agent_config, dict) and "port" in agent_config:
-                used_ports.append(agent_config["port"])
+                self.used_ports.append(agent_config["port"])
 
-        return _get_next_available_port(used_ports=used_ports)
+        return _get_next_available_port(used_ports=self.used_ports)
 
     def _build_compose_dict(
         self, agent_config: Dict[str, Any], refresh_repo: bool = False
@@ -478,6 +480,14 @@ class DockerComposeManager:
             if source is None or source == "":
                 logger.warning(f"Skipping '{source}': no source defined.")
                 continue
+            port = config.get('port')
+            self.used_ports.append(port)
+
+            if port is None or port in self.used_ports:
+                port = self._find_available_port()
+                self.used_ports.append(port)
+                config['port'] = port
+
             services[service_name] = _build_service(
                 service_name, config, self._base_url, self._local_registry_url, refresh_repo
             )
