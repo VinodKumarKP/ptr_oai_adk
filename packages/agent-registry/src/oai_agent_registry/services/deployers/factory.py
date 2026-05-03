@@ -1,8 +1,8 @@
 import os
 from typing import Any, Dict
-from oai_agent_registry.services.base_deployer import BaseDeployer
-from oai_agent_registry.services.docker_compose_manager import DockerComposeManager
-from oai_agent_registry.services.python_package_deployer import PythonPackageDeployer
+from oai_agent_registry.services.deployers.base import BaseDeployer
+from oai_agent_registry.services.deployers.docker_compose import DockerComposeManager
+from oai_agent_registry.services.deployers.python_package import PythonPackageDeployer
 
 class DeployerFactory:
     """Factory to instantiate the correct deployment manager based on the configured mode."""

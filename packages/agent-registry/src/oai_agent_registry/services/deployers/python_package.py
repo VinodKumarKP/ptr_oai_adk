@@ -4,12 +4,11 @@ import socket
 import asyncio
 import logging
 import subprocess
-import shutil
 from pathlib import Path
 from typing import Dict, Any, Optional, List, AsyncGenerator, IO
 
-from oai_agent_registry.services.base_deployer import BaseDeployer
-from oai_agent_registry.services.agent_env_vars import get_common_agent_env
+from oai_agent_registry.services.deployers.base import BaseDeployer
+from oai_agent_registry.utils.env_vars import get_common_agent_env
 
 logger = logging.getLogger(__name__)
 

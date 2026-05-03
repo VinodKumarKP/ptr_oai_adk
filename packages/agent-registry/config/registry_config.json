@@ -1,0 +1,19 @@
+{
+    "agents": {
+        "env_lookup_agent": {
+            "description": "Environment security specialist that analyzes system environment variables, identifies security implications, provides best practices for secure configuration management, and offers actionable insights for environment optimization",
+            "endpoint": "http://localhost:8000",
+            "port": 8000,
+            "timeout": 300,
+            "source": "https://github.com/Capgemini-Innersource/ptr_agents_devops.git",
+            "tags": [
+                "env",
+                "environment"
+            ],
+            "prompts": [
+                "Analyze all database-related environment variables and their security implications"
+            ],
+            "framework": "langgraph"
+        }
+    }
+}

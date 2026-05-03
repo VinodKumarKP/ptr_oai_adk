@@ -25,8 +25,8 @@ from typing import Any, Dict, List, Optional, AsyncGenerator
 
 from ruamel.yaml import YAML
 
-from oai_agent_registry.services.base_deployer import BaseDeployer
-from oai_agent_registry.services.agent_env_vars import get_common_agent_env
+from oai_agent_registry.services.deployers.base import BaseDeployer
+from oai_agent_registry.utils.env_vars import get_common_agent_env
 
 logger = logging.getLogger(__name__)
 

@@ -12,15 +12,15 @@ from fastapi.responses import StreamingResponse, Response, JSONResponse
 
 from oai_agent_registry.models import Config, AgentConfig, RegistryConfig, AgentRegistration, AgentDeregistration
 from oai_agent_registry.security.dependencies import _validate_token
-from oai_agent_registry.services.registry_database_logger import RegistryDatabaseLogger
-from oai_agent_registry.services.base_deployer import BaseDeployer
-from oai_agent_registry.services.deployer_factory import DeployerFactory
+from oai_agent_registry.services.db.database_logger import RegistryDatabaseLogger
+from oai_agent_registry.services.deployers.base import BaseDeployer
+from oai_agent_registry.services.deployers.factory import DeployerFactory
 
 logger = logging.getLogger(__name__)
 
 class AgentRegistry:
     def __init__(self, config_path: str = None):
-        self.config_path = config_path or os.getenv('REGISTRY_CONFIG_PATH', './config/registry_config.json')
+        self.config_path = config_path or os.getenv('REGISTRY_CONFIG_PATH', '../config/registry_config.json')
         self.config: Optional[Config] = None
         self.agents: Dict[str, AgentConfig] = {}
         self.registry_config: RegistryConfig = RegistryConfig()

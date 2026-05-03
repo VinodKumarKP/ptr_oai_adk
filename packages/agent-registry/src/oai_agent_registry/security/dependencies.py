@@ -6,8 +6,8 @@ from fastapi import Header, HTTPException, Request
 from fastapi.security import APIKeyHeader
 
 from oai_agent_registry.models import RegistryConfig
-from oai_agent_registry.utils.saml_token_validation import TokenValidator, TokenValidationError
-from oai_agent_registry.utils.token_manager import TokenManager
+from oai_agent_registry.security.saml_token_validation import TokenValidator, TokenValidationError
+from oai_agent_registry.security.token_manager import TokenManager
 
 # Define the API key security scheme
 api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
