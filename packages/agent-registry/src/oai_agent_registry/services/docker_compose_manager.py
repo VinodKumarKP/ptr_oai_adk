@@ -21,9 +21,11 @@ import subprocess
 import time
 from io import StringIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, AsyncGenerator
 
 from ruamel.yaml import YAML
+
+from oai_agent_registry.services.base_deployer import BaseDeployer
 
 logger = logging.getLogger(__name__)
 
@@ -65,18 +67,6 @@ def _get_next_available_port(
     start_port: int = 8000,
     skip_ports: Optional[List[int]] = None,
 ) -> int:
-    """
-    Finds the next available port starting from start_port.
-    Skips ports specified in skip_ports and any ports that are already used.
-
-    Args:
-        used_ports: List of port numbers already in use by known agents.
-        start_port: Port number to start searching from (default: 8000).
-        skip_ports: List of port numbers to skip (default: [8080, 8081, 8082]).
-
-    Returns:
-        The first available port number.
-    """
     if skip_ports is None:
         skip_ports = [8080, 8081, 8082]
 
@@ -84,7 +74,7 @@ def _get_next_available_port(
     reserved_ports = set(skip_ports + used_ports)
 
     port = start_port
-    max_attempts = 10000  # Prevent infinite loops
+    max_attempts = 10000
 
     for _ in range(max_attempts):
         if port not in reserved_ports and _is_port_available(port):
@@ -99,13 +89,8 @@ def _get_next_available_port(
 
 def _build_environment(service_name: str, port: int, env_overrides: Dict[str, Any],
                        base_url: str, local_registry_url: str) -> List[str]:
-    """
-    Builds the environment list for an agent service.
-    Mirrors the logic in generate_service_config() from the original module.
-    """
     environment: List[str] = [f"AGENT_NAME={service_name}"]
 
-    # Caller-supplied env vars (from the agent's seed/registration config)
     for key, value in env_overrides.items():
         value_str = str(value)
         if value_str.startswith("${") and value_str.endswith("}") and ":-" in value_str:
@@ -140,19 +125,6 @@ def _build_environment(service_name: str, port: int, env_overrides: Dict[str, An
 def _build_service(service_name: str, config: Dict[str, Any],
                    base_url: str, local_registry_url: str,
                    refresh_repo: bool = False) -> Dict[str, Any]:
-    """
-    Produces a single Compose service dict for an agent.
-    `config` is the per-agent dict from the seed / DB record:
-        {
-            "port":        8010,
-            "source":      "https://github.com/org/repo",
-            "framework":   "crewai",          # optional
-            "tags":        ["crewai"],         # optional
-            "env":         {"MY_VAR": "val"}, # optional
-            "description": "...",             # optional
-            "current_version": "v1.0.0"       # optional
-        }
-    """
     port = config["port"]
 
     tags = config.get("tags", [])
@@ -224,24 +196,9 @@ def _build_service(service_name: str, config: Dict[str, Any],
 # Main class
 # ---------------------------------------------------------------------------
 
-class DockerComposeManager:
+class DockerComposeManager(BaseDeployer):
     """
     Manages a dynamically generated docker-compose file for agent services.
-
-    Usage in AgentRegistry.register_agent():
-
-        # At startup — pass the seed config that your existing generator
-        # already loads from YAML/JSON files on disk.
-        self.compose_manager = DockerComposeManager(
-            seed_config=server_config,          # Dict[str, agent-config-dict]
-            compose_output_path="docker-compose.generated.yaml",
-            base_compose_path="docker-compose.yaml",
-            agent_base_url="http://192.168.1.132:8081",
-            agent_local_registry_url="http://host.docker.internal:8081",
-        )
-
-        # On /register — after saving to DB:
-        await self.compose_manager.deploy_agent(agent_name, agent_config_dict)
     """
 
     def __init__(
@@ -252,28 +209,7 @@ class DockerComposeManager:
         agent_base_url: str = f"{os.environ.get('AGENT_BASE_URL', 'localhost')}:{os.environ.get('AGENT_BASE_URL_PORT', 8081)}",
         agent_local_registry_url: str = "http://host.docker.internal:8081",
     ):
-        """
-        Args:
-            seed_config:
-                The static agent config already loaded from disk
-                (same dict your existing `load_server_config()` returns).
-                Agents here always appear in the generated compose.
-
-            compose_output_path:
-                Where to write the generated compose file.  Relative paths
-                are resolved from the current working directory.
-
-            base_compose_path:
-                Your infra compose file (valkey, postgres, base image, etc.).
-                Passed as the first `-f` arg to `docker compose` so its
-                networks and volumes are always visible.
-
-            agent_base_url / agent_local_registry_url:
-                Injected as env vars into every agent container.
-        """
         self._seed_config: Dict[str, Any] = dict(seed_config)
-        # Dynamic agents added via /register are kept separately so we can
-        # tell them apart from seed agents if needed.
         self._dynamic_agents: Dict[str, Any] = {}
 
         self._output_path = Path(compose_output_path)
@@ -282,9 +218,23 @@ class DockerComposeManager:
         self._local_registry_url = agent_local_registry_url
         self.used_ports = []
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    async def initialize(self) -> None:
+        """Implements BaseDeployer.initialize"""
+        self.write_compose_file()
+        self._run_compose_up()
+
+    async def shutdown(self) -> None:
+        """Implements BaseDeployer.shutdown"""
+        await self._run_compose_down()
+
+    def find_available_port(self) -> int:
+        """Implements BaseDeployer.find_available_port"""
+        all_agents = {**self._seed_config, **self._dynamic_agents}
+        for agent_config in all_agents.values():
+            if isinstance(agent_config, dict) and "port" in agent_config:
+                self.used_ports.append(agent_config["port"])
+
+        return _get_next_available_port(used_ports=self.used_ports)
 
     def add_agent_from_registration(
         self,
@@ -297,22 +247,12 @@ class DockerComposeManager:
         port: Optional[int] = None,
         current_version: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Converts an AgentRegistration record into the seed-config shape and
-        stores it so the next compose regeneration includes it.
-
-        If port is not provided, automatically assigns the next available port
-        starting from 8000 and skipping 8080, 8081, 8082.
-
-        Returns the config dict that was stored (useful for logging / testing).
-        """
         tags = tags or []
         if framework and framework.lower() not in tags:
             tags.append(framework.lower())
 
-        # Auto-assign port if not provided
         if port is None:
-            port = self._find_available_port()
+            port = self.find_available_port()
             self.used_ports.append(port)
             logger.info(f"Auto-assigned port {port} to agent '{agent_name}'")
 
@@ -329,19 +269,6 @@ class DockerComposeManager:
         logger.debug(f"Staged dynamic agent '{agent_name}' for next compose generation.")
         return config
 
-    def remove_agent(self, agent_name: str) -> bool:
-        """
-        Removes a dynamic agent from future compose generations.
-        Returns True if the agent was found and removed, False otherwise.
-        Note: seed-config agents cannot be removed this way.
-        """
-        if agent_name in self._dynamic_agents:
-            del self._dynamic_agents[agent_name]
-            logger.info(f"Removed dynamic agent '{agent_name}' from compose manager.")
-            return True
-        logger.warning(f"Agent '{agent_name}' not found in dynamic agents (may be a seed agent).")
-        return False
-
     async def deploy_agent(
         self,
         agent_name: str,
@@ -353,19 +280,8 @@ class DockerComposeManager:
         port: Optional[int] = None,
         current_version: Optional[str] = None,
         refresh_repo: bool = False,
+        no_build: bool = False,
     ) -> str:
-        """
-        Full pipeline for a newly registered agent:
-          1. Stage the agent config (auto-assigning port if not provided).
-          2. Regenerate the compose file (all seed + all dynamic agents).
-          3. Run `docker compose up -d --no-deps --build <service>`.
-
-        If port is not provided, automatically assigns the next available port
-        starting from 8000 and skipping 8080, 8081, 8082.
-
-        Returns the stdout from docker compose.
-        Raises RuntimeError if docker compose exits with a non-zero code.
-        """
         self.add_agent_from_registration(
             agent_name=agent_name,
             source_url=source_url,
@@ -376,14 +292,107 @@ class DockerComposeManager:
             port=port,
             current_version=current_version,
         )
-        self.write_compose_file(refresh_repo=refresh_repo)
+        self.write_compose_file(refresh_repo=False if no_build else refresh_repo)
+        return self._run_compose_up_agent(agent_name, no_build=no_build)
+
+    async def stream_deploy_agent(
+        self,
+        agent_name: str,
+        source_url: str,
+        framework: Optional[str] = None,
+        env: Optional[Dict[str, Any]] = None,
+        description: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        port: Optional[int] = None,
+        current_version: Optional[str] = None,
+        refresh_repo: bool = False,
+        no_build: bool = False,
+    ) -> AsyncGenerator[str, None]:
+        self.add_agent_from_registration(
+            agent_name=agent_name,
+            source_url=source_url,
+            framework=framework,
+            env=env,
+            description=description,
+            tags=tags,
+            port=port,
+            current_version=current_version,
+        )
+        yield f"Staged agent '{agent_name}' for deployment\n"
+
+        self.write_compose_file(refresh_repo=False if no_build else refresh_repo)
+        yield f"Generated docker-compose file\n"
+
+        service_name = agent_name
+        cmd = [
+            "docker", "compose",
+            "-f", str(self._output_path),
+            "up", "-d",
+            "--no-deps",
+            service_name,
+        ]
+        if not no_build:
+            cmd.insert(-1, "--build")
+
+        action_label = "Restarting with existing image" if no_build else "Starting docker compose build and deployment"
+        yield f"{action_label}...\n"
+        yield f"Command: {' '.join(cmd)}\n\n"
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            )
+
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                decoded_line = line.decode('utf-8', errors='replace')
+                yield decoded_line
+                await asyncio.sleep(0)
+
+            return_code = await process.wait()
+
+            if return_code != 0:
+                yield f"\n❌ Deployment failed with exit code {return_code}\n"
+                raise RuntimeError(f"docker compose up failed for '{agent_name}' with exit code {return_code}")
+            else:
+                yield f"\n✅ Agent '{agent_name}' deployed successfully!\n"
+
+        except Exception as e:
+            yield f"\n❌ Error during deployment: {str(e)}\n"
+            raise
+
+    def start_agent(self, agent_name: str) -> str:
+        """Implements BaseDeployer.start_agent"""
         return self._run_compose_up_agent(agent_name)
 
+    def stop_agent(self, agent_name: str) -> str:
+        """Implements BaseDeployer.stop_agent"""
+        return self._run_compose_stop_agent(agent_name)
+
+    def remove_agent(self, agent_name: str) -> str:
+        """Implements BaseDeployer.remove_agent"""
+        if agent_name in self._dynamic_agents:
+            del self._dynamic_agents[agent_name]
+        return self._run_compose_down_agent(agent_name)
+
+    def image_exists(self, agent_name: str, version: str) -> bool:
+        """Check if the deployment artifact for the given version already exists locally."""
+        service_image = f"{agent_name.replace('_', '-')}:{version}"
+        result = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", service_image],
+            capture_output=True,
+            text=True,
+        )
+        exists = result.returncode == 0 and bool(result.stdout.strip())
+        logger.debug(f"Image '{service_image}' {'found' if exists else 'not found'} in local store.")
+        return exists
+
     def write_compose_file(self, refresh_repo: bool = False) -> Path:
-        """
-        Regenerates the compose YAML from the current seed + dynamic agents.
-        Returns the path of the written file.
-        """
         merged_config = {**self._seed_config, **self._dynamic_agents}
         compose_dict = self._build_compose_dict(merged_config, refresh_repo)
         self._write_yaml(compose_dict, self._output_path)
@@ -394,33 +403,13 @@ class DockerComposeManager:
         return self._output_path
 
     def get_all_agents(self) -> Dict[str, Any]:
-        """Returns a merged view of seed + dynamic agent configs."""
         return {**self._seed_config, **self._dynamic_agents}
-
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
-    def _find_available_port(self) -> int:
-        """
-        Finds the next available port considering all agents in both
-        seed and dynamic configurations.
-        Starts from 8000 and skips 8080, 8081, 8082.
-        """
-        all_agents = {**self._seed_config, **self._dynamic_agents}
-        for agent_config in all_agents.values():
-            if isinstance(agent_config, dict) and "port" in agent_config:
-                self.used_ports.append(agent_config["port"])
-
-        return _get_next_available_port(used_ports=self.used_ports)
 
     def _build_compose_dict(
         self, agent_config: Dict[str, Any], refresh_repo: bool = False
     ) -> Dict[str, Any]:
-        """Builds the full compose dict (mirrors generate_docker_compose())."""
         services: Dict[str, Any] = {}
 
-        # Base image builder — always present
         services["base"] = {
             "build": {
                 "context": ".",
@@ -430,7 +419,6 @@ class DockerComposeManager:
             "image": "oai-adk-base-image:latest",
         }
 
-        # Base image builder — always present
         services["base-langgraph"] = {
             "build": {
                 "context": ".",
@@ -483,7 +471,6 @@ class DockerComposeManager:
             "image": "oai-adk-openai-base-image:latest",
         }
 
-        # Agent services
         for service_name, config in agent_config.items():
             source = config.get("source")
             if source is None or source == "":
@@ -493,7 +480,7 @@ class DockerComposeManager:
             self.used_ports.append(port)
 
             if port is None or port in self.used_ports:
-                port = self._find_available_port()
+                port = self.find_available_port()
                 self.used_ports.append(port)
                 config['port'] = port
 
@@ -501,7 +488,6 @@ class DockerComposeManager:
                 service_name, config, self._base_url, self._local_registry_url, refresh_repo
             )
 
-        # Infra: valkey
         services["valkey"] = {
             "image": "valkey/valkey:latest",
             "container_name": "agent-valkey",
@@ -520,7 +506,6 @@ class DockerComposeManager:
             },
         }
 
-        # Infra: postgres
         services["postgres"] = {
             "image": "postgres:16",
             "container_name": "agent_logs_db",
@@ -549,32 +534,6 @@ class DockerComposeManager:
             },
         }
 
-        # agent-proxy depends on every agent service being healthy
-        # proxy_depends: Dict[str, Any] = {
-        #     "valkey": {"condition": "service_healthy"}
-        # }
-        # for service_name in agent_config:
-        #     proxy_depends[service_name] = {"condition": "service_healthy"}
-        #
-        # services["agent-proxy"] = {
-        #     "build": {
-        #         "context": ".",
-        #         "dockerfile": "Dockerfile.proxy",
-        #         "args": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
-        #     },
-        #     "container_name": "agent-proxy",
-        #     "network_mode": "host",
-        #     "restart": "unless-stopped",
-        #     "ports": ["8081:8081"],
-        #     "command": (
-        #         "oai-agent-registry --port 8081 --start-port 8001 "
-        #         "--end-port 8200 --enable-auto-discovery"
-        #     ),
-        #     "volumes": ["./logs:/tmp"],
-        #     "depends_on": proxy_depends,
-        #     "environment": {"AGENT_BASE_URL": self._base_url.rsplit(":", 1)[0]},
-        # }
-
         return {
             "services": services,
             "networks": {
@@ -589,36 +548,7 @@ class DockerComposeManager:
             },
         }
 
-    @staticmethod
-    def _image_exists(image_name: str) -> bool:
-        """
-        Returns True if a Docker image with the given name (and optional tag)
-        already exists in the local daemon's image store.
-
-        Uses `docker image inspect` which exits 0 only when the image is present.
-        No network call is made — this is a purely local check.
-        """
-        result = subprocess.run(
-            ["docker", "image", "inspect", "--format", "{{.Id}}", image_name],
-            capture_output=True,
-            text=True,
-        )
-        exists = result.returncode == 0 and bool(result.stdout.strip())
-        logger.debug(f"Image '{image_name}' {'found' if exists else 'not found'} in local store.")
-        return exists
-
     def _run_compose_up_agent(self, agent_name: str, no_build: bool = False) -> str:
-        """
-        Runs `docker compose up -d --no-deps [--build] <service>` for the
-        single named agent service without disturbing other containers.
-
-        Args:
-            agent_name: The compose service name to bring up.
-            no_build:   When True, omits --build so Docker reuses the existing
-                        local image rather than rebuilding it. Pass this when
-                        downgrading/switching to a version whose image is already
-                        present in the local store.
-        """
         service_name = agent_name
         cmd = [
             "docker", "compose",
@@ -629,7 +559,7 @@ class DockerComposeManager:
         ]
         if not no_build:
             cmd.insert(-1, "--build")
-
+            
         logger.info(f"Running: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True)
 
@@ -643,16 +573,12 @@ class DockerComposeManager:
         return result.stdout
 
     def _run_compose_up(self) -> str:
-        """
-        Runs `docker compose up -d --no-deps --build`
-        """
         cmd = [
             "docker", "compose",
-            # "-f", str(self._base_path),    # infra (networks, volumes)
-            "-f", str(self._output_path),  # generated agents
+            "-f", str(self._output_path),
             "up", "-d",
-            "--no-deps",    # don't restart valkey/postgres/etc.
-            "--build",      # build the image if not cached
+            "--no-deps",
+            "--build",
         ]
         logger.info(f"Running: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -665,12 +591,9 @@ class DockerComposeManager:
         return result.stdout
 
     async def _run_compose_down(self):
-        """
-        Runs `docker compose down`
-        """
         cmd = [
             "docker", "compose",
-            "-f", str(self._output_path),  # generated agents
+            "-f", str(self._output_path),
             "down",
         ]
         logger.info(f"Running: {' '.join(cmd)}")
@@ -684,10 +607,6 @@ class DockerComposeManager:
         return result.stdout
 
     def _run_compose_down_agent(self, agent_name: str) -> str:
-        """
-        Stops and removes the agent's container using docker compose down.
-        This ensures a clean shutdown, not just a pause.
-        """
         service_name = agent_name
         cmd = [
             "docker", "compose",
@@ -708,10 +627,6 @@ class DockerComposeManager:
         return result.stdout
 
     def _run_compose_stop_agent(self, agent_name: str) -> str:
-        """
-        Pauses the agent's container using docker compose stop (doesn't remove).
-        Use this if you want to keep the container artifact but pause execution.
-        """
         service_name = agent_name
         cmd = [
             "docker", "compose",
@@ -730,105 +645,6 @@ class DockerComposeManager:
 
         logger.info(f"Agent '{agent_name}' paused successfully.")
         return result.stdout
-
-    async def stream_deploy_agent(
-        self,
-        agent_name: str,
-        source_url: str,
-        framework: Optional[str] = None,
-        env: Optional[Dict[str, Any]] = None,
-        description: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        port: Optional[int] = None,
-        current_version: Optional[str] = None,
-        refresh_repo: bool = False,
-        no_build: bool = False,
-    ):
-        """
-        Streams the output of the full deployment pipeline for a newly registered agent.
-        Yields output lines in real-time for UI consumption.
-
-        Pipeline:
-          1. Stage the agent config (auto-assigning port if not provided).
-          2. Regenerate the compose file (all seed + all dynamic agents).
-          3. Run `docker compose up -d --no-deps [--build] <service>` with streaming output.
-
-        Args:
-            no_build: When True, omits --build so Docker reuses the existing local image.
-                      Use this for downgrades/version switches where the image is already
-                      present in the local store. refresh_repo is ignored when no_build=True.
-
-        If port is not provided, automatically assigns the next available port
-        starting from 8000 and skipping 8080, 8081, 8082.
-
-        Yields:
-            str: Lines of output from the docker compose command
-        """
-        # Stage the agent config
-        self.add_agent_from_registration(
-            agent_name=agent_name,
-            source_url=source_url,
-            framework=framework,
-            env=env,
-            description=description,
-            tags=tags,
-            port=port,
-            current_version=current_version,
-        )
-        yield f"Staged agent '{agent_name}' for deployment\n"
-
-        # Regenerate compose file (skip refresh_repo when reusing existing image)
-        self.write_compose_file(refresh_repo=False if no_build else refresh_repo)
-        yield f"Generated docker-compose file\n"
-
-        # Stream the docker compose up command
-        service_name = agent_name
-        cmd = [
-            "docker", "compose",
-            "-f", str(self._output_path),
-            "up", "-d",
-            "--no-deps",
-            service_name,
-        ]
-        if not no_build:
-            cmd.insert(-1, "--build")
-
-        action_label = "Restarting with existing image" if no_build else "Starting docker compose build and deployment"
-        yield f"{action_label}...\n"
-        yield f"Command: {' '.join(cmd)}\n\n"
-
-        try:
-            # Use asyncio subprocess for streaming with unbuffered output
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,  # Combine stdout and stderr
-                env={**os.environ, "PYTHONUNBUFFERED": "1"},  # Unbuffered output
-            )
-
-            # Read output line by line with smaller buffer
-            while True:
-                line = await process.stdout.readline()
-                if not line:
-                    break
-                # Decode and yield immediately
-                decoded_line = line.decode('utf-8', errors='replace')
-                yield decoded_line
-                # Force immediate yield (though asyncio should handle this)
-                await asyncio.sleep(0)
-
-            # Wait for process to complete
-            return_code = await process.wait()
-
-            if return_code != 0:
-                yield f"\n❌ Deployment failed with exit code {return_code}\n"
-                raise RuntimeError(f"docker compose up failed for '{agent_name}' with exit code {return_code}")
-            else:
-                yield f"\n✅ Agent '{agent_name}' deployed successfully!\n"
-
-        except Exception as e:
-            yield f"\n❌ Error during deployment: {str(e)}\n"
-            raise
 
     @staticmethod
     def _write_yaml(data: Dict[str, Any], path: Path) -> None:

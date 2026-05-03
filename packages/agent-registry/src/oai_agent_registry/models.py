@@ -16,6 +16,7 @@ class AgentConfig(BaseModel):
     current_version: Optional[str] = None
     available_versions: Optional[List[str]] = Field(default_factory=list)
     registered_via: Literal["config", "dynamic", "registry"] = "dynamic"
+    deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
 
 
 class AgentRegistration(BaseModel):
@@ -32,6 +33,7 @@ class AgentRegistration(BaseModel):
     tags: Optional[List[str]] = Field(default_factory=list)
     current_version: Optional[str] = None
     available_versions: Optional[List[str]] = Field(default_factory=list)
+    deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
 
 
 class AgentDeregistration(BaseModel):
@@ -60,6 +62,8 @@ class RegistryConfig(BaseModel):
     auth_enabled: bool = False
     force_auth: bool = False
     api_key: Optional[str] = None
+    deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
+    max_version: int = 10
 
 class Config(BaseModel):
     """Root configuration model."""

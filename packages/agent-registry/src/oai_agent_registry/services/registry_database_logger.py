@@ -56,8 +56,8 @@ class PostgresBackend(DatabaseBackend):
 
     AGENT_REGISTRY_UPSERT = """
         INSERT INTO agent_registry
-            (agent_name, endpoint_url, port, source, active, registered_via, framework, prompts, tags, description, current_version, available_versions, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            (agent_name, endpoint_url, port, source, active, registered_via, framework, prompts, tags, description, current_version, available_versions, deployment_mode, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         ON CONFLICT (agent_name) DO UPDATE SET
             endpoint_url       = EXCLUDED.endpoint_url,
             port               = EXCLUDED.port,
@@ -68,6 +68,7 @@ class PostgresBackend(DatabaseBackend):
             description        = EXCLUDED.description,
             current_version    = EXCLUDED.current_version,
             available_versions = EXCLUDED.available_versions,
+            deployment_mode    = EXCLUDED.deployment_mode,
             updated_at         = EXCLUDED.updated_at
     """
     AGENT_REGISTRY_DEACTIVATE = "UPDATE agent_registry SET active = FALSE, updated_at = $2 WHERE agent_name = $1"
@@ -157,6 +158,7 @@ class PostgresBackend(DatabaseBackend):
                 description        TEXT,
                 current_version    VARCHAR(255),
                 available_versions TEXT,
+                deployment_mode    VARCHAR(50) DEFAULT 'docker',
                 created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
@@ -169,6 +171,7 @@ class PostgresBackend(DatabaseBackend):
         migrate_ddl_description = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS description TEXT;"
         migrate_ddl_current_version = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS current_version VARCHAR(255);"
         migrate_ddl_available_versions = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS available_versions TEXT;"
+        migrate_ddl_deployment_mode = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS deployment_mode VARCHAR(50) DEFAULT 'docker';"
         async with self._pool.acquire() as conn:
             await conn.execute(agent_registry_ddl)
             try:
@@ -182,6 +185,7 @@ class PostgresBackend(DatabaseBackend):
             await conn.execute(migrate_ddl_description)
             await conn.execute(migrate_ddl_current_version)
             await conn.execute(migrate_ddl_available_versions)
+            await conn.execute(migrate_ddl_deployment_mode)
             if logger: logger.info("Agent registry database schema created/updated.")
 
 
@@ -190,8 +194,8 @@ class SQLiteBackend(DatabaseBackend):
 
     AGENT_REGISTRY_UPSERT = """
         INSERT INTO agent_registry
-            (agent_name, endpoint_url, port, source, active, registered_via, framework, prompts, tags, description, current_version, available_versions, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (agent_name, endpoint_url, port, source, active, registered_via, framework, prompts, tags, description, current_version, available_versions, deployment_mode, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(agent_name) DO UPDATE SET
             endpoint_url       = EXCLUDED.endpoint_url,
             port               = EXCLUDED.port,
@@ -202,6 +206,7 @@ class SQLiteBackend(DatabaseBackend):
             description        = EXCLUDED.description,
             current_version    = EXCLUDED.current_version,
             available_versions = EXCLUDED.available_versions,
+            deployment_mode    = EXCLUDED.deployment_mode,
             updated_at         = EXCLUDED.updated_at
     """
     AGENT_REGISTRY_DEACTIVATE = "UPDATE agent_registry SET active = 0, updated_at = ? WHERE agent_name = ?"
@@ -286,6 +291,7 @@ class SQLiteBackend(DatabaseBackend):
                 description        TEXT,
                 current_version    TEXT,
                 available_versions TEXT,
+                deployment_mode    TEXT DEFAULT 'docker',
                 created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP
             );
@@ -298,6 +304,7 @@ class SQLiteBackend(DatabaseBackend):
         migrate_ddl_description = "ALTER TABLE agent_registry ADD COLUMN description TEXT"
         migrate_ddl_current_version = "ALTER TABLE agent_registry ADD COLUMN current_version TEXT"
         migrate_ddl_available_versions = "ALTER TABLE agent_registry ADD COLUMN available_versions TEXT"
+        migrate_ddl_deployment_mode = "ALTER TABLE agent_registry ADD COLUMN deployment_mode TEXT DEFAULT 'docker'"
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON;")
             await db.execute(agent_registry_ddl)
@@ -341,6 +348,11 @@ class SQLiteBackend(DatabaseBackend):
                 await db.commit()
             except Exception:
                 pass
+            try:
+                await db.execute(migrate_ddl_deployment_mode)
+                await db.commit()
+            except Exception:
+                pass
 
 
 class RegistryDatabaseLogger:
@@ -378,7 +390,8 @@ class RegistryDatabaseLogger:
             tags: Optional[List[str]] = None,
             description: Optional[str] = None,
             current_version: Optional[str] = None,
-            available_versions: Optional[List[str]] = None
+            available_versions: Optional[List[str]] = None,
+            deployment_mode: str = "docker"
     ) -> None:
         if not self._ready(): return
         try:
@@ -386,7 +399,7 @@ class RegistryDatabaseLogger:
             prompts_json = json.dumps(prompts) if prompts is not None else "[]"
             tags_json = json.dumps(tags) if tags is not None else "[]"
             available_versions_json = json.dumps(available_versions) if available_versions is not None else "[]"
-            params = (agent_name, endpoint_url, port, source, active, registered_via, framework, prompts_json, tags_json, description, current_version, available_versions_json, now, now)
+            params = (agent_name, endpoint_url, port, source, active, registered_via, framework, prompts_json, tags_json, description, current_version, available_versions_json, deployment_mode, now, now)
             await self._backend.execute(self._backend.AGENT_REGISTRY_UPSERT, params)
             if self.logger: self.logger.debug(f"Logged agent registration/update for: {agent_name}")
         except Exception as exc:
