@@ -36,9 +36,13 @@ async def reload_config(registry: AgentRegistry = Depends(get_registry)):
     return await registry.reload_config()
 
 @router.post("/register")
-async def register_agent(agent_registration: AgentRegistration, registry: AgentRegistry = Depends(get_registry)):
+async def register_agent(
+    agent_registration: AgentRegistration, 
+    stream_output: bool = False, 
+    registry: AgentRegistry = Depends(get_registry)
+):
     """Registers a new agent."""
-    return await registry.register_agent(agent_registration)
+    return await registry.register_agent(agent_registration, stream_output)
 
 @router.post("/deregister")
 async def deregister_agent(agent_deregistration: AgentDeregistration, registry: AgentRegistry = Depends(get_registry)):

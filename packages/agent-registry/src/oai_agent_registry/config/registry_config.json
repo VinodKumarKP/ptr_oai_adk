@@ -1,9 +1,0 @@
-{
-    "agents": {
-        "outlook_processor": {
-            "description": "An agent that processes Outlook emails and summarizes their content and attachments.",
-            "endpoint": "http://localhost:8000",
-            "timeout": 300
-        }
-    }
-}

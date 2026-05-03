@@ -9,6 +9,7 @@ from typing import Dict, Optional, Any, Union
 import httpx
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse, Response, JSONResponse
+import docker
 
 from oai_agent_registry.models import Config, AgentConfig, RegistryConfig, AgentRegistration, AgentDeregistration
 from oai_agent_registry.security.dependencies import _validate_token
@@ -390,19 +391,21 @@ class AgentRegistry:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def register_agent(self, agent_registration: AgentRegistration) -> JSONResponse:
+    async def register_agent(self, agent_registration: AgentRegistration, stream_output: bool = False) -> Union[JSONResponse, StreamingResponse]:
         """Registers a new agent dynamically via the /register endpoint."""
         agent_name = agent_registration.name
         if agent_name in self.agents:
             logger.info(f"Agent '{agent_name}' is already registered. Updating its configuration.")
 
         registered_via = agent_registration.registered_via or "dynamic"
-
         assigned_port = agent_registration.port
 
         if agent_registration.deployment_mode == 'unknown':
-            deployment_mode = self.agents[agent_name].deployment_mode
-            agent_registration.deployment_mode = deployment_mode
+            if agent_name in self.agents:
+                agent_registration.deployment_mode = self.agents[agent_name].deployment_mode
+            else:
+                agent_registration.deployment_mode = "docker"
+
         deployer = self._get_deployer(agent_registration.deployment_mode)
 
         if registered_via == "registry" and deployer:
@@ -410,19 +413,70 @@ class AgentRegistry:
                 assigned_port = deployer.find_available_port()
                 agent_registration.port = assigned_port
 
-            asyncio.create_task(
-                deployer.deploy_agent(
-                    agent_name=agent_name,
-                    source_url=agent_registration.source,
-                    framework=agent_registration.framework,
-                    env={},  # pass agent-specific env if available
-                    description=getattr(agent_registration, "description", ""),
-                    tags=getattr(agent_registration, "tags", []),
-                    port=assigned_port,
-                    current_version=getattr(agent_registration, "current_version", None),
-                    refresh_repo=False,
+            if stream_output:
+                async def stream_generator():
+                    try:
+                        yield f"data: Starting agent registration and deployment for '{agent_name}'...\n\n"
+                        async for line in deployer.stream_deploy_agent(
+                                agent_name=agent_name,
+                                source_url=agent_registration.source,
+                                framework=agent_registration.framework,
+                                env={},
+                                description=getattr(agent_registration, "description", ""),
+                                tags=getattr(agent_registration, "tags", []),
+                                port=assigned_port,
+                                current_version=getattr(agent_registration, "current_version", None),
+                                refresh_repo=False,
+                        ):
+                            yield f"data: {line.strip()}\n\n"
+
+                        db_values = await self._get_merged_agent_values(agent_name, agent_registration, registered_via)
+                        if assigned_port:
+                            db_values['port'] = assigned_port
+                        agent_config = AgentConfig(**db_values)
+                        self.agents[agent_name] = agent_config
+
+                        logger.info(f"Registered agent '{agent_name}' with endpoint {agent_config.endpoint}")
+
+                        await self.db_logger.log_agent_registration(
+                            agent_name=agent_name,
+                            endpoint_url=db_values['endpoint'],
+                            port=db_values['port'],
+                            source=db_values['source'],
+                            active=db_values['active'],
+                            registered_via=db_values['registered_via'],
+                            framework=db_values['framework'],
+                            prompts=db_values['prompts'],
+                            tags=db_values['tags'],
+                            description=db_values['description'],
+                            current_version=db_values['current_version'],
+                            available_versions=db_values['available_versions'],
+                            deployment_mode=db_values['deployment_mode']
+                        )
+                        yield f"data: ✅ Agent '{agent_name}' registered successfully.\n\n"
+                    except Exception as e:
+                        yield f"data: ❌ Error during registration: {str(e)}\n\n"
+                        raise
+
+                return StreamingResponse(
+                    stream_generator(),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
                 )
-            )
+            else:
+                asyncio.create_task(
+                    deployer.deploy_agent(
+                        agent_name=agent_name,
+                        source_url=agent_registration.source,
+                        framework=agent_registration.framework,
+                        env={},  # pass agent-specific env if available
+                        description=getattr(agent_registration, "description", ""),
+                        tags=getattr(agent_registration, "tags", []),
+                        port=assigned_port,
+                        current_version=getattr(agent_registration, "current_version", None),
+                        refresh_repo=False,
+                    )
+                )
 
         # Merge incoming values with existing database values for partial updates
         db_values = await self._get_merged_agent_values(agent_name, agent_registration, registered_via)
