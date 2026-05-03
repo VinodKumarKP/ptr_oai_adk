@@ -69,11 +69,12 @@ class AgentRegistry:
 
         if self.db_logger.is_active:
             logger.info("RegistryDatabaseLogger initialized successfully.")
+            await self._load_agents_from_db()
             await self._sync_agents_to_db()
             # Restore dynamic agents that were running before the registry restarted.
             # This must run after config agents are synced so we can safely skip any
             # name collision — config always wins when there's a conflict.
-            await self._load_agents_from_db()
+
         else:
             logger.warning("RegistryDatabaseLogger could not be initialized.")
 
@@ -126,7 +127,9 @@ class AgentRegistry:
                     framework=agent_config.framework,
                     prompts=agent_config.prompts,
                     tags=agent_config.tags,
-                    description=agent_config.description
+                    description=agent_config.description,
+                    current_version=agent_config.current_version,
+                    available_versions=agent_config.available_versions
                 )
                 logger.debug(f"Synced config agent '{agent_name}' to DB.")
             except Exception as e:
@@ -176,6 +179,8 @@ class AgentRegistry:
                     framework=row.get("framework"),
                     prompts=row.get("prompts", []),
                     tags=row.get("tags", []),
+                    current_version=row.get("current_version"),
+                    available_versions=row.get("available_versions", []),
                     registered_via=row.get("registered_via", 'dynamic')
                 )
                 self.agents[agent_name] = agent_config
@@ -260,7 +265,9 @@ class AgentRegistry:
             'framework': agent_registration.framework if agent_registration.framework is not None else existing.get('framework'),
             'prompts': agent_registration.prompts if agent_registration.prompts is not None else existing.get('prompts', []),
             'tags': agent_registration.tags if agent_registration.tags is not None else existing.get('tags', []),
-            'description': agent_registration.description if agent_registration.description is not None else existing.get('description', '')
+            'description': agent_registration.description if agent_registration.description is not None else existing.get('description', ''),
+            'current_version': agent_registration.current_version if agent_registration.current_version is not None else existing.get('current_version'),
+            'available_versions': agent_registration.available_versions if len(agent_registration.available_versions) > 0 and agent_registration.available_versions is not None else existing.get('available_versions', [])
         }
 
         logger.debug(f"Merged values for agent '{agent_name}': {merged}")
@@ -296,6 +303,8 @@ class AgentRegistry:
                             source=agent_info.get("source"),
                             prompts=agent_info.get("prompts", []),
                             tags=agent_info.get("tags", []),
+                            current_version=agent_info.get("current_version"),
+                            available_versions=agent_info.get("available_versions", []),
                         )
                         self.agents[agent_name] = agent_config
                         logger.info(f"Discovered agent '{agent_name}' at {endpoint}")
@@ -309,7 +318,9 @@ class AgentRegistry:
                             framework=agent_info.get("framework"),
                             prompts=agent_info.get("prompts", []),
                             tags=agent_info.get("tags", []),
-                            description=agent_info.get("description")
+                            description=agent_info.get("description"),
+                            current_version=agent_info.get("current_version"),
+                            available_versions=agent_info.get("available_versions", [])
                         )
             except (httpx.RequestError, json.JSONDecodeError):
                 pass
@@ -333,11 +344,15 @@ class AgentRegistry:
                     "description": getattr(agent, "description", None),
                     "framework": getattr(agent, "framework", None),
                     "registered_via": getattr(agent, "registered_via", "dynamic"),
+                    "current_version": getattr(agent, "current_version", None),
+                    "available_versions": getattr(agent, "available_versions", []),
                     "available_actions": [
                         "start" if not agent.enabled else "stop",
                         "restart",
                         "rebuild",
-                        "redeploy"
+                        "redeploy",
+                        "update",
+                        "upgrade"
                     ]
                 }
                 for name, agent in self.agents.items() if agent.endpoint is not None
@@ -389,7 +404,15 @@ class AgentRegistry:
 
         registered_via = agent_registration.registered_via or "dynamic"
 
+        assigned_port = agent_registration.port
+
         if registered_via == "registry" and self.compose_manager:
+            # We must assign the port synchronously so we can store it in DB
+            # and so that concurrent requests don't get the same port.
+            if not assigned_port:
+                assigned_port = self.compose_manager._find_available_port()
+                agent_registration.port = assigned_port
+                
             asyncio.create_task(
                 self.compose_manager.deploy_agent(
                     agent_name=agent_name,
@@ -398,6 +421,8 @@ class AgentRegistry:
                     env={},  # pass agent-specific env if available
                     description=getattr(agent_registration, "description", ""),
                     tags=getattr(agent_registration, "tags", []),
+                    port=assigned_port,
+                    current_version=getattr(agent_registration, "current_version", None),
                     refresh_repo=False,
                 )
             )
@@ -405,6 +430,10 @@ class AgentRegistry:
         # Merge incoming values with existing database values for partial updates
         db_values = await self._get_merged_agent_values(agent_name, agent_registration, registered_via)
 
+        # Ensure the assigned port makes it to the database
+        if assigned_port:
+            db_values['port'] = assigned_port
+            
         agent_config = AgentConfig(**db_values)
         self.agents[agent_name] = agent_config
 
@@ -420,7 +449,9 @@ class AgentRegistry:
             framework=db_values['framework'],
             prompts=db_values['prompts'],
             tags=db_values['tags'],
-            description=db_values['description']
+            description=db_values['description'],
+            current_version=db_values['current_version'],
+            available_versions=db_values['available_versions']
         )
 
         return JSONResponse({"message": f"Agent '{agent_name}' registered successfully."})
@@ -440,7 +471,7 @@ class AgentRegistry:
 
         return JSONResponse({"message": f"Agent '{agent_name}' deactivated successfully."})
 
-    async def execute_lifecycle_action(self, agent_name: str, action: str, stream_output: bool = False) -> Union[JSONResponse, StreamingResponse]:
+    async def execute_lifecycle_action(self, agent_name: str, action: str, version: Optional[str] = None, stream_output: bool = False) -> Union[JSONResponse, StreamingResponse]:
         """
         Executes a lifecycle action on an agent.
 
@@ -450,14 +481,48 @@ class AgentRegistry:
         - restart: Stop and then start the agent container
         - rebuild: Rebuild the agent image and restart the container
         - redeploy: Full redeployment with repository refresh (async)
+        - update / upgrade: Update the agent to a new version and redeploy
         """
         if agent_name not in self.agents:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
+
+        agent_config = self.agents[agent_name]
 
         logger.info(f"Executing lifecycle action '{action}' for agent '{agent_name}'")
 
         if self.compose_manager:
             try:
+                if action in ["update", "upgrade"]:
+                    if not version:
+                        raise HTTPException(status_code=400, detail="Version is required for update/upgrade action.")
+                    
+                    # Update version in memory
+                    agent_config.current_version = version
+                    if agent_config.available_versions is None:
+                        agent_config.available_versions = []
+                    if version not in agent_config.available_versions:
+                        agent_config.available_versions.append(version)
+                        
+                    # Save version update to database
+                    await self.db_logger.log_agent_registration(
+                        agent_name=agent_name,
+                        endpoint_url=agent_config.endpoint,
+                        port=agent_config.port,
+                        source=agent_config.source,
+                        active=agent_config.enabled,
+                        registered_via=agent_config.registered_via,
+                        framework=agent_config.framework,
+                        prompts=agent_config.prompts,
+                        tags=agent_config.tags,
+                        description=agent_config.description,
+                        current_version=agent_config.current_version,
+                        available_versions=agent_config.available_versions
+                    )
+                    
+                    # Redeploy is synchronous for upgrade to handle it easily unless streaming
+                    # For simplicity, we just use the redeploy path
+                    action = "redeploy"
+
                 if action == "stop":
                     self.compose_manager._run_compose_stop_agent(agent_name)
                     self.agents[agent_name].enabled = False
@@ -479,8 +544,6 @@ class AgentRegistry:
 
                 elif action == "rebuild":
                     # Rebuild is a full redeploy with refresh_repo (synchronous)
-                    agent_config = self.agents[agent_name]
-
                     if stream_output:
                         # Return streaming response for real-time output
                         async def stream_generator():
@@ -498,6 +561,8 @@ class AgentRegistry:
                                     env={},
                                     description=agent_config.description,
                                     tags=agent_config.tags,
+                                    port=agent_config.port,
+                                    current_version=agent_config.current_version,
                                     refresh_repo=True,
                                 ):
                                     yield f"data: {line.strip()}\n\n"
@@ -529,14 +594,14 @@ class AgentRegistry:
                             env={},
                             description=agent_config.description,
                             tags=agent_config.tags,
+                            port=agent_config.port,
+                            current_version=agent_config.current_version,
                             refresh_repo=True,
                         )
                         self.agents[agent_name].enabled = True
 
                 elif action == "redeploy":
                     # Redeploy with async task (for backward compatibility)
-                    agent_config = self.agents[agent_name]
-
                     if stream_output:
                         # Return streaming response for redeploy
                         async def stream_generator():
@@ -552,6 +617,8 @@ class AgentRegistry:
                                         env={},
                                         description=agent_config.description,
                                         tags=agent_config.tags,
+                                        port=agent_config.port,
+                                        current_version=agent_config.current_version,
                                         refresh_repo=True,
                                     )
                                 )
@@ -578,12 +645,16 @@ class AgentRegistry:
                                 env={},
                                 description=agent_config.description,
                                 tags=agent_config.tags,
+                                port=agent_config.port,
+                                current_version=agent_config.current_version,
                                 refresh_repo=True,
                             )
                         )
                 else:
-                    raise HTTPException(status_code=400, detail=f"Unknown action '{action}'. Supported actions: start, stop, restart, rebuild, redeploy")
+                    raise HTTPException(status_code=400, detail=f"Unknown action '{action}'. Supported actions: start, stop, restart, rebuild, redeploy, update, upgrade")
 
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Failed to execute lifecycle action '{action}' for agent '{agent_name}': {e}")
                 raise HTTPException(status_code=500, detail=str(e))
@@ -707,4 +778,3 @@ class AgentRegistry:
                 "description": "",
             }
         return seed
-

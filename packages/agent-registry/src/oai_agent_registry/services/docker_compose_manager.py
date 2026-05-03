@@ -150,12 +150,16 @@ def _build_service(service_name: str, config: Dict[str, Any],
             "tags":        ["crewai"],         # optional
             "env":         {"MY_VAR": "val"}, # optional
             "description": "...",             # optional
+            "current_version": "v1.0.0"       # optional
         }
     """
     port = config["port"]
 
     tags = config.get("tags", [])
     framework = config.get("framework", "")
+    current_version = config.get("current_version")
+    image_tag = current_version if current_version else "latest"
+    image_name = f"{service_name.replace('_', '-')}:{image_tag}"
 
     if framework == 'langgraph':
         base_image = 'oai-adk-langgraph-base-image:latest'
@@ -187,6 +191,7 @@ def _build_service(service_name: str, config: Dict[str, Any],
     env_overrides = config.get("env", {}) or config.get("environment", {}) or {}
 
     return {
+        "image": image_name,
         "build": {
             "context": ".",
             "dockerfile": dockerfile,
@@ -290,6 +295,7 @@ class DockerComposeManager:
         description: Optional[str] = None,
         tags: Optional[List[str]] = None,
         port: Optional[int] = None,
+        current_version: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Converts an AgentRegistration record into the seed-config shape and
@@ -317,6 +323,7 @@ class DockerComposeManager:
             "tags": tags,
             "env": env or {},
             "description": description or "",
+            "current_version": current_version,
         }
         self._dynamic_agents[agent_name] = config
         logger.debug(f"Staged dynamic agent '{agent_name}' for next compose generation.")
@@ -344,6 +351,7 @@ class DockerComposeManager:
         description: Optional[str] = None,
         tags: Optional[List[str]] = None,
         port: Optional[int] = None,
+        current_version: Optional[str] = None,
         refresh_repo: bool = False,
     ) -> str:
         """
@@ -366,6 +374,7 @@ class DockerComposeManager:
             description=description,
             tags=tags,
             port=port,
+            current_version=current_version,
         )
         self.write_compose_file(refresh_repo=refresh_repo)
         return self._run_compose_up_agent(agent_name)
@@ -706,6 +715,7 @@ class DockerComposeManager:
         description: Optional[str] = None,
         tags: Optional[List[str]] = None,
         port: Optional[int] = None,
+        current_version: Optional[str] = None,
         refresh_repo: bool = False,
     ):
         """
@@ -732,6 +742,7 @@ class DockerComposeManager:
             description=description,
             tags=tags,
             port=port,
+            current_version=current_version,
         )
         yield f"Staged agent '{agent_name}' for deployment\n"
 

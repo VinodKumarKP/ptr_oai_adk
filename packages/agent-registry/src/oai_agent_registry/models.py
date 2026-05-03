@@ -13,6 +13,8 @@ class AgentConfig(BaseModel):
     framework: Optional[Literal["langgraph", "openai", "crewai", "strands"]] = None
     prompts: Optional[List[str]] = Field(default_factory=list)
     tags: Optional[List[str]] = Field(default_factory=list)
+    current_version: Optional[str] = None
+    available_versions: Optional[List[str]] = Field(default_factory=list)
     registered_via: Literal["config", "dynamic", "registry"] = "dynamic"
 
 
@@ -28,6 +30,8 @@ class AgentRegistration(BaseModel):
     framework: Optional[Literal["langgraph", "openai", "crewai", "strands"]] = None
     prompts: Optional[List[str]] = Field(default_factory=list)
     tags: Optional[List[str]] = Field(default_factory=list)
+    current_version: Optional[str] = None
+    available_versions: Optional[List[str]] = Field(default_factory=list)
 
 
 class AgentDeregistration(BaseModel):
@@ -37,7 +41,8 @@ class AgentDeregistration(BaseModel):
 
 class AgentLifecycleAction(BaseModel):
     """Payload for executing a lifecycle action on an agent."""
-    action: Literal["start", "stop", "redeploy", "refresh", "restart", "rebuild"]
+    action: Literal["start", "stop", "redeploy", "refresh", "restart", "rebuild", "upgrade", "update"]
+    version: Optional[str] = None
     stream_output: Optional[bool] = False
 
 
