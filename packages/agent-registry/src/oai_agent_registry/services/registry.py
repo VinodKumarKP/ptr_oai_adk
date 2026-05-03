@@ -519,11 +519,50 @@ class AgentRegistry:
                         available_versions=agent_config.available_versions
                     )
                     
-                    # Redeploy is synchronous for upgrade to handle it easily unless streaming
-                    # For simplicity, we just use the redeploy path
-                    action = "redeploy"
+                    if stream_output:
+                        # Return streaming response for real-time output
+                        async def stream_generator():
+                            try:
+                                yield f"data: Agent '{agent_name}' updating to version {version}...\n\n"
+                                async for line in self.compose_manager.stream_deploy_agent(
+                                    agent_name=agent_name,
+                                    source_url=agent_config.source,
+                                    framework=agent_config.framework,
+                                    env={},
+                                    description=agent_config.description,
+                                    tags=agent_config.tags,
+                                    port=agent_config.port,
+                                    current_version=agent_config.current_version,
+                                    refresh_repo=True,
+                                ):
+                                    yield f"data: {line.strip()}\n\n"
+                                self.agents[agent_name].enabled = True
+                                yield f"data: Agent '{agent_name}' updated successfully to {version}!\n\n"
+                            except Exception as e:
+                                yield f"data: Error during update: {str(e)}\n\n"
+                                raise
 
-                if action == "stop":
+                        return StreamingResponse(
+                            stream_generator(),
+                            media_type="text/event-stream",
+                            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+                        )
+                    else:
+                        logger.info(f"Agent '{agent_name}' updating to version {version}...")
+                        await self.compose_manager.deploy_agent(
+                            agent_name=agent_name,
+                            source_url=agent_config.source,
+                            framework=agent_config.framework,
+                            env={},
+                            description=agent_config.description,
+                            tags=agent_config.tags,
+                            port=agent_config.port,
+                            current_version=agent_config.current_version,
+                            refresh_repo=True,
+                        )
+                        self.agents[agent_name].enabled = True
+
+                elif action == "stop":
                     self.compose_manager._run_compose_stop_agent(agent_name)
                     self.agents[agent_name].enabled = False
 
