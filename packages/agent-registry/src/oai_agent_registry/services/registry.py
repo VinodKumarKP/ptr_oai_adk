@@ -9,7 +9,6 @@ from typing import Dict, Optional, Any, Union
 import httpx
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse, Response, JSONResponse
-import docker
 
 from oai_agent_registry.models import Config, AgentConfig, RegistryConfig, AgentRegistration, AgentDeregistration
 from oai_agent_registry.security.dependencies import _validate_token
@@ -30,7 +29,7 @@ class AgentRegistry:
         self.public_ip: Optional[str] = None
         self.private_ip: Optional[str] = None
         self.db_logger: RegistryDatabaseLogger = RegistryDatabaseLogger(logger=logger)
-        self.deployer: Optional[BaseDeployer] = None
+        self.deployers: Dict[str, BaseDeployer] = {}
 
         self.load_config()
 
@@ -72,28 +71,31 @@ class AgentRegistry:
             logger.info("RegistryDatabaseLogger initialized successfully.")
             await self._load_agents_from_db()
             await self._sync_agents_to_db()
-            # Restore dynamic agents that were running before the registry restarted.
-            # This must run after config agents are synced so we can safely skip any
-            # name collision — config always wins when there's a conflict.
         else:
             logger.warning("RegistryDatabaseLogger could not be initialized.")
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
         build_dir = os.path.abspath(os.path.join(current_dir, '..', 'resources', 'docker'))
 
-        seed_config = self._build_seed_config_from_agents()
-        self.deployer = DeployerFactory.get_deployer(
-            mode=self.registry_config.deployment_mode,
-            seed_config=seed_config,
-            compose_output_path=os.path.join(build_dir, "docker-compose.generated.yaml"),
-            base_compose_path=os.path.join(build_dir, "docker-compose.yaml"),
-            agent_base_url=f"{os.environ.get('AGENT_BASE_URL', 'localhost')}:{os.environ.get('AGENT_BASE_URL_PORT', self.registry_config.port)}",
-            agent_local_registry_url=f"http://host.docker.internal:{self.registry_config.port}",
-        )
-        logger.info(
-            f"Deployer ({self.registry_config.deployment_mode}) initialized with {len(seed_config)} seed agents."
-        )
-        await self.deployer.initialize()
+        # Initialize deployers for available modes
+        seed_configs = self._build_seed_configs_from_agents()
+        
+        for mode in ["docker", "python_package"]:
+            try:
+                self.deployers[mode] = DeployerFactory.get_deployer(
+                    mode=mode,
+                    seed_config=seed_configs.get(mode, {}),
+                    compose_output_path=os.path.join(build_dir, "docker-compose.generated.yaml"),
+                    base_compose_path=os.path.join(build_dir, "docker-compose.yaml"),
+                    agent_base_url=f"{os.environ.get('AGENT_BASE_URL', 'localhost')}:{os.environ.get('AGENT_BASE_URL_PORT', self.registry_config.port)}",
+                    agent_local_registry_url=f"http://host.docker.internal:{self.registry_config.port}",
+                )
+                logger.info(f"Deployer '{mode}' initialized with {len(seed_configs.get(mode, {}))} seed agents.")
+                await self.deployers[mode].initialize()
+            except NotImplementedError as e:
+                logger.debug(f"Deployer '{mode}' not initialized: {e}")
+            except Exception as e:
+                logger.error(f"Failed to initialize deployer '{mode}': {e}")
 
         # Status check runs last so it validates both config and restored dynamic agents.
         await self._check_agent_statuses()
@@ -102,14 +104,23 @@ class AgentRegistry:
         """Shuts down the AgentRegistry, including closing the database logger and HTTP client."""
         if self.client:
             await self.client.aclose()
-        if self.deployer:
-            for agent, agent_config in self.agents.items():
-                logger.info(agent_config)
-                if agent_config.registered_via != 'dynamic':
-                    self.deployer.remove_agent(agent)
-            await self.deployer.shutdown()
+            
+        for agent, agent_config in self.agents.items():
+            if agent_config.registered_via != 'dynamic':
+                deployer = self._get_deployer(agent_config.deployment_mode)
+                if deployer:
+                    deployer.remove_agent(agent)
+                    
+        for mode, deployer in self.deployers.items():
+            logger.info(f"Shutting down deployer '{mode}'...")
+            await deployer.shutdown()
+            
         await self.db_logger.close()
         logger.info("RegistryDatabaseLogger closed.")
+
+    def _get_deployer(self, mode: str) -> Optional[BaseDeployer]:
+        """Gets the appropriate deployer, defaulting to docker."""
+        return self.deployers.get(mode) or self.deployers.get("docker")
 
     async def _sync_agents_to_db(self):
         """Synchronizes config-declared agents to the database, marking them as registered_via='config'."""
@@ -139,19 +150,7 @@ class AgentRegistry:
                 logger.error(f"Failed to sync agent '{agent_name}' to DB from config: {e}")
 
     async def _load_agents_from_db(self):
-        """
-        Restores dynamic agents from the DB that were active before the registry restarted.
-
-        Agents registered via the /register endpoint are ephemeral from the registry's
-        perspective — they live in memory only. When the registry restarts, list of agents
-        are lost even though their containers may still be running. This method bridges
-        that gap by reading active dynamic entries from the DB and re-populating
-        self.agents, giving those containers a chance to continue serving traffic until
-        their next heartbeat cycle.
-
-        Config-declared agents are always skipped here — they are already in self.agents
-        from load_config(), and we never want DB state to silently overwrite config state.
-        """
+        """Restores dynamic agents from the DB that were active before the registry restarted."""
         logger.info("Restoring active dynamic agents from database...")
         try:
             agents = await self.db_logger.get_all_agents()
@@ -238,14 +237,6 @@ class AgentRegistry:
         Merges new registration values with existing database values.
         If a value in the new registration is None/null, the existing database value is preserved.
         This allows for partial updates without overwriting existing data.
-
-        Args:
-            agent_name: Name of the agent
-            agent_registration: New registration data
-            registered_via: How the agent was registered (config, dynamic, registry, etc.)
-
-        Returns:
-            Dictionary with merged values ready to pass to log_agent_registration()
         """
         # Try to fetch existing agent values from database
         existing = await self.db_logger.get_agent_details(agent_name) if self.db_logger.is_active else None
@@ -255,7 +246,7 @@ class AgentRegistry:
 
         # Build merged values: use new value if not None, otherwise use existing
         merged = {
-            'endpoint': agent_registration.endpoint if agent_registration.endpoint is not None else existing.get('endpoint', ''),
+            'endpoint': agent_registration.endpoint if agent_registration.endpoint is not None else existing.get('endpoint_url', ''),
             'port': agent_registration.port if agent_registration.port is not None else existing.get('port'),
             'source': agent_registration.source if agent_registration.source is not None else existing.get('source', ''),
             'active': True,  # Registration always sets to active
@@ -346,7 +337,7 @@ class AgentRegistry:
                     "framework": getattr(agent, "framework", None),
                     "registered_via": getattr(agent, "registered_via", "dynamic"),
                     "current_version": getattr(agent, "current_version", None),
-                    "available_versions": getattr(agent, "available_versions", [])[-self.registry_config.max_version:],
+                    "available_versions": getattr(agent, "available_versions", []),
                     "deployment_mode": getattr(agent, "deployment_mode", "docker"),
                     "available_actions": [
                         "start" if not agent.enabled else "stop",
@@ -408,16 +399,16 @@ class AgentRegistry:
         registered_via = agent_registration.registered_via or "dynamic"
 
         assigned_port = agent_registration.port
+        
+        deployer = self._get_deployer(agent_registration.deployment_mode)
 
-        if registered_via == "registry" and self.deployer:
-            # We must assign the port synchronously so we can store it in DB
-            # and so that concurrent requests don't get the same port.
+        if registered_via == "registry" and deployer:
             if not assigned_port:
-                assigned_port = self.deployer.find_available_port()
+                assigned_port = deployer.find_available_port()
                 agent_registration.port = assigned_port
 
             asyncio.create_task(
-                self.deployer.deploy_agent(
+                deployer.deploy_agent(
                     agent_name=agent_name,
                     source_url=agent_registration.source,
                     framework=agent_registration.framework,
@@ -479,30 +470,23 @@ class AgentRegistry:
                                        stream_output: bool = False) -> Union[JSONResponse, StreamingResponse]:
         """
         Executes a lifecycle action on an agent.
-
-        Supported actions:
-        - start: Start the agent container
-        - stop: Stop the agent container
-        - restart: Stop and then start the agent container
-        - rebuild: Rebuild the agent image and restart the container
-        - redeploy: Full redeployment with repository refresh (async)
-        - update / upgrade: Update the agent to a new version and redeploy
         """
         if agent_name not in self.agents:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
 
         agent_config = self.agents[agent_name]
+        deployer = self._get_deployer(agent_config.deployment_mode)
 
-        logger.info(f"Executing lifecycle action '{action}' for agent '{agent_name}'")
+        logger.info(f"Executing lifecycle action '{action}' for agent '{agent_name}' using deployer '{agent_config.deployment_mode}'")
 
-        if self.deployer:
+        if deployer:
             try:
                 if action in ["update", "upgrade", "downgrade"]:
                     if not version:
                         raise HTTPException(status_code=400,
                                             detail="Version is required for update/upgrade/downgrade action.")
 
-                    image_already_exists = self.deployer.image_exists(agent_name, version)
+                    image_already_exists = deployer.image_exists(agent_name, version)
 
                     if image_already_exists:
                         logger.info(
@@ -544,11 +528,11 @@ class AgentRegistry:
                         async def stream_generator():
                             try:
                                 if _no_build:
-                                    yield f"data: Image '{agent_name}:{version}' found locally — reusing without rebuild.\n\n"
+                                    yield f"data: Artifact for '{agent_name}:{version}' found locally — reusing without rebuild.\n\n"
                                 else:
-                                    yield f"data: Image '{agent_name}:{version}' not found locally — building now.\n\n"
+                                    yield f"data: Artifact for '{agent_name}:{version}' not found locally — building now.\n\n"
                                 yield f"data: Agent '{agent_name}' switching to version {version}...\n\n"
-                                async for line in self.deployer.stream_deploy_agent(
+                                async for line in deployer.stream_deploy_agent(
                                         agent_name=agent_name,
                                         source_url=agent_config.source,
                                         framework=agent_config.framework,
@@ -574,7 +558,7 @@ class AgentRegistry:
                         )
                     else:
                         logger.info(f"Agent '{agent_name}' switching to version {version}...")
-                        await self.deployer.deploy_agent(
+                        await deployer.deploy_agent(
                             agent_name=agent_name,
                             source_url=agent_config.source,
                             framework=agent_config.framework,
@@ -589,37 +573,30 @@ class AgentRegistry:
                         self.agents[agent_name].enabled = True
 
                 elif action == "stop":
-                    self.deployer.stop_agent(agent_name)
+                    deployer.stop_agent(agent_name)
                     self.agents[agent_name].enabled = False
 
                 elif action == "start":
-                    self.deployer.start_agent(agent_name)
+                    deployer.start_agent(agent_name)
                     self.agents[agent_name].enabled = True
 
                 elif action == "restart":
-                    # Stop the agent
-                    self.deployer.remove_agent(agent_name)
+                    deployer.remove_agent(agent_name)
                     self.agents[agent_name].enabled = False
                     logger.info(f"Agent '{agent_name}' stopped. Restarting...")
-                    # Wait briefly to ensure clean shutdown
                     await asyncio.sleep(1)
-                    # Start the agent
-                    self.deployer.start_agent(agent_name)
+                    deployer.start_agent(agent_name)
                     self.agents[agent_name].enabled = True
 
                 elif action == "rebuild":
-                    # Rebuild is a full redeploy with refresh_repo (synchronous)
                     if stream_output:
-                        # Return streaming response for real-time output
                         async def stream_generator():
                             try:
-                                # Stop the agent first
-                                self.deployer.remove_agent(agent_name)
+                                deployer.remove_agent(agent_name)
                                 self.agents[agent_name].enabled = False
                                 yield f"data: Agent '{agent_name}' stopped. Rebuilding image...\n\n"
 
-                                # Stream the rebuild process
-                                async for line in self.deployer.stream_deploy_agent(
+                                async for line in deployer.stream_deploy_agent(
                                         agent_name=agent_name,
                                         source_url=agent_config.source,
                                         framework=agent_config.framework,
@@ -632,7 +609,6 @@ class AgentRegistry:
                                 ):
                                     yield f"data: {line.strip()}\n\n"
 
-                                # Mark as enabled after successful rebuild
                                 self.agents[agent_name].enabled = True
                                 yield f"data: Agent '{agent_name}' rebuild completed successfully!\n\n"
 
@@ -646,13 +622,10 @@ class AgentRegistry:
                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
                         )
                     else:
-                        # Regular synchronous rebuild
-                        # Stop the agent first
-                        self.deployer.remove_agent(agent_name)
+                        deployer.remove_agent(agent_name)
                         self.agents[agent_name].enabled = False
                         logger.info(f"Agent '{agent_name}' stopped. Rebuilding image...")
-                        # Rebuild and restart
-                        await self.deployer.deploy_agent(
+                        await deployer.deploy_agent(
                             agent_name=agent_name,
                             source_url=agent_config.source,
                             framework=agent_config.framework,
@@ -666,16 +639,13 @@ class AgentRegistry:
                         self.agents[agent_name].enabled = True
 
                 elif action == "redeploy":
-                    # Redeploy with async task (for backward compatibility)
                     if stream_output:
-                        # Return streaming response for redeploy
                         async def stream_generator():
                             try:
                                 yield f"data: Starting async redeploy for agent '{agent_name}'...\n\n"
-
-                                # Start the async redeploy task
+                                
                                 asyncio.create_task(
-                                    self.deployer.deploy_agent(
+                                    deployer.deploy_agent(
                                         agent_name=agent_name,
                                         source_url=agent_config.source,
                                         framework=agent_config.framework,
@@ -687,10 +657,10 @@ class AgentRegistry:
                                         refresh_repo=True,
                                     )
                                 )
-
+                                
                                 yield f"data: ✅ Redeploy task initiated for '{agent_name}'\n\n"
                                 yield f"data: Note: This is asynchronous - the agent will be updated in the background\n\n"
-
+                                
                             except Exception as e:
                                 yield f"data: Error initiating redeploy: {str(e)}\n\n"
                                 raise
@@ -701,9 +671,8 @@ class AgentRegistry:
                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
                         )
                     else:
-                        # Regular async redeploy
                         asyncio.create_task(
-                            self.deployer.deploy_agent(
+                            deployer.deploy_agent(
                                 agent_name=agent_name,
                                 source_url=agent_config.source,
                                 framework=agent_config.framework,
@@ -821,32 +790,23 @@ class AgentRegistry:
         excluded = {'content-encoding', 'content-length', 'transfer-encoding', 'connection'}
         return {k: v for k, v in headers.items() if k.lower() not in excluded}
 
-    def _build_seed_config_from_agents(self) -> dict:
+    def _build_seed_configs_from_agents(self) -> dict:
         """
-        Translates the in-memory AgentConfig objects into the flat dict shape
-        that DockerComposeManager / generate_service_config() expects:
-            {
-                "agent_name": {
-                    "port":        8010,
-                    "source":      "https://github.com/org/repo",
-                    "framework":   "langgraph",
-                    "tags":        ["langgraph"],
-                    "env":         {},
-                    "description": "",
-                }
-            }
-        Only config-declared agents (registered_via="config") are included
-        because dynamic agents are re-added via add_agent_from_registration()
-        in register_agent().
+        Groups config agents by deployment mode for factory initialization.
         """
-        seed: dict = {}
+        seeds: dict = {}
         for agent_name, agent_config in self.agents.items():
-            seed[agent_name] = {
+            mode = agent_config.deployment_mode or "docker"
+            if mode not in seeds:
+                seeds[mode] = {}
+            
+            seeds[mode][agent_name] = {
                 "port": agent_config.port,
                 "source": agent_config.source or "",
                 "framework": agent_config.framework or "",
                 "tags": [agent_config.framework.lower()] if agent_config.framework else [],
                 "env": {},  # env vars come from the config file; expand here if needed
                 "description": "",
+                "current_version": agent_config.current_version,
             }
-        return seed
+        return seeds

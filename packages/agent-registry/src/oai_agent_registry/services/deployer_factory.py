@@ -1,6 +1,8 @@
+import os
 from typing import Any, Dict
 from oai_agent_registry.services.base_deployer import BaseDeployer
 from oai_agent_registry.services.docker_compose_manager import DockerComposeManager
+from oai_agent_registry.services.python_package_deployer import PythonPackageDeployer
 
 class DeployerFactory:
     """Factory to instantiate the correct deployment manager based on the configured mode."""
@@ -25,6 +27,13 @@ class DeployerFactory:
         elif mode == "kubernetes":
             raise NotImplementedError("Kubernetes deployment mode is not yet implemented.")
         elif mode == "python_package":
-            raise NotImplementedError("Python package deployment mode is not yet implemented.")
+            # Determine the python package resources directory relative to the docker output path
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(compose_output_path), "..", "python"))
+            return PythonPackageDeployer(
+                seed_config=seed_config,
+                base_dir=base_dir,
+                agent_base_url=agent_base_url,
+                agent_local_registry_url=agent_local_registry_url,
+            )
         else:
             raise ValueError(f"Unknown deployment mode: {mode}. Supported modes: docker, kubernetes, python_package.")
