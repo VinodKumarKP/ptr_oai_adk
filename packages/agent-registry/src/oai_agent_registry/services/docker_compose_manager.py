@@ -244,7 +244,7 @@ class DockerComposeManager:
         seed_config: Dict[str, Any],
         compose_output_path: str = "docker-compose.generated.yaml",
         base_compose_path: str = "docker-compose.yaml",
-        agent_base_url: str = "http://192.168.1.132:8081",
+        agent_base_url: str = f"{os.environ.get('AGENT_BASE_URL', 'localhost')}:{os.environ.get('AGENT_BASE_URL_PORT', 8081)}",
         agent_local_registry_url: str = "http://host.docker.internal:8081",
     ):
         """
