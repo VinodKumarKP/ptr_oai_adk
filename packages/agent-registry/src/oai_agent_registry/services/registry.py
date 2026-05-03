@@ -399,7 +399,10 @@ class AgentRegistry:
         registered_via = agent_registration.registered_via or "dynamic"
 
         assigned_port = agent_registration.port
-        
+
+        if agent_registration.deployment_mode == 'unknown':
+            deployment_mode = self.agents[agent_name].deployment_mode
+            agent_registration.deployment_mode = deployment_mode
         deployer = self._get_deployer(agent_registration.deployment_mode)
 
         if registered_via == "registry" and deployer:

@@ -6,9 +6,10 @@ import logging
 import subprocess
 import shutil
 from pathlib import Path
-from typing import Dict, Any, Optional, List, AsyncGenerator
+from typing import Dict, Any, Optional, List, AsyncGenerator, IO
 
 from oai_agent_registry.services.base_deployer import BaseDeployer
+from oai_agent_registry.services.agent_env_vars import get_common_agent_env
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +34,15 @@ class PythonPackageDeployer(BaseDeployer):
         self._local_registry_url = agent_local_registry_url
         self.used_ports: List[int] = []
         self.running_processes: Dict[str, subprocess.Popen] = {}
+        self.log_files: Dict[str, IO[Any]] = {}
 
     async def initialize(self) -> None:
         logger.info(f"PythonPackageDeployer initialized at {self.base_dir}")
+        for agent_name in self._seed_config.keys():
+            self._dynamic_agents[agent_name] = self._seed_config[agent_name]
+            self._dynamic_agents[agent_name]['repo_name'] = self._get_repo_name(self._seed_config[agent_name]['source'])
+            self._dynamic_agents[agent_name]['port'] = self.find_available_port()
+            self.start_agent(agent_name)
 
     async def shutdown(self) -> None:
         for agent_name in list(self.running_processes.keys()):
@@ -182,11 +189,17 @@ class PythonPackageDeployer(BaseDeployer):
             pip_exe = venv_dir / "bin" / "pip"
             
             cmd = [str(pip_exe), "install", "-r", str(agent_dir / "requirements.txt")]
+            logger.info(f"Running command: {' '.join(cmd)}")
+            
             process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
             while True:
                 line = await process.stdout.readline()
                 if not line: break
-                yield line.decode('utf-8', errors='replace')
+                decoded = line.decode('utf-8', errors='replace')
+                # Log the output to the main logger
+                logger.info(f"[{agent_name} pip] {decoded.strip()}")
+                # Yield it back to the stream
+                yield decoded
             await process.wait()
 
         # 4. Start agent
@@ -216,18 +229,17 @@ class PythonPackageDeployer(BaseDeployer):
             venv_python = Path(sys.executable)
 
         env = os.environ.copy()
-        env["AGENT_NAME"] = agent_name
-        env["PORT"] = str(port)
-        env["AGENT_BASE_URL"] = self._base_url
-        env["AGENT_LOCAL_REGISTRY_URL"] = self._local_registry_url
         
-        # Add AWS and DB variables that are typically expected
-        env["AWS_REGION"] = env.get("AWS_REGION", "us-east-1")
-        env["REDIS_HOST"] = env.get("REDIS_HOST", "localhost")
-        env["REDIS_PORT"] = env.get("REDIS_PORT", "6379")
-        env["AGENT_AUTH_ENABLED"] = env.get("AGENT_AUTH_ENABLED", "true")
-
-        for k, v in config.get("env", {}).items():
+        agent_env = get_common_agent_env(
+            agent_name=agent_name,
+            port=port,
+            base_url=self._base_url,
+            local_registry_url=self._local_registry_url,
+            env_overrides=config.get("env", {}),
+            deployment_mode='python_package'
+        )
+        
+        for k, v in agent_env.items():
             env[k] = str(v)
 
         server_py = agent_dir / "agentic_registry_agents" / "agents" / agent_name / "server.py"
@@ -242,7 +254,14 @@ class PythonPackageDeployer(BaseDeployer):
         cmd = [str(venv_python), str(server_py), "--port", str(port)]
         logger.info(f"Starting python package agent: {' '.join(cmd)}")
 
-        proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        log_dir = self.base_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file_path = log_dir / f"{agent_name}.log"
+        
+        log_file = open(log_file_path, "a")
+        self.log_files[agent_name] = log_file
+
+        proc = subprocess.Popen(cmd, env=env, stdout=log_file, stderr=subprocess.STDOUT)
         self.running_processes[agent_name] = proc
         return "Started"
 
@@ -255,6 +274,15 @@ class PythonPackageDeployer(BaseDeployer):
             except subprocess.TimeoutExpired:
                 proc.kill()
             del self.running_processes[agent_name]
+            
+            log_file = self.log_files.get(agent_name)
+            if log_file:
+                try:
+                    log_file.close()
+                except Exception:
+                    pass
+                del self.log_files[agent_name]
+
             return "Stopped"
         return "Not running"
 

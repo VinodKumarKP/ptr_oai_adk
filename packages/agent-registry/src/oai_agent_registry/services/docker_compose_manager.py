@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, AsyncGenerator
 from ruamel.yaml import YAML
 
 from oai_agent_registry.services.base_deployer import BaseDeployer
+from oai_agent_registry.services.agent_env_vars import get_common_agent_env
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +90,20 @@ def _get_next_available_port(
 
 def _build_environment(service_name: str, port: int, env_overrides: Dict[str, Any],
                        base_url: str, local_registry_url: str) -> List[str]:
-    environment: List[str] = [f"AGENT_NAME={service_name}"]
-
-    for key, value in env_overrides.items():
+    """
+    Builds the environment list for an agent service.
+    Mirrors the logic in generate_service_config() from the original module.
+    """
+    env_dict = get_common_agent_env(
+        agent_name=service_name,
+        port=port,
+        base_url=base_url,
+        local_registry_url=local_registry_url,
+        env_overrides=env_overrides
+    )
+    
+    environment: List[str] = []
+    for key, value in env_dict.items():
         value_str = str(value)
         if value_str.startswith("${") and value_str.endswith("}") and ":-" in value_str:
             environment.append(f"{key}={value_str}")
@@ -101,24 +113,6 @@ def _build_environment(service_name: str, port: int, env_overrides: Dict[str, An
         else:
             environment.append(f"{key}={value_str}")
 
-    aws_region = os.environ.get("AWS_REGION", "us-east-1")
-    environment += [
-        f"AWS_REGION={aws_region}",
-        "REDIS_HOST=agent-valkey",
-        "REDIS_PORT=6379",
-        "AGENT_AUTH_ENABLED=true",
-        "LOGGING_DB_HOST=agent_logs_db",
-        "LOGGING_DB_PORT=5432",
-        "LOGGING_DB_USER=postgres",
-        "LOGGING_DB_PASSWORD=postgres",
-        "LOGGING_DB_NAME=agent_logs",
-        "DB_LOGGING_ENABLED=true",
-        "DB_POOL_MAX_SIZE=2",
-        "DB_POOL_TIMEOUT=60",
-        "DB_POOL_MIN_SIZE=1",
-        f"AGENT_BASE_URL={base_url}",
-        f"AGENT_LOCAL_REGISTRY_URL={local_registry_url}",
-    ]
     return environment
 
 
@@ -268,6 +262,19 @@ class DockerComposeManager(BaseDeployer):
         self._dynamic_agents[agent_name] = config
         logger.debug(f"Staged dynamic agent '{agent_name}' for next compose generation.")
         return config
+
+    def remove_agent(self, agent_name: str) -> bool:
+        """
+        Removes a dynamic agent from future compose generations.
+        Returns True if the agent was found and removed, False otherwise.
+        Note: seed-config agents cannot be removed this way.
+        """
+        if agent_name in self._dynamic_agents:
+            del self._dynamic_agents[agent_name]
+            logger.info(f"Removed dynamic agent '{agent_name}' from compose manager.")
+            return True
+        logger.warning(f"Agent '{agent_name}' not found in dynamic agents (may be a seed agent).")
+        return False
 
     async def deploy_agent(
         self,

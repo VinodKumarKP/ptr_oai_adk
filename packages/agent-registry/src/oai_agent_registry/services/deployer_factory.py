@@ -29,6 +29,8 @@ class DeployerFactory:
         elif mode == "python_package":
             # Determine the python package resources directory relative to the docker output path
             base_dir = os.path.abspath(os.path.join(os.path.dirname(compose_output_path), "..", "python"))
+            port = agent_local_registry_url.split(':')[-1]
+            agent_local_registry_url = f"http://localhost:{port}"
             return PythonPackageDeployer(
                 seed_config=seed_config,
                 base_dir=base_dir,
