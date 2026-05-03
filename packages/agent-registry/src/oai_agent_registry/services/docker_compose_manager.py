@@ -589,22 +589,47 @@ class DockerComposeManager:
             },
         }
 
-    def _run_compose_up_agent(self, agent_name: str) -> str:
+    @staticmethod
+    def _image_exists(image_name: str) -> bool:
         """
-        Runs `docker compose up -d --no-deps --build <service>` for the
+        Returns True if a Docker image with the given name (and optional tag)
+        already exists in the local daemon's image store.
+
+        Uses `docker image inspect` which exits 0 only when the image is present.
+        No network call is made — this is a purely local check.
+        """
+        result = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", image_name],
+            capture_output=True,
+            text=True,
+        )
+        exists = result.returncode == 0 and bool(result.stdout.strip())
+        logger.debug(f"Image '{image_name}' {'found' if exists else 'not found'} in local store.")
+        return exists
+
+    def _run_compose_up_agent(self, agent_name: str, no_build: bool = False) -> str:
+        """
+        Runs `docker compose up -d --no-deps [--build] <service>` for the
         single named agent service without disturbing other containers.
+
+        Args:
+            agent_name: The compose service name to bring up.
+            no_build:   When True, omits --build so Docker reuses the existing
+                        local image rather than rebuilding it. Pass this when
+                        downgrading/switching to a version whose image is already
+                        present in the local store.
         """
-        # service_name = agent_name.replace("_", "-")
         service_name = agent_name
         cmd = [
             "docker", "compose",
-            # "-f", str(self._base_path),    # infra (networks, volumes)
-            "-f", str(self._output_path),  # generated agents
+            "-f", str(self._output_path),
             "up", "-d",
-            "--no-deps",    # don't restart valkey/postgres/etc.
-            "--build",      # build the image if not cached
+            "--no-deps",
             service_name,
         ]
+        if not no_build:
+            cmd.insert(-1, "--build")
+
         logger.info(f"Running: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True)
 
@@ -717,6 +742,7 @@ class DockerComposeManager:
         port: Optional[int] = None,
         current_version: Optional[str] = None,
         refresh_repo: bool = False,
+        no_build: bool = False,
     ):
         """
         Streams the output of the full deployment pipeline for a newly registered agent.
@@ -725,7 +751,12 @@ class DockerComposeManager:
         Pipeline:
           1. Stage the agent config (auto-assigning port if not provided).
           2. Regenerate the compose file (all seed + all dynamic agents).
-          3. Run `docker compose up -d --no-deps --build <service>` with streaming output.
+          3. Run `docker compose up -d --no-deps [--build] <service>` with streaming output.
+
+        Args:
+            no_build: When True, omits --build so Docker reuses the existing local image.
+                      Use this for downgrades/version switches where the image is already
+                      present in the local store. refresh_repo is ignored when no_build=True.
 
         If port is not provided, automatically assigns the next available port
         starting from 8000 and skipping 8080, 8081, 8082.
@@ -746,22 +777,24 @@ class DockerComposeManager:
         )
         yield f"Staged agent '{agent_name}' for deployment\n"
 
-        # Regenerate compose file
-        self.write_compose_file(refresh_repo=refresh_repo)
+        # Regenerate compose file (skip refresh_repo when reusing existing image)
+        self.write_compose_file(refresh_repo=False if no_build else refresh_repo)
         yield f"Generated docker-compose file\n"
 
         # Stream the docker compose up command
         service_name = agent_name
         cmd = [
             "docker", "compose",
-            "-f", str(self._output_path),  # generated agents
+            "-f", str(self._output_path),
             "up", "-d",
-            "--no-deps",    # don't restart valkey/postgres/etc.
-            "--build",      # build the image if not cached
+            "--no-deps",
             service_name,
         ]
+        if not no_build:
+            cmd.insert(-1, "--build")
 
-        yield f"Starting docker compose build and deployment...\n"
+        action_label = "Restarting with existing image" if no_build else "Starting docker compose build and deployment"
+        yield f"{action_label}...\n"
         yield f"Command: {' '.join(cmd)}\n\n"
 
         try:

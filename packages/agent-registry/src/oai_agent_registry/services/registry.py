@@ -18,6 +18,7 @@ from oai_agent_registry.services.docker_compose_manager import DockerComposeMana
 
 logger = logging.getLogger(__name__)
 
+
 class AgentRegistry:
     def __init__(self, config_path: str = None):
         self.config_path = config_path or os.getenv('REGISTRY_CONFIG_PATH', './config/registry_config.json')
@@ -175,7 +176,8 @@ class AgentRegistry:
                     endpoint=row.get("endpoint_url", ""),
                     port=row.get("port"),
                     source=row.get("source"),
-                    enabled=False, # Start as disabled — _check_agent_statuses() will enable if the container is actually reachable.
+                    enabled=False,
+                    # Start as disabled — _check_agent_statuses() will enable if the container is actually reachable.
                     framework=row.get("framework"),
                     prompts=row.get("prompts", []),
                     tags=row.get("tags", []),
@@ -215,7 +217,8 @@ class AgentRegistry:
                     await self._mark_agent_inactive_in_db(agent_name)
             except httpx.RequestError as e:
                 agent_config.enabled = False
-                logger.warning(f"Could not reach agent '{agent_name}' at {agent_config.endpoint} ({e}). Marking inactive.")
+                logger.warning(
+                    f"Could not reach agent '{agent_name}' at {agent_config.endpoint} ({e}). Marking inactive.")
                 await self._mark_agent_inactive_in_db(agent_name)
             except Exception as e:
                 agent_config.enabled = False
@@ -235,7 +238,8 @@ class AgentRegistry:
         except Exception as e:
             logger.error(f"Failed to mark agent '{agent_name}' inactive in DB after status check: {e}")
 
-    async def _get_merged_agent_values(self, agent_name: str, agent_registration: AgentRegistration, registered_via: str) -> Dict[str, Any]:
+    async def _get_merged_agent_values(self, agent_name: str, agent_registration: AgentRegistration,
+                                       registered_via: str) -> Dict[str, Any]:
         """
         Merges new registration values with existing database values.
         If a value in the new registration is None/null, the existing database value is preserved.
@@ -257,17 +261,26 @@ class AgentRegistry:
 
         # Build merged values: use new value if not None, otherwise use existing
         merged = {
-            'endpoint': agent_registration.endpoint if agent_registration.endpoint is not None else existing.get('endpoint', ''),
+            'endpoint': agent_registration.endpoint if agent_registration.endpoint is not None else existing.get(
+                'endpoint', ''),
             'port': agent_registration.port if agent_registration.port is not None else existing.get('port'),
-            'source': agent_registration.source if agent_registration.source is not None else existing.get('source', ''),
+            'source': agent_registration.source if agent_registration.source is not None else existing.get('source',
+                                                                                                           ''),
             'active': True,  # Registration always sets to active
-            'registered_via': registered_via if registered_via is not None else existing.get('registered_via', 'dynamic'),
-            'framework': agent_registration.framework if agent_registration.framework is not None else existing.get('framework'),
-            'prompts': agent_registration.prompts if agent_registration.prompts is not None else existing.get('prompts', []),
+            'registered_via': registered_via if registered_via is not None else existing.get('registered_via',
+                                                                                             'dynamic'),
+            'framework': agent_registration.framework if agent_registration.framework is not None else existing.get(
+                'framework'),
+            'prompts': agent_registration.prompts if agent_registration.prompts is not None else existing.get('prompts',
+                                                                                                              []),
             'tags': agent_registration.tags if agent_registration.tags is not None else existing.get('tags', []),
-            'description': agent_registration.description if agent_registration.description is not None else existing.get('description', ''),
-            'current_version': agent_registration.current_version if agent_registration.current_version is not None else existing.get('current_version'),
-            'available_versions': agent_registration.available_versions if len(agent_registration.available_versions) > 0 and agent_registration.available_versions is not None else existing.get('available_versions', [])
+            'description': agent_registration.description if agent_registration.description is not None else existing.get(
+                'description', ''),
+            'current_version': agent_registration.current_version if agent_registration.current_version is not None else existing.get(
+                'current_version'),
+            'available_versions': agent_registration.available_versions if len(
+                agent_registration.available_versions) > 0 and agent_registration.available_versions is not None else existing.get(
+                'available_versions', [])
         }
 
         logger.debug(f"Merged values for agent '{agent_name}': {merged}")
@@ -352,7 +365,8 @@ class AgentRegistry:
                         "rebuild",
                         "redeploy",
                         "update",
-                        "upgrade"
+                        "upgrade",
+                        "downgrade",
                     ]
                 }
                 for name, agent in self.agents.items() if agent.endpoint is not None
@@ -412,7 +426,7 @@ class AgentRegistry:
             if not assigned_port:
                 assigned_port = self.compose_manager._find_available_port()
                 agent_registration.port = assigned_port
-                
+
             asyncio.create_task(
                 self.compose_manager.deploy_agent(
                     agent_name=agent_name,
@@ -433,7 +447,7 @@ class AgentRegistry:
         # Ensure the assigned port makes it to the database
         if assigned_port:
             db_values['port'] = assigned_port
-            
+
         agent_config = AgentConfig(**db_values)
         self.agents[agent_name] = agent_config
 
@@ -471,7 +485,8 @@ class AgentRegistry:
 
         return JSONResponse({"message": f"Agent '{agent_name}' deactivated successfully."})
 
-    async def execute_lifecycle_action(self, agent_name: str, action: str, version: Optional[str] = None, stream_output: bool = False) -> Union[JSONResponse, StreamingResponse]:
+    async def execute_lifecycle_action(self, agent_name: str, action: str, version: Optional[str] = None,
+                                       stream_output: bool = False) -> Union[JSONResponse, StreamingResponse]:
         """
         Executes a lifecycle action on an agent.
 
@@ -492,17 +507,33 @@ class AgentRegistry:
 
         if self.compose_manager:
             try:
-                if action in ["update", "upgrade"]:
+                if action in ["update", "upgrade", "downgrade"]:
                     if not version:
-                        raise HTTPException(status_code=400, detail="Version is required for update/upgrade action.")
-                    
+                        raise HTTPException(status_code=400,
+                                            detail="Version is required for update/upgrade/downgrade action.")
+
+                    # Determine whether the target image is already built locally.
+                    # Image name matches the convention in _build_service():
+                    #   <service-name-with-dashes>:<version-tag>
+                    service_image = f"{agent_name.replace('_', '-')}:{version}"
+                    image_already_exists = self.compose_manager._image_exists(service_image)
+
+                    if image_already_exists:
+                        logger.info(
+                            f"Image '{service_image}' found locally — skipping build for '{agent_name}' version switch to {version}."
+                        )
+                    else:
+                        logger.info(
+                            f"Image '{service_image}' not found locally — will build for '{agent_name}' version switch to {version}."
+                        )
+
                     # Update version in memory
                     agent_config.current_version = version
                     if agent_config.available_versions is None:
                         agent_config.available_versions = []
                     if version not in agent_config.available_versions:
                         agent_config.available_versions.append(version)
-                        
+
                     # Save version update to database
                     await self.db_logger.log_agent_registration(
                         agent_name=agent_name,
@@ -518,28 +549,35 @@ class AgentRegistry:
                         current_version=agent_config.current_version,
                         available_versions=agent_config.available_versions
                     )
-                    
+
                     if stream_output:
-                        # Return streaming response for real-time output
+                        # Capture image_already_exists in closure
+                        _no_build = image_already_exists
+
                         async def stream_generator():
                             try:
-                                yield f"data: Agent '{agent_name}' updating to version {version}...\n\n"
+                                if _no_build:
+                                    yield f"data: Image '{service_image}' found locally — reusing without rebuild.\n\n"
+                                else:
+                                    yield f"data: Image '{service_image}' not found locally — building now.\n\n"
+                                yield f"data: Agent '{agent_name}' switching to version {version}...\n\n"
                                 async for line in self.compose_manager.stream_deploy_agent(
-                                    agent_name=agent_name,
-                                    source_url=agent_config.source,
-                                    framework=agent_config.framework,
-                                    env={},
-                                    description=agent_config.description,
-                                    tags=agent_config.tags,
-                                    port=agent_config.port,
-                                    current_version=agent_config.current_version,
-                                    refresh_repo=True,
+                                        agent_name=agent_name,
+                                        source_url=agent_config.source,
+                                        framework=agent_config.framework,
+                                        env={},
+                                        description=agent_config.description,
+                                        tags=agent_config.tags,
+                                        port=agent_config.port,
+                                        current_version=agent_config.current_version,
+                                        refresh_repo=not _no_build,
+                                        no_build=_no_build,
                                 ):
                                     yield f"data: {line.strip()}\n\n"
                                 self.agents[agent_name].enabled = True
-                                yield f"data: Agent '{agent_name}' updated successfully to {version}!\n\n"
+                                yield f"data: Agent '{agent_name}' successfully switched to {version}!\n\n"
                             except Exception as e:
-                                yield f"data: Error during update: {str(e)}\n\n"
+                                yield f"data: Error during version switch: {str(e)}\n\n"
                                 raise
 
                         return StreamingResponse(
@@ -548,7 +586,7 @@ class AgentRegistry:
                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
                         )
                     else:
-                        logger.info(f"Agent '{agent_name}' updating to version {version}...")
+                        logger.info(f"Agent '{agent_name}' switching to version {version}...")
                         await self.compose_manager.deploy_agent(
                             agent_name=agent_name,
                             source_url=agent_config.source,
@@ -558,7 +596,7 @@ class AgentRegistry:
                             tags=agent_config.tags,
                             port=agent_config.port,
                             current_version=agent_config.current_version,
-                            refresh_repo=True,
+                            refresh_repo=not image_already_exists,
                         )
                         self.agents[agent_name].enabled = True
 
@@ -594,15 +632,15 @@ class AgentRegistry:
 
                                 # Stream the rebuild process
                                 async for line in self.compose_manager.stream_deploy_agent(
-                                    agent_name=agent_name,
-                                    source_url=agent_config.source,
-                                    framework=agent_config.framework,
-                                    env={},
-                                    description=agent_config.description,
-                                    tags=agent_config.tags,
-                                    port=agent_config.port,
-                                    current_version=agent_config.current_version,
-                                    refresh_repo=True,
+                                        agent_name=agent_name,
+                                        source_url=agent_config.source,
+                                        framework=agent_config.framework,
+                                        env={},
+                                        description=agent_config.description,
+                                        tags=agent_config.tags,
+                                        port=agent_config.port,
+                                        current_version=agent_config.current_version,
+                                        refresh_repo=True,
                                 ):
                                     yield f"data: {line.strip()}\n\n"
 
@@ -646,7 +684,7 @@ class AgentRegistry:
                         async def stream_generator():
                             try:
                                 yield f"data: Starting async redeploy for agent '{agent_name}'...\n\n"
-                                
+
                                 # Start the async redeploy task
                                 asyncio.create_task(
                                     self.compose_manager.deploy_agent(
@@ -661,10 +699,10 @@ class AgentRegistry:
                                         refresh_repo=True,
                                     )
                                 )
-                                
+
                                 yield f"data: ✅ Redeploy task initiated for '{agent_name}'\n\n"
                                 yield f"data: Note: This is asynchronous - the agent will be updated in the background\n\n"
-                                
+
                             except Exception as e:
                                 yield f"data: Error initiating redeploy: {str(e)}\n\n"
                                 raise
@@ -690,7 +728,8 @@ class AgentRegistry:
                             )
                         )
                 else:
-                    raise HTTPException(status_code=400, detail=f"Unknown action '{action}'. Supported actions: start, stop, restart, rebuild, redeploy, update, upgrade")
+                    raise HTTPException(status_code=400,
+                                        detail=f"Unknown action '{action}'. Supported actions: start, stop, restart, rebuild, redeploy, update, upgrade, downgrade")
 
             except HTTPException:
                 raise
@@ -729,16 +768,19 @@ class AgentRegistry:
         if "stream" in path:
             return await self._proxy_streaming_request(target_url, request.method, headers, body, agent_config.timeout)
 
-        return await self._proxy_regular_request(agent_name, target_url, request.method, headers, body, agent_config.timeout, path)
+        return await self._proxy_regular_request(agent_name, target_url, request.method, headers, body,
+                                                 agent_config.timeout, path)
 
-    async def _proxy_regular_request(self, agent_name: str, url: str, method: str, headers: dict, body: bytes, timeout: int, path: str) -> Response:
+    async def _proxy_regular_request(self, agent_name: str, url: str, method: str, headers: dict, body: bytes,
+                                     timeout: int, path: str) -> Response:
         try:
             response = await self.client.request(method, url, headers=headers, content=body, timeout=timeout)
 
             response_headers = self._clean_response_headers(response.headers)
             content = response.content
 
-            if path and path.rstrip("/") in ["docs", "redoc"] and "text/html" in response.headers.get("content-type", ""):
+            if path and path.rstrip("/") in ["docs", "redoc"] and "text/html" in response.headers.get("content-type",
+                                                                                                      ""):
                 try:
                     text = response.text
                     text = text.replace('"/openapi.json"', f'"/{agent_name}/openapi.json"')
@@ -749,7 +791,8 @@ class AgentRegistry:
                 except Exception as e:
                     logger.warning(f"Failed to rewrite docs for {agent_name}: {e}")
 
-            elif path and path.rstrip("/") == "openapi.json" and "application/json" in response.headers.get("content-type", ""):
+            elif path and path.rstrip("/") == "openapi.json" and "application/json" in response.headers.get(
+                    "content-type", ""):
                 try:
                     data = response.json()
                     if "paths" in data:
@@ -764,14 +807,16 @@ class AgentRegistry:
                 except Exception as e:
                     logger.warning(f"Failed to rewrite openapi.json for {agent_name}: {e}")
 
-            return Response(content=content, status_code=response.status_code, headers=response_headers, media_type=response.headers.get("content-type"))
+            return Response(content=content, status_code=response.status_code, headers=response_headers,
+                            media_type=response.headers.get("content-type"))
         except httpx.TimeoutException:
             raise HTTPException(status_code=504, detail=f"Request to agent '{agent_name}' timed out.")
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Proxy error: {e}")
 
     @staticmethod
-    async def _proxy_streaming_request(url: str, method: str, headers: dict, body: bytes, timeout: int) -> StreamingResponse:
+    async def _proxy_streaming_request(url: str, method: str, headers: dict, body: bytes,
+                                       timeout: int) -> StreamingResponse:
         async def stream_generator():
             try:
                 async with httpx.AsyncClient(timeout=timeout) as stream_client:
