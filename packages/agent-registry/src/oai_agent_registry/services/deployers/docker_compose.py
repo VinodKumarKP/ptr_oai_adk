@@ -522,6 +522,9 @@ class DockerComposeManager(BaseDeployer):
                 "-c", "effective_io_concurrency=200",
             ],
             "networks": ["agent-server-network"],
+            "extra_hosts": [
+                "host.docker.internal:host-gateway"
+            ],
             "ports": ["5432:5432"],
             "volumes": ["postgres_data:/var/lib/postgresql/data"],
             "restart": "unless-stopped",
