@@ -29,7 +29,9 @@ dependencies = [
     "redis",
     "cryptography",
     "requests",
-    "uvloop; sys_platform != 'win32'"
+    "uvloop; sys_platform != 'win32'",
+    "ruamel.yaml",
+    "asyncpg"
 ]
 
 [project.scripts]

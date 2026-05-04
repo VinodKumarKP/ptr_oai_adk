@@ -172,9 +172,6 @@ def _build_service(service_name: str, config: Dict[str, Any],
         "command": f"--port {port}",
         "restart": "unless-stopped",
         "networks": ["agent-server-network"],
-        "extra_hosts": [
-            "host.docker.internal:host-gateway"
-        ],
         "healthcheck": {
             "test": ["CMD", "curl", "-f", f"http://localhost:{port}/health"],
             "interval": "30s",
@@ -266,19 +263,6 @@ class DockerComposeManager(BaseDeployer):
         logger.debug(f"Staged dynamic agent '{agent_name}' for next compose generation.")
         return config
 
-    def remove_agent(self, agent_name: str) -> bool:
-        """
-        Removes a dynamic agent from future compose generations.
-        Returns True if the agent was found and removed, False otherwise.
-        Note: seed-config agents cannot be removed this way.
-        """
-        if agent_name in self._dynamic_agents:
-            del self._dynamic_agents[agent_name]
-            logger.info(f"Removed dynamic agent '{agent_name}' from compose manager.")
-            return True
-        logger.warning(f"Agent '{agent_name}' not found in dynamic agents (may be a seed agent).")
-        return False
-
     async def deploy_agent(
         self,
         agent_name: str,
@@ -331,12 +315,13 @@ class DockerComposeManager(BaseDeployer):
         yield f"Staged agent '{agent_name}' for deployment\n"
 
         self.write_compose_file(refresh_repo=False if no_build else refresh_repo)
-        yield f"Generated docker-compose file\n"
+        yield f"Generated docker-compose files\n"
 
         service_name = agent_name
         cmd = [
             "docker", "compose",
-            "-f", str(self._output_path),
+            "-f", str(self._base_path),    # infra (networks, volumes)
+            "-f", str(self._output_path),  # generated agents
             "up", "-d",
             "--no-deps",
             service_name,
@@ -403,11 +388,22 @@ class DockerComposeManager(BaseDeployer):
         return exists
 
     def write_compose_file(self, refresh_repo: bool = False) -> Path:
+        """
+        Writes two compose YAMLs:
+         1. The base compose (postgres, valkey, base image builders)
+         2. The generated agents compose
+        """
+        # 1. Write the infrastructure / base components to the base path
+        infra_dict = self._build_infra_compose_dict()
+        self._write_yaml(infra_dict, self._base_path)
+
+        # 2. Write the agents to the output path
         merged_config = {**self._seed_config, **self._dynamic_agents}
-        compose_dict = self._build_compose_dict(merged_config, refresh_repo)
-        self._write_yaml(compose_dict, self._output_path)
+        agents_dict = self._build_agents_compose_dict(merged_config, refresh_repo)
+        self._write_yaml(agents_dict, self._output_path)
+
         logger.info(
-            f"Compose file written to {self._output_path} "
+            f"Compose files written to {self._base_path} and {self._output_path} "
             f"({len(self._seed_config)} seed + {len(self._dynamic_agents)} dynamic agents)"
         )
         return self._output_path
@@ -415,9 +411,8 @@ class DockerComposeManager(BaseDeployer):
     def get_all_agents(self) -> Dict[str, Any]:
         return {**self._seed_config, **self._dynamic_agents}
 
-    def _build_compose_dict(
-        self, agent_config: Dict[str, Any], refresh_repo: bool = False
-    ) -> Dict[str, Any]:
+    def _build_infra_compose_dict(self) -> Dict[str, Any]:
+        """Builds the infrastructure components (valkey, postgres, base images)."""
         services: Dict[str, Any] = {}
 
         services["base"] = {
@@ -493,23 +488,6 @@ class DockerComposeManager(BaseDeployer):
             }
         }
 
-        for service_name, config in agent_config.items():
-            source = config.get("source")
-            if source is None or source == "":
-                logger.warning(f"Skipping '{source}': no source defined.")
-                continue
-            port = config.get('port')
-            self.used_ports.append(port)
-
-            if port is None or port in self.used_ports:
-                port = self.find_available_port()
-                self.used_ports.append(port)
-                config['port'] = port
-
-            services[service_name] = _build_service(
-                service_name, config, self._base_url, self._local_registry_url, refresh_repo
-            )
-
         services["valkey"] = {
             "image": "valkey/valkey:latest",
             "container_name": "agent-valkey",
@@ -570,11 +548,42 @@ class DockerComposeManager(BaseDeployer):
             },
         }
 
+    def _build_agents_compose_dict(
+        self, agent_config: Dict[str, Any], refresh_repo: bool = False
+    ) -> Dict[str, Any]:
+        """Builds the agent-specific compose dictionary."""
+        services: Dict[str, Any] = {}
+
+        for service_name, config in agent_config.items():
+            source = config.get("source")
+            if source is None or source == "":
+                logger.warning(f"Skipping '{source}': no source defined.")
+                continue
+            port = config.get('port')
+            self.used_ports.append(port)
+
+            if port is None or port in self.used_ports:
+                port = self.find_available_port()
+                self.used_ports.append(port)
+                config['port'] = port
+
+            services[service_name] = _build_service(
+                service_name, config, self._base_url, self._local_registry_url, refresh_repo
+            )
+
+        return {
+            "services": services,
+            "networks": {
+                "agent-server-network": None
+            }
+        }
+
     def _run_compose_up_agent(self, agent_name: str, no_build: bool = False) -> str:
         service_name = agent_name
         cmd = [
             "docker", "compose",
-            "-f", str(self._output_path),
+            "-f", str(self._base_path),    # infra (networks, volumes)
+            "-f", str(self._output_path),  # generated agents
             "up", "-d",
             "--no-deps",
             service_name,
@@ -597,7 +606,8 @@ class DockerComposeManager(BaseDeployer):
     def _run_compose_up(self) -> str:
         cmd = [
             "docker", "compose",
-            "-f", str(self._output_path),
+            "-f", str(self._base_path),    # infra (networks, volumes)
+            "-f", str(self._output_path),  # generated agents
             "up", "-d",
             "--no-deps",
             "--build",
@@ -615,7 +625,8 @@ class DockerComposeManager(BaseDeployer):
     async def _run_compose_down(self):
         cmd = [
             "docker", "compose",
-            "-f", str(self._output_path),
+            "-f", str(self._base_path),    # infra (networks, volumes)
+            "-f", str(self._output_path),  # generated agents
             "down",
         ]
         logger.info(f"Running: {' '.join(cmd)}")
@@ -632,7 +643,8 @@ class DockerComposeManager(BaseDeployer):
         service_name = agent_name
         cmd = [
             "docker", "compose",
-            "-f", str(self._output_path),
+            "-f", str(self._base_path),    # infra (networks, volumes)
+            "-f", str(self._output_path),  # generated agents
             "down",
             service_name,
         ]
@@ -652,7 +664,8 @@ class DockerComposeManager(BaseDeployer):
         service_name = agent_name
         cmd = [
             "docker", "compose",
-            "-f", str(self._output_path),
+            "-f", str(self._base_path),    # infra (networks, volumes)
+            "-f", str(self._output_path),  # generated agents
             "stop",
             service_name,
         ]
