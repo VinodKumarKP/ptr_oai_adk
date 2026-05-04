@@ -172,6 +172,9 @@ def _build_service(service_name: str, config: Dict[str, Any],
         "command": f"--port {port}",
         "restart": "unless-stopped",
         "networks": ["agent-server-network"],
+        "extra_hosts": [
+            "host.docker.internal:host-gateway"
+        ],
         "healthcheck": {
             "test": ["CMD", "curl", "-f", f"http://localhost:{port}/health"],
             "interval": "30s",
