@@ -1,0 +1,120 @@
+services:
+  base:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+      args:
+        GITHUB_TOKEN: ${GITHUB_TOKEN}
+    image: oai-adk-base-image:latest
+  base-langgraph:
+    build:
+      context: .
+      dockerfile: Dockerfile.framework_base
+      args:
+        FRAMEWORK_PACKAGE: oai-langgraph-core
+        FRAMEWORK_SUBDIR: packages/langgraph-core
+        ADK_VERSION: main
+    image: oai-adk-langgraph-base-image:latest
+    depends_on:
+      base:
+        condition: service_completed_successfully
+  base-crewai:
+    build:
+      context: .
+      dockerfile: Dockerfile.framework_base
+      args:
+        FRAMEWORK_PACKAGE: oai-crewai-core
+        FRAMEWORK_SUBDIR: packages/crewai-core
+        ADK_VERSION: main
+    image: oai-adk-crewai-base-image:latest
+    depends_on:
+      base:
+        condition: service_completed_successfully
+  base-strands:
+    build:
+      context: .
+      dockerfile: Dockerfile.framework_base
+      args:
+        FRAMEWORK_PACKAGE: oai-aws-strands-core
+        FRAMEWORK_SUBDIR: packages/aws-strands-core
+        ADK_VERSION: main
+    image: oai-adk-strands-base-image:latest
+    depends_on:
+      base:
+        condition: service_completed_successfully
+  base-openai:
+    build:
+      context: .
+      dockerfile: Dockerfile.framework_base
+      args:
+        FRAMEWORK_PACKAGE: oai-openai-core
+        FRAMEWORK_SUBDIR: packages/openai-core
+        ADK_VERSION: main
+    image: oai-adk-openai-base-image:latest
+    depends_on:
+      base:
+        condition: service_completed_successfully
+  valkey:
+    image: valkey/valkey:latest
+    container_name: agent-valkey
+    environment:
+      REDIS_PASSWORD: admin
+    networks:
+      - agent-server-network
+    command: valkey-server --appendonly yes
+    ports:
+      - 6379:6379
+    volumes:
+      - valkey-agent-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - -a
+        - admin
+        - ping
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+  postgres:
+    image: postgres:16
+    container_name: agent_logs_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: agent_logs
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command:
+      - postgres
+      - -c
+      - max_connections=300
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_io_concurrency=200
+    networks:
+      - agent-server-network
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U postgres
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+networks:
+  agent-server-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16
+volumes:
+  valkey-agent-data: {}
+  postgres_data: {}
