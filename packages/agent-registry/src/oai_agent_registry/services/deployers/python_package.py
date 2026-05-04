@@ -4,6 +4,7 @@ import socket
 import asyncio
 import logging
 import subprocess
+import shutil
 from pathlib import Path
 from typing import Dict, Any, Optional, List, AsyncGenerator, IO
 
@@ -221,13 +222,19 @@ class PythonPackageDeployer(BaseDeployer):
         repo_name = config["repo_name"]
         port = config["port"]
         agent_dir = self.base_dir / repo_name
-        venv_python = agent_dir / ".venv" / "bin" / "python"
+        venv_bin = agent_dir / ".venv" / "bin"
+        venv_python = venv_bin / "python"
         
         if not venv_python.exists():
             # Fallback to system python if venv wasn't created properly
             venv_python = Path(sys.executable)
 
         env = os.environ.copy()
+        
+        # Activate virtual environment in the subprocess by prepending its bin to PATH
+        if venv_bin.exists():
+            env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
+            env["VIRTUAL_ENV"] = str(agent_dir / ".venv")
         
         agent_env = get_common_agent_env(
             agent_name=agent_name,
