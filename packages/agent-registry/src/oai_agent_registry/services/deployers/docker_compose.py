@@ -440,6 +440,9 @@ class DockerComposeManager(BaseDeployer):
                 },
             },
             "image": "oai-adk-langgraph-base-image:latest",
+            "depends_on": {
+                "base": {"condition": "service_completed_successfully"},
+            }
         }
 
         services["base-crewai"] = {
@@ -453,6 +456,9 @@ class DockerComposeManager(BaseDeployer):
                 },
             },
             "image": "oai-adk-crewai-base-image:latest",
+            "depends_on": {
+                "base": {"condition": "service_completed_successfully"},
+            }
         }
 
         services["base-strands"] = {
@@ -466,6 +472,9 @@ class DockerComposeManager(BaseDeployer):
                 },
             },
             "image": "oai-adk-strands-base-image:latest",
+            "depends_on": {
+                "base": {"condition": "service_completed_successfully"},
+            }
         }
 
         services["base-openai"] = {
@@ -479,6 +488,9 @@ class DockerComposeManager(BaseDeployer):
                 },
             },
             "image": "oai-adk-openai-base-image:latest",
+            "depends_on": {
+                "base": {"condition": "service_completed_successfully"},
+            }
         }
 
         for service_name, config in agent_config.items():
