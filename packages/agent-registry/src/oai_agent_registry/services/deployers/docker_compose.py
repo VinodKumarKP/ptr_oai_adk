@@ -172,6 +172,9 @@ def _build_service(service_name: str, config: Dict[str, Any],
         "command": f"--port {port}",
         "restart": "unless-stopped",
         "networks": ["agent-server-network"],
+        "extra_hosts": [
+            "host.docker.internal:host-gateway"
+        ],
         "healthcheck": {
             "test": ["CMD", "curl", "-f", f"http://localhost:{port}/health"],
             "interval": "30s",
@@ -493,6 +496,9 @@ class DockerComposeManager(BaseDeployer):
             "container_name": "agent-valkey",
             "environment": {"REDIS_PASSWORD": "admin"},
             "networks": ["agent-server-network"],
+            "extra_hosts": [
+                "host.docker.internal:host-gateway"
+            ],
             "command": "valkey-server --appendonly yes",
             "ports": ["6379:6379"],
             "volumes": ["valkey-agent-data:/data"],
