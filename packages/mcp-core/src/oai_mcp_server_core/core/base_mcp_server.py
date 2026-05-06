@@ -1,8 +1,12 @@
 import argparse
 import os
+import asyncio
+import httpx
 from abc import ABC
 from typing import Literal, List
+from urllib.parse import urlparse
 
+from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, JSONResponse
 
@@ -151,6 +155,79 @@ class BaseMCPServer(ABC):
                 "isolation_enabled": self.enable_request_isolation
             })
 
+    def _get_local_registry_url(self):
+        """
+        Get the local registry URL by parsing MCP_BASE_URL and forcing localhost.
+        Returns the local URL or None if the environment variable is not set.
+        """
+        if os.environ.get('MCP_REGISTRY_URL') :
+            mcp_base_url = os.environ.get('MCP_REGISTRY_URL')
+        elif os.environ.get('MCP_BASE_URL'):
+            mcp_base_url = f"{os.environ.get('MCP_BASE_URL')}:{os.environ.get('MCP_BASE_URL_PORT', "8082")}"
+        else:
+            return None
+
+        if not mcp_base_url:
+            return None
+
+        try:
+            parsed_url = urlparse(mcp_base_url)
+            port = parsed_url.port
+            if not port:
+                self.logger.warning(f"Could not extract port from '{mcp_base_url}'. Using original URL.")
+                return mcp_base_url.rstrip('/')
+            
+            local_url = os.environ.get('MCP_REGISTRY_URL') or f"http://localhost:{port}"
+            self.logger.info(f"MCP_BASE_URL is set. Forcing registry connection to {local_url}")
+            return local_url
+        except Exception as e:
+            self.logger.error(f"Failed to parse '{mcp_base_url}': {e}")
+            return None
+
+    async def _register_with_registry(self, port: int):
+        """Register the server with the MCP registry if MCP_BASE_URL is set."""
+        registry_base_url = self._get_local_registry_url()
+        if not registry_base_url:
+            self.logger.info("MCP_BASE_URL not set, skipping registration.")
+            return
+
+        registry_url = f"{registry_base_url}/register"
+        server_info = {
+            "name": self.server_name,
+            "description": getattr(self.server_config, "description", "No description available"),
+            "endpoint": f"http://localhost:{port}",
+            "port": port,
+            "registered_via": "dynamic",
+            "framework": "mcp"
+        }
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(registry_url, json=server_info)
+                if response.status_code == 200:
+                    self.logger.info(f"Successfully registered server '{self.server_name}' with registry at {registry_base_url}")
+                else:
+                    self.logger.error(f"Failed to register server using {registry_url}. Status: {response.status_code}, Response: {response.text}")
+        except httpx.RequestError as e:
+            self.logger.error(f"Error connecting to MCP registry at {registry_url}: {e}")
+
+    async def _deregister_from_registry(self):
+        """Deregister the server from the MCP registry."""
+        registry_base_url = self._get_local_registry_url()
+        if not registry_base_url:
+            return
+
+        registry_url = f"{registry_base_url}/deregister"
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(registry_url, json={"name": self.server_name})
+                if response.status_code == 200:
+                    self.logger.info(f"Successfully deregistered server '{self.server_name}' from registry.")
+                else:
+                    self.logger.error(f"Failed to deregister server. Status: {response.status_code}, Response: {response.text}")
+        except httpx.RequestError as e:
+            self.logger.error(f"Error connecting to MCP registry at {registry_url}: {e}")
+
     def run(self, transport: Literal["stdio", "streamable-http", "sse"] = "stdio", port: int = None):
         """
         Run the MCP server.
@@ -162,8 +239,17 @@ class BaseMCPServer(ABC):
         if transport not in VALID_TRANSPORTS:
             raise TransportError(f"Invalid transport: {transport}. Must be one of {VALID_TRANSPORTS}")
 
-        # Add authentication middleware first (runs first in the chain)
-        self.mcp.add_middleware(AuthenticationMiddleware(self.server_name))
+        # # Add CORS middleware to allow cross-origin requests for web interfaces
+        # self.mcp.add_middleware(
+        #     CORSMiddleware,
+        #     allow_origins=["*"],
+        #     allow_credentials=True,
+        #     allow_methods=["*"],
+        #     allow_headers=["*"]
+        # )
+        #
+        # # Add authentication middleware first (runs first in the chain)
+        # self.mcp.add_middleware(AuthenticationMiddleware(self.server_name))
 
         # Add header capture middleware for request isolation
         if self.enable_request_isolation:
@@ -174,8 +260,22 @@ class BaseMCPServer(ABC):
 
         if transport in ["streamable-http", "sse"]:
             port = port if port else 8000
+            
+            # Register with registry
+            try:
+                asyncio.run(self._register_with_registry(port))
+            except Exception as e:
+                self.logger.error(f"Error during registration: {e}")
+
             self.logger.info(f"Starting MCP server '{self.server_name}' on {transport}://0.0.0.0:{port}")
-            self.mcp.run(transport=transport, port=port, host="0.0.0.0")
+            try:
+                self.mcp.run(transport=transport, port=port, host="0.0.0.0")
+            finally:
+                # Deregister from registry
+                try:
+                    asyncio.run(self._deregister_from_registry())
+                except Exception as e:
+                    self.logger.error(f"Error during deregistration: {e}")
         else:
             self.logger.info(f"Starting MCP server '{self.server_name}' on {transport}")
             self.mcp.run(transport=transport)
