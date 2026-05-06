@@ -166,7 +166,7 @@ class AgentBuilder(BaseAgentBuilder):
                 output_mode="full_history",
                 parallel_tool_calls=True,
                 response_format=self.structured_output_model_registry.get_model(crew_config.get('structured_output_model', None))
-            ).compile(checkpointer=memory)  
+            ).compile(checkpointer=memory)
 
         elif pattern == Constants.PATTERN_AGENT_AS_TOOL:
             supervisor = create_agent(
@@ -282,7 +282,7 @@ class AgentBuilder(BaseAgentBuilder):
             'tool_count': tool_count,
             'mcp_count': mcp_count,
             'total_tools': tool_count + mcp_count,
-            'agent_type': agent_config.get('type', 'langchain')
+            'agent_type': Constants.LANGGRAPH
         }
 
     def extract_context_map(
