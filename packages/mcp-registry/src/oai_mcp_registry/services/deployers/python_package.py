@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class PythonPackageDeployer(BaseDeployer):
     """
     Deployer that clones a git repository, creates a python virtual environment,
-    installs dependencies, and runs the server locally as a python subprocess.
+    installs dependencies using uv, and runs the server locally as a python subprocess.
     """
 
     def __init__(
@@ -77,6 +77,8 @@ class PythonPackageDeployer(BaseDeployer):
         return name
 
     def image_exists(self, server_name: str, version: str) -> bool:
+        # Since this deployer clones repos and creates venvs, we check if the directory exists
+        # Versioning would require checking out specific tags, which could be implemented in future.
         config = self._dynamic_servers.get(server_name)
         if not config:
             return False
@@ -136,6 +138,7 @@ class PythonPackageDeployer(BaseDeployer):
             "current_version": current_version
         }
 
+        # 1. Clone or Pull
         if not server_dir.exists():
             yield f"Cloning {source_url} to {server_dir}...\n"
             cmd = ["git", "clone", source_url, str(server_dir)]
@@ -168,6 +171,7 @@ class PythonPackageDeployer(BaseDeployer):
                 yield line.decode('utf-8', errors='replace')
             await process.wait()
 
+        # 2. Create venv
         venv_dir = server_dir / ".venv"
         if not venv_dir.exists() and not no_build:
             yield f"Creating virtual environment in {venv_dir}...\n"
@@ -179,11 +183,22 @@ class PythonPackageDeployer(BaseDeployer):
                 yield line.decode('utf-8', errors='replace')
             await process.wait()
 
+        # 3. Install requirements
         if not no_build:
-            yield "Installing requirements...\n"
             pip_exe = venv_dir / "bin" / "pip"
             
-            cmd = [str(pip_exe), "install", "-r", str(server_dir / "requirements.txt")]
+            yield "Installing uv...\n"
+            uv_install_cmd = [str(pip_exe), "install", "uv"]
+            process = await asyncio.create_subprocess_exec(*uv_install_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            while True:
+                line = await process.stdout.readline()
+                if not line: break
+                yield line.decode('utf-8', errors='replace')
+            await process.wait()
+
+            yield "Installing requirements via uv...\n"
+            uv_exe = venv_dir / "bin" / "uv"
+            cmd = [str(uv_exe), "pip", "install", "-r", str(server_dir / "requirements.txt")]
             logger.info(f"Running command: {' '.join(cmd)}")
             
             process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
@@ -191,10 +206,13 @@ class PythonPackageDeployer(BaseDeployer):
                 line = await process.stdout.readline()
                 if not line: break
                 decoded = line.decode('utf-8', errors='replace')
-                logger.info(f"[{server_name} pip] {decoded.strip()}")
+                # Log the output to the main logger
+                logger.info(f"[{server_name} uv] {decoded.strip()}")
+                # Yield it back to the stream
                 yield decoded
             await process.wait()
 
+        # 4. Start server
         yield f"Starting Python Package Server '{server_name}' on port {port}...\n"
         try:
             self.start_server(server_name)
@@ -218,10 +236,12 @@ class PythonPackageDeployer(BaseDeployer):
         venv_python = venv_bin / "python"
         
         if not venv_python.exists():
+            # Fallback to system python if venv wasn't created properly
             venv_python = Path(sys.executable)
 
         env = os.environ.copy()
         
+        # Activate virtual environment in the subprocess by prepending its bin to PATH
         if venv_bin.exists():
             env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
             env["VIRTUAL_ENV"] = str(server_dir / ".venv")
@@ -241,6 +261,8 @@ class PythonPackageDeployer(BaseDeployer):
         server_py = server_dir / "mcp_registry_servers" / "servers" / server_name / "server.py"
         
         if not server_py.exists():
+            # Sometimes the repo structure might just be server.py in root or differently nested.
+            # Look for server.py in root as a fallback.
             fallback_py = server_dir / "server.py"
             if fallback_py.exists():
                 server_py = fallback_py
