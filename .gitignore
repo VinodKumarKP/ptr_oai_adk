@@ -20,3 +20,4 @@ frontend/
 packages/agent-registry/src/oai_agent_registry/resources/docker/docker-compose.generated.yaml
 *.md
 packages/agent-registry/src/oai_agent_registry/resources/python
+packages/mcp-registry/src/oai_mcp_registry/resources/docker/docker-compose.generated.yaml
