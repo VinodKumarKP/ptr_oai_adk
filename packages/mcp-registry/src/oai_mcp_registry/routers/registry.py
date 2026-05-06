@@ -1,3 +1,5 @@
+import os
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
@@ -34,10 +36,11 @@ async def health_check(registry: MCPRegistry = Depends(get_registry)):
 async def get_config(registry: MCPRegistry = Depends(get_registry)):
     servers_info = {}
     if registry.config:
+        endpoint = os.environ.get('AGENT_BASE_URL', "localhost")
         for name, config in registry.config.servers.items():
             servers_info[name] = {
                 "description": config.description,
-                "endpoint": f"http://{registry.public_ip}:8081/{name}/mcp",
+                "endpoint": f"{endpoint}:8081/{name}/mcp",
                 "status": "active" if name in registry.sub_apps else "inactive"
             }
     return {

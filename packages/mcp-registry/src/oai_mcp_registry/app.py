@@ -63,8 +63,8 @@ async def proxy_middleware(request: Request, call_next):
     remaining_path = "/".join(path_parts[1:])
 
     # If it is not a known server, let standard routing handle it (which will trigger global verify_api_key)
-    if server_name not in registry_instance.sub_apps or remaining_path.startswith(("mcp", "sse")):
-        return await call_next(request)
+    # if server_name not in registry_instance.sub_apps or remaining_path.startswith(("mcp", "sse")):
+    #     return await call_next(request)
 
     # Manual validation for middleware proxied requests
     try:

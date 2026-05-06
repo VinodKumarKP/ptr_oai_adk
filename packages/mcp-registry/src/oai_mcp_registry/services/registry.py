@@ -162,7 +162,7 @@ class MCPRegistry:
         """Restores dynamic servers from the DB that were active before the registry restarted."""
         logger.info("Restoring active dynamic MCP servers from database...")
         try:
-            dynamic_servers = await self.db_logger.get_active_dynamic_servers()
+            dynamic_servers = await self.db_logger.get_all_servers()
         except Exception as e:
             logger.error(f"Failed to load dynamic servers from DB: {e}")
             return
