@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, Literal, List
 from pydantic import BaseModel, Field
 
 class ServerConfig(BaseModel):
@@ -6,6 +6,30 @@ class ServerConfig(BaseModel):
     endpoint: Optional[str] = None
     port: Optional[int] = None
     description: str = "A proxied MCP server"
+    registered_via: Literal["config", "dynamic", "registry"] = "dynamic"
+    source: Optional[str] = None
+    tags: Optional[List[str]] = Field(default_factory=list)
+    current_version: Optional[str] = None
+    available_versions: Optional[List[str]] = Field(default_factory=list)
+    deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
+
+class ServerRegistration(BaseModel):
+    """Payload for registering an MCP server."""
+    name: str
+    description: str = "A proxied MCP server"
+    endpoint: Optional[str] = None
+    port: Optional[int] = None
+    active: bool = True
+    registered_via: Literal["config", "dynamic", "registry"] = "dynamic"
+    source: Optional[str] = None
+    tags: Optional[List[str]] = Field(default_factory=list)
+    current_version: Optional[str] = None
+    available_versions: Optional[List[str]] = Field(default_factory=list)
+    deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
+
+class ServerDeregistration(BaseModel):
+    """Payload for deregistering an MCP server."""
+    name: str
 
 class RegistryConfig(BaseModel):
     """Configuration for the registry server."""

@@ -1,11 +1,13 @@
 import logging
 import warnings
 from contextlib import asynccontextmanager, AsyncExitStack
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, Depends, HTTPException
+from fastapi.responses import JSONResponse
 import httpx
 
 from oai_mcp_registry.dependencies import registry_instance
 from oai_mcp_registry.routers.registry import router
+from oai_mcp_registry.security.dependencies import verify_api_key, api_key_header, _validate_token
 
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="mcp")
 logging.basicConfig(
@@ -16,6 +18,8 @@ logger = logging.getLogger("MCPRegistry")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await registry_instance.initialize()
+
     if registry_instance.registry_config.enable_auto_discovery:
         host = registry_instance.registry_config.host
         await registry_instance.discover_servers(host)
@@ -24,6 +28,7 @@ async def lifespan(app: FastAPI):
         app.mount(f"/{name}", sub_app)
 
     async with AsyncExitStack() as stack:
+        registry_instance.exit_stack = stack
         logger.info("--- Starting Upstream Connections ---")
         active_count = 0
         for name, sub_app in registry_instance.sub_apps.items():
@@ -36,11 +41,14 @@ async def lifespan(app: FastAPI):
         logger.info(f"--- Proxy Ready: {active_count}/{len(registry_instance.sub_apps)} upstreams active ---")
         yield
         logger.info("--- Shutting Down ---")
+        await registry_instance.shutdown()
 
 app = FastAPI(
     title="MCP Gateway",
     description="Unified Proxy for Distributed MCP Servers",
-    lifespan=lifespan
+    lifespan=lifespan,
+    dependencies=[Depends(verify_api_key)],
+    security=[{api_key_header.model.name: []}],
 )
 
 app.include_router(router)
@@ -54,8 +62,17 @@ async def proxy_middleware(request: Request, call_next):
     server_name = path_parts[0]
     remaining_path = "/".join(path_parts[1:])
 
+    # If it is not a known server, let standard routing handle it (which will trigger global verify_api_key)
     if server_name not in registry_instance.sub_apps or remaining_path.startswith(("mcp", "sse")):
         return await call_next(request)
+
+    # Manual validation for middleware proxied requests
+    try:
+        _validate_token(request, registry_instance.registry_config, server_name)
+    except HTTPException as e:
+        return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": str(e)})
 
     server_config = registry_instance.config.servers[server_name]
     if server_config.endpoint:

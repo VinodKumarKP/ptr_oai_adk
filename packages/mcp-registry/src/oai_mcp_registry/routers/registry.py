@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from oai_mcp_registry.services.registry import MCPRegistry
 from oai_mcp_registry.dependencies import get_registry
+from oai_mcp_registry.models import ServerRegistration, ServerDeregistration
 
 router = APIRouter()
 
@@ -15,6 +16,8 @@ async def root():
             "GET /health": "Health check endpoint",
             "GET /info": "Available proxied MCP Server endpoints",
             "POST /reload-config": "Reload configuration",
+            "POST /register": "Register a new MCP server dynamically",
+            "POST /deregister": "Deregister an MCP server",
         },
     }
     return JSONResponse(info)
@@ -49,4 +52,14 @@ async def get_config(registry: MCPRegistry = Depends(get_registry)):
 
 @router.post("/reload-config")
 async def reload_config(registry: MCPRegistry = Depends(get_registry)):
-    return registry.reload_config()
+    return await registry.reload_config()
+
+@router.post("/register")
+async def register_server(request: Request, server_registration: ServerRegistration, registry: MCPRegistry = Depends(get_registry)):
+    """Registers a new MCP server."""
+    return await registry.register_server(request.app, server_registration)
+
+@router.post("/deregister")
+async def deregister_server(server_deregistration: ServerDeregistration, registry: MCPRegistry = Depends(get_registry)):
+    """Deregisters an MCP server."""
+    return await registry.deregister_server(server_deregistration)
