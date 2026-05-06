@@ -35,12 +35,19 @@ async def health_check(registry: MCPRegistry = Depends(get_registry)):
 @router.get("/info")
 async def get_config(registry: MCPRegistry = Depends(get_registry)):
     servers_info = {}
+
+    if os.environ.get('MCP_REGISTRY_URL'):
+        endpoint = os.environ.get('MCP_REGISTRY_URL')
+    elif os.environ.get('MCP_BASE_URL'):
+        endpoint = f"{os.environ.get('MCP_BASE_URL')}:{os.environ.get('MCP_BASE_URL_PORT', registry.registry_config.port)}"
+    else:
+        endpoint = f"http://localhost:8081"
+
     if registry.config:
-        endpoint = os.environ.get('AGENT_BASE_URL', "localhost")
         for name, config in registry.config.servers.items():
             servers_info[name] = {
                 "description": config.description,
-                "endpoint": f"{endpoint}:8081/{name}/mcp",
+                "endpoint": f"{endpoint}/{name}/mcp",
                 "status": "active" if name in registry.sub_apps else "inactive"
             }
     return {
