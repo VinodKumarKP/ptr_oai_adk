@@ -169,7 +169,7 @@ def _build_service(service_name: str, config: Dict[str, Any],
         "environment": _build_environment(
             service_name, port, env_overrides, base_url, local_registry_url
         ),
-        "command": f"--port {port}",
+        "command": f"--port {port} --transport streamable-http",
         "restart": "unless-stopped",
         "networks": ["agent-server-network"],
         "extra_hosts": [
@@ -422,7 +422,7 @@ class DockerComposeManager(BaseDeployer):
             "build": {
                 "context": ".",
                 "dockerfile": "Dockerfile.base",
-                "args": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
+                "secrets": ["github_token"],
             },
             "image": "oai-adk-base-image:latest",
         }
@@ -555,6 +555,11 @@ class DockerComposeManager(BaseDeployer):
                 "valkey-agent-data": {},
                 "postgres_data": {},
             },
+            "secrets": {
+                "github_token": {
+                    "environment": "GITHUB_TOKEN"
+                }
+            }
         }
 
     def _build_agents_compose_dict(
