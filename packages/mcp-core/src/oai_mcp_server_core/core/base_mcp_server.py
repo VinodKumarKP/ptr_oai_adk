@@ -171,6 +171,9 @@ class BaseMCPServer(ABC):
             return None
 
         try:
+            if not mcp_base_url.startswith('http'):
+                mcp_base_url = f"http://{mcp_base_url}"
+
             parsed_url = urlparse(mcp_base_url)
             port = parsed_url.port
             if not port:
