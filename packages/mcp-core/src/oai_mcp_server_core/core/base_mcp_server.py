@@ -163,7 +163,7 @@ class BaseMCPServer(ABC):
         if os.environ.get('MCP_REGISTRY_URL') :
             mcp_base_url = os.environ.get('MCP_REGISTRY_URL')
         elif os.environ.get('MCP_BASE_URL'):
-            mcp_base_url = f"{os.environ.get('MCP_BASE_URL')}:{os.environ.get('MCP_BASE_URL_PORT', "8082")}"
+            mcp_base_url = f"{os.environ.get('MCP_BASE_URL')}:{os.environ.get('MCP_BASE_URL_PORT', '8082')}"
         else:
             return None
 
@@ -242,22 +242,28 @@ class BaseMCPServer(ABC):
         if transport not in VALID_TRANSPORTS:
             raise TransportError(f"Invalid transport: {transport}. Must be one of {VALID_TRANSPORTS}")
 
-        # # Add CORS middleware to allow cross-origin requests for web interfaces
-        # self.mcp.add_middleware(
-        #     CORSMiddleware,
-        #     allow_origins=["*"],
-        #     allow_credentials=True,
-        #     allow_methods=["*"],
-        #     allow_headers=["*"]
-        # )
-        #
-        # # Add authentication middleware first (runs first in the chain)
-        # self.mcp.add_middleware(AuthenticationMiddleware(self.server_name))
+        # Add authentication middleware first (runs first in the chain)
+        self.mcp.add_middleware(AuthenticationMiddleware(self.server_name))
 
         # Add header capture middleware for request isolation
         if self.enable_request_isolation:
             self.mcp.add_middleware(HeaderCaptureMiddleware())
             self.logger.info("HeaderCaptureMiddleware added - request isolation active")
+
+        # Properly inject CORSMiddleware into the underlying Starlette/FastAPI app instance
+        # if it exists, since FastMCP's add_middleware is only for MCP context handlers.
+        try:
+            if hasattr(self.mcp, "_app"):
+                self.mcp._app.add_middleware(
+                    CORSMiddleware,
+                    allow_origins=["*"],
+                    allow_credentials=True,
+                    allow_methods=["*"],
+                    allow_headers=["*"]
+                )
+                self.logger.info("CORS Middleware applied successfully to underlying HTTP app.")
+        except Exception as e:
+            self.logger.warning(f"Could not apply CORS middleware: {e}")
 
         port = port if port is not None else self.server_config.port
 
