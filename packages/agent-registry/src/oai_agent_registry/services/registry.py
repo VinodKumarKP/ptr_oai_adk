@@ -279,7 +279,7 @@ class AgentRegistry:
             return
 
         for port in range(start, end + 1):
-            endpoint = f"http://{host}:{port}"
+            endpoint = f"http://{host.replace('http://', '')}:{port}"
             try:
                 response = await self.client.get(f"{endpoint}/info", timeout=1.0)
                 if response.status_code == 200:
@@ -315,14 +315,14 @@ class AgentRegistry:
                             available_versions=agent_info.get("available_versions", []),
                             deployment_mode=agent_info.get("deployment_mode", "docker")
                         )
-            except (httpx.RequestError, json.JSONDecodeError):
+            except (httpx.RequestError, json.JSONDecodeError) as e:
                 pass
 
     async def get_info(self) -> JSONResponse:
         """Returns information about the registry and its agents."""
         enabled_agents = {name for name, agent in self.agents.items() if agent.enabled}
         endpoint = self.private_ip if os.environ.get('USE_PRIVATE_IP', 'false').lower() == 'true' else \
-            endpoint = f"{os.environ.get('AGENT_BASE_URL')}:{os.environ.get('AGENT_BASE_URL_PORT', self.registry_config.port)}"
+                    f"{os.environ.get('AGENT_BASE_URL')}:{os.environ.get('AGENT_BASE_URL_PORT', self.registry_config.port)}"
         info = {
             "registry": {
                 "uptime_seconds": time.time() - self.start_time,

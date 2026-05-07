@@ -33,7 +33,7 @@ def get_common_agent_env(
         "DB_POOL_TIMEOUT": "60",
         "DB_POOL_MIN_SIZE": "1",
         "AGENT_BASE_URL": base_url,
-        "AGENT_LOCAL_REGISTRY_URL": local_registry_url,
+        "AGENT_REGISTRY_URL": local_registry_url,
     }
 
     # Apply overrides (user-supplied variables)

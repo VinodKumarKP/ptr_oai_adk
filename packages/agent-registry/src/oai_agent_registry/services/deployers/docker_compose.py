@@ -169,7 +169,7 @@ def _build_service(service_name: str, config: Dict[str, Any],
         "environment": _build_environment(
             service_name, port, env_overrides, base_url, local_registry_url
         ),
-        "command": f"--port {port} --transport streamable-http",
+        "command": f"--port {port}",
         "restart": "unless-stopped",
         "networks": ["agent-server-network"],
         "extra_hosts": [

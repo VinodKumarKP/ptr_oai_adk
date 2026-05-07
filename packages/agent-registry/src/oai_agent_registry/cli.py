@@ -32,18 +32,16 @@ def main():
 
     if os.environ.get('AGENT_REGISTRY_URL', None):
         parsed = urlparse(os.environ.get('AGENT_REGISTRY_URL'))
-        host = parsed.netloc.split(':')[0]
         port = parsed.port
-        os.environ['AGENT_BASE_URL'] = host
+        os.environ['AGENT_BASE_URL'] = parsed.netloc.split(':')[0]
         os.environ['AGENT_BASE_URL_PORT'] = str(port)
     elif os.environ.get('AGENT_BASE_URL', None):
-        host = os.environ.get('AGENT_BASE_URL')
         port = os.environ.get('AGENT_BASE_URL_PORT')
-        os.environ['AGENT_REGISTRY_URL'] = f"{host}:{port}"
+        os.environ['AGENT_REGISTRY_URL'] = f"{os.environ.get('AGENT_BASE_URL')}:{port}"
     else:
-        host = args.host or registry_instance.registry_config.host
         port = args.port or registry_instance.registry_config.port
 
+    host = args.host or registry_instance.registry_config.host
     registry_instance.registry_config.host = host
     registry_instance.registry_config.port = port
 
@@ -53,8 +51,8 @@ def main():
     logger.info(f"Starting server on {host}:{port} using {loop_type} loop")
     uvicorn.run(
         app,
-        host=host,
-        port=port,
+        host=host.replace('http://', ''),
+        port=int(port),
         workers=1,
         proxy_headers=True,
         forwarded_allow_ips="*",
