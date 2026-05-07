@@ -1,5 +1,8 @@
 import argparse
+import os
 import platform
+from urllib.parse import urlparse
+
 import uvicorn
 from oai_agent_registry.app import app, logger
 from oai_agent_registry.dependencies import registry_instance
@@ -27,14 +30,22 @@ def main():
     if args.end_port:
         registry_instance.registry_config.end_port = args.end_port
 
-    host = args.host or registry_instance.registry_config.host
-    port = args.port or registry_instance.registry_config.port
+    if os.environ.get('AGENT_REGISTRY_URL', None):
+        parsed = urlparse(os.environ.get('AGENT_REGISTRY_URL'))
+        host = parsed.netloc.split(':')[0]
+        port = parsed.port
+        os.environ['AGENT_BASE_URL'] = host
+        os.environ['AGENT_BASE_URL_PORT'] = str(port)
+    elif os.environ.get('AGENT_BASE_URL', None):
+        host = os.environ.get('AGENT_BASE_URL')
+        port = os.environ.get('AGENT_BASE_URL_PORT')
+        os.environ['AGENT_REGISTRY_URL'] = f"{host}:{port}"
+    else:
+        host = args.host or registry_instance.registry_config.host
+        port = args.port or registry_instance.registry_config.port
 
-    if args.host:
-        registry_instance.registry_config.host = host
-
-    if args.port:
-        registry_instance.registry_config.port = port
+    registry_instance.registry_config.host = host
+    registry_instance.registry_config.port = port
 
     # Use uvloop only on non-Windows systems for better performance
     loop_type = "uvloop" if platform.system() != "Windows" else "asyncio"

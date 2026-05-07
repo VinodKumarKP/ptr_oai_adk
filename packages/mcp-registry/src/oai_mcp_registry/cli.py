@@ -1,6 +1,8 @@
 import argparse
 import os
 import sys
+from urllib.parse import urlparse
+
 import uvicorn
 import logging
 
@@ -35,8 +37,22 @@ def main():
     if args.end_port:
         registry_instance.registry_config.end_port = args.end_port
 
-    host = args.host or registry_instance.registry_config.host
-    port = args.port or registry_instance.registry_config.port
+    if os.environ.get('MCP_REGISTRY_URL', None):
+        parsed = urlparse(os.environ.get('MCP_REGISTRY_URL'))
+        host = parsed.netloc.split(':')[0]
+        port = parsed.port
+        os.environ['MCP_BASE_URL'] = host
+        os.environ['MCP_BASE_URL_PORT'] = str(port)
+    elif os.environ.get('MCP_BASE_URL', None):
+        host = os.environ.get('MCP_BASE_URL')
+        port = os.environ.get('MCP_BASE_URL_PORT')
+        os.environ['MCP_REGISTRY_URL'] = f"{host}:{port}"
+    else:
+        host = args.host or registry_instance.registry_config.host
+        port = args.port or registry_instance.registry_config.port
+
+    registry_instance.registry_config.start_port = port
+    registry_instance.registry_config.host = host
 
     logger.info(f"Starting server on {host}:{port}")
     uvicorn.run(
