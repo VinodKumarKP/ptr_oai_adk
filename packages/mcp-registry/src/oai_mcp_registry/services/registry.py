@@ -474,6 +474,7 @@ class MCPRegistry:
         if deployer:
             deployer.remove_server(server_name)
 
+        self.config.servers[server_name].enabled = False
         logger.info(f"Deactivating server '{server_name}'.")
 
         await self.db_logger.deregister_server(server_name=server_name)
@@ -542,6 +543,7 @@ class MCPRegistry:
                                         no_build=_no_build,
                                 ):
                                     yield f"data: {line.strip()}\n\n"
+                                self.config.servers[server_name].enabled = True
                                 yield f"data: Server '{server_name}' successfully switched to {version}!\n\n"
                             except Exception as e:
                                 yield f"data: Error during version switch: {str(e)}\n\n"
@@ -564,15 +566,19 @@ class MCPRegistry:
 
                 elif action == "stop":
                     deployer.stop_server(server_name)
+                    self.config.servers[server_name].enabled = False
 
                 elif action == "start":
                     deployer.start_server(server_name)
+                    self.config.servers[server_name].enabled = True
 
                 elif action == "restart":
                     deployer.remove_server(server_name)
+                    self.config.servers[server_name].enabled = False
                     logger.info(f"Server '{server_name}' stopped. Restarting...")
                     await asyncio.sleep(1)
                     deployer.start_server(server_name)
+                    self.config.servers[server_name].enabled = True
 
                 elif action == "rebuild":
                     if stream_output:
@@ -592,6 +598,8 @@ class MCPRegistry:
                                         refresh_repo=True,
                                 ):
                                     yield f"data: {line.strip()}\n\n"
+
+                                self.config.servers[server_name].enabled = True
                                 yield f"data: Server '{server_name}' rebuild completed successfully!\n\n"
                             except Exception as e:
                                 yield f"data: Error during rebuild: {str(e)}\n\n"
@@ -600,6 +608,8 @@ class MCPRegistry:
                         return StreamingResponse(stream_generator(), media_type="text/event-stream")
                     else:
                         deployer.remove_server(server_name)
+                        self.config.servers[server_name].enabled = False
+                        logger.info(f"Server '{server_name}' stopped. Rebuilding image...")
                         await deployer.deploy_server(
                             server_name=server_name,
                             source_url=server_config.source,
@@ -611,6 +621,7 @@ class MCPRegistry:
                             current_version=server_config.current_version,
                             refresh_repo=True,
                         )
+                        self.config.servers[server_name].enabled = True
 
                 elif action == "redeploy":
                     if stream_output:
@@ -659,4 +670,11 @@ class MCPRegistry:
                 logger.error(f"Failed to execute lifecycle action '{action}' for server '{server_name}': {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
-        return JSONResponse({"message": f"Lifecycle action '{action}' executed for server '{server_name}'."})
+        return JSONResponse({
+                "message": f"Lifecycle action '{action}' executed for server '{server_name}'.",
+                "agent": server_name,
+                "action": action,
+                "status": "completed" if action != "redeploy" else "initiated",
+                "enabled": self.config.servers[server_name].enabled
+             }
+        )

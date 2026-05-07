@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 
 from oai_mcp_registry.services.registry import MCPRegistry
 from oai_mcp_registry.dependencies import get_registry
-from oai_mcp_registry.models import ServerRegistration, ServerDeregistration
+from oai_mcp_registry.models import ServerRegistration, ServerDeregistration, McpServerLifecycleAction
 
 router = APIRouter()
 
@@ -41,7 +41,20 @@ async def get_config(registry: MCPRegistry = Depends(get_registry)):
             servers_info[name] = {
                 "description": config.description,
                 "endpoint": f"{endpoint}/{name}/mcp",
-                "status": "active" if name in registry.sub_apps else "inactive"
+                "enabled": config.enabled,
+                "status": "active" if config.enabled else 'inactive',
+                "current_version": getattr(config, "current_version", None),
+                "available_versions": getattr(config, "available_versions", []),
+                "deployment_mode": getattr(config, "deployment_mode", "docker"),
+                "available_actions": [
+                    "start" if not config.enabled else "stop",
+                    "restart",
+                    "rebuild",
+                    "redeploy",
+                    "update",
+                    "upgrade",
+                    "downgrade",
+                ]
             }
     return {
         "proxy_info": {
@@ -66,3 +79,13 @@ async def register_server(request: Request, server_registration: ServerRegistrat
 async def deregister_server(server_deregistration: ServerDeregistration, registry: MCPRegistry = Depends(get_registry)):
     """Deregisters an MCP server."""
     return await registry.deregister_server(server_deregistration)
+
+@router.post("/lifecycle/{mcp_server_name}")
+async def execute_lifecycle_action(
+    mcp_server_name: str,
+    action_payload: McpServerLifecycleAction,
+    registry: MCPRegistry = Depends(get_registry)
+):
+    """Executes a lifecycle action on a mcp server."""
+    return await registry.execute_lifecycle_action(mcp_server_name, action_payload.action, action_payload.version, action_payload.stream_output)
+

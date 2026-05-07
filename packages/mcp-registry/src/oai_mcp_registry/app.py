@@ -4,6 +4,7 @@ import warnings
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, Depends
 from fastapi.responses import JSONResponse
+from starlette.middleware.cors import CORSMiddleware
 import httpx
 
 from oai_mcp_registry.dependencies import registry_instance
@@ -307,8 +308,18 @@ class NonMCPProxyMiddleware:
 #
 # Request flow:
 #   uvicorn
+#     -> CORSMiddleware          (handles preflight and headers)
 #     -> NonMCPProxyMiddleware   (handles /{server}/non-mcp-path via httpx)
 #     -> DynamicMCPDispatcher    (handles /{server}/mcp|sse via sub-app ASGI)
 #     -> FastAPI                 (handles /health /register /info etc.)
 # ---------------------------------------------------------------------------
 app = NonMCPProxyMiddleware(DynamicMCPDispatcher(_fastapi_app))
+
+if getattr(registry_instance.registry_config, "enable_cors", False):
+    app = CORSMiddleware(
+        app,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )

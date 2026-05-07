@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 class ServerConfig(BaseModel):
     """Represents a single upstream MCP server."""
     endpoint: Optional[str] = None
+    enabled: bool = True
     port: Optional[int] = None
     description: str = "A proxied MCP server"
     registered_via: Literal["config", "dynamic", "registry"] = "dynamic"
@@ -38,8 +39,15 @@ class RegistryConfig(BaseModel):
     enable_auto_discovery: bool = False
     start_port: int = 8000
     end_port: int = 8100
+    enable_cors: bool = True
 
 class AppConfig(BaseModel):
     """Represents the JSON configuration file."""
     servers: Dict[str, ServerConfig]
     registry: RegistryConfig = Field(default_factory=RegistryConfig)
+
+class McpServerLifecycleAction(BaseModel):
+    """Payload for executing a lifecycle action on an agent."""
+    action: Literal["start", "stop", "redeploy", "refresh", "restart", "rebuild", "upgrade", "update", "downgrade"]
+    version: Optional[str] = None
+    stream_output: Optional[bool] = False

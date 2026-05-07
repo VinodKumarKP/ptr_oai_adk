@@ -39,17 +39,16 @@ def main():
 
     if os.environ.get('MCP_REGISTRY_URL', None):
         parsed = urlparse(os.environ.get('MCP_REGISTRY_URL'))
-        host = parsed.netloc.split(':')[0]
         port = parsed.port
-        os.environ['MCP_BASE_URL'] = host
+        os.environ['MCP_BASE_URL'] = parsed.netloc.split(':')[0]
         os.environ['MCP_BASE_URL_PORT'] = str(port)
     elif os.environ.get('MCP_BASE_URL', None):
-        host = os.environ.get('MCP_BASE_URL')
         port = os.environ.get('MCP_BASE_URL_PORT')
-        os.environ['MCP_REGISTRY_URL'] = f"{host}:{port}"
+        os.environ['MCP_REGISTRY_URL'] = f"{os.environ.get('MCP_BASE_URL')}:{os.environ.get('MCP_BASE_URL_PORT')}"
     else:
-        host = args.host or registry_instance.registry_config.host
         port = args.port or registry_instance.registry_config.port
+
+    host = args.host or registry_instance.registry_config.host
 
     registry_instance.registry_config.start_port = port
     registry_instance.registry_config.host = host
