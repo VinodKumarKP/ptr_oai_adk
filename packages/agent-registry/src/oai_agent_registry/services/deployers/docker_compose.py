@@ -495,7 +495,11 @@ class DockerComposeManager(BaseDeployer):
             "image": "valkey/valkey:latest",
             "container_name": "agent-valkey",
             "environment": {"REDIS_PASSWORD": "admin"},
-            "networks": ["agent-server-network"],
+            "networks": {
+                "agent-server-network": {
+                    "ipv4_address": '172.25.0.11'
+                }
+            },
             "extra_hosts": [
                 "host.docker.internal:host-gateway"
             ],
@@ -527,7 +531,11 @@ class DockerComposeManager(BaseDeployer):
                 "-c", "shared_buffers=256MB",
                 "-c", "effective_io_concurrency=200",
             ],
-            "networks": ["agent-server-network"],
+            "networks": {
+                "agent-server-network": {
+                    "ipv4_address": '172.25.0.10'
+                }
+            },
             "extra_hosts": [
                 "host.docker.internal:host-gateway"
             ],

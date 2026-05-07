@@ -3,8 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.base
-      args:
-        GITHUB_TOKEN: ${GITHUB_TOKEN}
+      secrets:
+        - github_token
     image: oai-adk-base-image:latest
   base-langgraph:
     build:
@@ -60,7 +60,8 @@ services:
     environment:
       REDIS_PASSWORD: admin
     networks:
-      - agent-server-network
+      agent-server-network:
+        ipv4_address: 172.25.0.11
     extra_hosts:
       - host.docker.internal:host-gateway
     command: valkey-server --appendonly yes
@@ -97,7 +98,8 @@ services:
       - -c
       - effective_io_concurrency=200
     networks:
-      - agent-server-network
+      agent-server-network:
+        ipv4_address: 172.25.0.10
     extra_hosts:
       - host.docker.internal:host-gateway
     ports:
@@ -122,3 +124,6 @@ networks:
 volumes:
   valkey-agent-data: {}
   postgres_data: {}
+secrets:
+  github_token:
+    environment: GITHUB_TOKEN
