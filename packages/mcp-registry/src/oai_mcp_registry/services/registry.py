@@ -30,7 +30,8 @@ class MCPRegistry:
         self.public_ip = get_public_ip()
         self.db_logger: RegistryDatabaseLogger = RegistryDatabaseLogger(logger=logger)
         self.deployers: Dict[str, BaseDeployer] = {}
-        self.exit_stack = None
+        self.start_sub_app = None  # set by app.py lifespan
+        self.stop_sub_app = None  # set by app.py lifespan
 
         try:
             self.load_configuration()
@@ -92,6 +93,7 @@ class MCPRegistry:
 
         # Initialize deployers for available modes
         seed_configs = self._build_seed_configs_from_servers()
+
         for mode in ["docker", "python_package"]:
             try:
                 self.deployers[mode] = DeployerFactory.get_deployer(
@@ -368,11 +370,11 @@ class MCPRegistry:
                         url = self._build_upstream_url(server_config)
                         mcp = FastMCP.as_proxy(url, name=server_name)
                         sub_app = mcp.http_app()
-                        if server_name not in self.sub_apps:
-                            app.mount(f"/{server_name}", sub_app)
+                        # Stop old lifespan task if re-registering, then start fresh
+                        if server_name in self.sub_apps:
+                            await self.stop_sub_app(server_name)
                         self.sub_apps[server_name] = sub_app
-                        if self.exit_stack:
-                            await self.exit_stack.enter_async_context(sub_app.router.lifespan_context(sub_app))
+                        await self.start_sub_app(server_name, sub_app)
 
                         await self.db_logger.log_server_registration(
                             server_name=server_name,
@@ -423,28 +425,19 @@ class MCPRegistry:
         # Mount proxy if not already mounted; update endpoint if it is
         try:
             url = self._build_upstream_url(server_config)
-            if server_name in self.sub_apps:
-                if url:
-                    # Server already mounted — re-create the proxy pointed at the
-                    # new URL and replace the entry in sub_apps.  FastAPI does not
-                    # support unmounting, so the old mount stays in the router but
-                    # the middleware in app.py (which reads config.servers) will
-                    # route traffic to the updated endpoint from this point on.
-                    mcp = FastMCP.as_proxy(url, name=server_name)
-                    sub_app = mcp.http_app()
+            if url:
+                mcp = FastMCP.as_proxy(url, name=server_name)
+                sub_app = mcp.http_app()
+                # Stop old lifespan task if re-registering, then start fresh
+                if server_name in self.sub_apps:
+                    await self.stop_sub_app(server_name)
                     self.sub_apps[server_name] = sub_app
-                    if self.exit_stack:
-                        await self.exit_stack.enter_async_context(sub_app.router.lifespan_context(sub_app))
+                    await self.start_sub_app(server_name, sub_app)
                     logger.info(f"Updated proxy for existing server '{server_name}' -> {url}")
-            else:
-                if url:
-                    mcp = FastMCP.as_proxy(url, name=server_name)
-                    sub_app = mcp.http_app()
-                    app.mount(f"/{server_name}", sub_app)
+                else:
                     self.sub_apps[server_name] = sub_app
-                    if self.exit_stack:
-                        await self.exit_stack.enter_async_context(sub_app.router.lifespan_context(sub_app))
-                    logger.info(f"Mounted new proxy for server '{server_name}' -> {url}")
+                    await self.start_sub_app(server_name, sub_app)
+                    logger.info(f"Registered new proxy for server '{server_name}' -> {url}")
         except Exception as e:
             logger.error(f"Failed to mount/update sub app proxy for {server_name}: {e}")
 

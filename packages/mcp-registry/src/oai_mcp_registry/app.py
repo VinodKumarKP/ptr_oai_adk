@@ -1,6 +1,7 @@
+import asyncio
 import logging
 import warnings
-from contextlib import asynccontextmanager, AsyncExitStack
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, Depends
 from fastapi.responses import JSONResponse
 import httpx
@@ -27,6 +28,74 @@ REGISTRY_ROUTES = frozenset([
 # FastAPI app (innermost layer)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Sub-app lifespan runner
+#
+# Each FastMCP sub-app uses anyio cancel scopes and contextvars that MUST be
+# entered and exited in the same asyncio Task.  Sharing an AsyncExitStack
+# across the registry lifespan violates this — the stack tears down contexts
+# in a different task than the one that created them, causing:
+#   RuntimeError: Attempted to exit cancel scope in a different task
+#
+# Fix: run every sub-app lifespan inside its own dedicated asyncio Task via
+# asyncio.Event-based handshake so the cancel scope never crosses task boundaries.
+# ---------------------------------------------------------------------------
+
+# Tracks running lifespan tasks: name -> (task, shutdown_event)
+_sub_app_tasks: dict[str, tuple[asyncio.Task, asyncio.Event]] = {}
+
+
+async def _run_sub_app_lifespan(name: str, sub_app, ready: asyncio.Event, shutdown: asyncio.Event):
+    """
+    Runs a single sub-app's lifespan entirely within this task.
+    Signals `ready` once the lifespan has started, then waits for
+    `shutdown` before tearing down.
+    """
+    try:
+        async with sub_app.router.lifespan_context(sub_app):
+            ready.set()
+            logger.info(f"  [Connected] {name}")
+            await shutdown.wait()
+    except Exception as e:
+        logger.error(f"  [Lifespan Error] {name}: {e}")
+        ready.set()  # unblock caller even on failure
+
+
+async def start_sub_app(name: str, sub_app) -> bool:
+    """Start a sub-app lifespan task. Returns True if started successfully."""
+    if name in _sub_app_tasks:
+        return True  # already running
+
+    ready = asyncio.Event()
+    shutdown = asyncio.Event()
+    task = asyncio.create_task(
+        _run_sub_app_lifespan(name, sub_app, ready, shutdown),
+        name=f"lifespan:{name}"
+    )
+    _sub_app_tasks[name] = (task, shutdown)
+    await ready.wait()  # block until the sub-app's lifespan context is entered
+    return not task.done() or not task.exception() if task.done() else True
+
+
+async def stop_sub_app(name: str):
+    """Signal a sub-app lifespan task to shut down and wait for it."""
+    entry = _sub_app_tasks.pop(name, None)
+    if entry is None:
+        return
+    task, shutdown = entry
+    shutdown.set()
+    try:
+        await asyncio.wait_for(task, timeout=10.0)
+    except (asyncio.TimeoutError, Exception) as e:
+        logger.warning(f"  [Shutdown Warning] {name}: {e}")
+
+
+async def stop_all_sub_apps():
+    """Shut down all running sub-app lifespan tasks concurrently."""
+    names = list(_sub_app_tasks.keys())
+    await asyncio.gather(*[stop_sub_app(n) for n in names], return_exceptions=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await registry_instance.initialize()
@@ -40,21 +109,25 @@ async def lifespan(app: FastAPI):
     for name, sub_app in registry_instance.sub_apps.items():
         app.mount(f"/{name}", sub_app)
 
-    async with AsyncExitStack() as stack:
-        registry_instance.exit_stack = stack
-        logger.info("--- Starting Upstream Connections ---")
-        active_count = 0
-        for name, sub_app in registry_instance.sub_apps.items():
-            try:
-                await stack.enter_async_context(sub_app.router.lifespan_context(sub_app))
-                logger.info(f"  [Connected] {name}")
-                active_count += 1
-            except Exception as e:
-                logger.error(f"  [Connection Error] {name}: {e}")
-        logger.info(f"--- Proxy Ready: {active_count}/{len(registry_instance.sub_apps)} upstreams active ---")
-        yield
-        logger.info("--- Shutting Down ---")
-        await registry_instance.shutdown()
+    # Start each sub-app in its own task so anyio cancel scopes stay within
+    # the task that created them — avoids the cross-task context var errors.
+    logger.info("--- Starting Upstream Connections ---")
+    results = await asyncio.gather(
+        *[start_sub_app(name, sub_app) for name, sub_app in registry_instance.sub_apps.items()],
+        return_exceptions=True
+    )
+    active_count = sum(1 for r in results if r is True)
+    logger.info(f"--- Proxy Ready: {active_count}/{len(registry_instance.sub_apps)} upstreams active ---")
+
+    # Expose start/stop helpers to registry_instance so register_server can use them
+    registry_instance.start_sub_app = start_sub_app
+    registry_instance.stop_sub_app = stop_sub_app
+
+    yield
+
+    logger.info("--- Shutting Down ---")
+    await stop_all_sub_apps()
+    await registry_instance.shutdown()
 
 
 _fastapi_app = FastAPI(
