@@ -102,7 +102,7 @@ class MCPRegistry:
                     compose_output_path=os.path.join(build_dir, "docker-compose.generated.yaml"),
                     base_compose_path=os.path.join(build_dir, "docker-compose.yaml"),
                     agent_base_url=f"{os.environ.get('MCP_BASE_URL', 'localhost')}:{os.environ.get('MCP_BASE_URL_PORT', self.registry_config.port)}",
-                    agent_local_registry_url=f"http://host.docker.internal:{self.registry_config.port}",
+                    agent_local_registry_url=f"http://host.docker.internal:{os.environ.get('MCP_BASE_URL_PORT', self.registry_config.port)}",
                 )
                 logger.info(f"Deployer '{mode}' initialized with {len(seed_configs.get(mode, {}))} seed servers.")
                 await self.deployers[mode].initialize()
