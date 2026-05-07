@@ -187,8 +187,20 @@ class PythonPackageDeployer(BaseDeployer):
         if not no_build:
             yield "Installing requirements...\n"
             pip_exe = venv_dir / "bin" / "pip"
-            
-            cmd = [str(pip_exe), "install", "-r", str(agent_dir / "requirements.txt")]
+
+            yield "Installing uv...\n"
+            uv_install_cmd = [str(pip_exe), "install", "uv"]
+            process = await asyncio.create_subprocess_exec(*uv_install_cmd, stdout=asyncio.subprocess.PIPE,
+                                                           stderr=asyncio.subprocess.STDOUT)
+            while True:
+                line = await process.stdout.readline()
+                if not line: break
+                yield line.decode('utf-8', errors='replace')
+            await process.wait()
+
+            yield "Installing requirements via uv...\n"
+            uv_exe = venv_dir / "bin" / "uv"
+            cmd = [str(uv_exe), "pip", "install", "-r", str(agent_dir / "requirements.txt")]
             logger.info(f"Running command: {' '.join(cmd)}")
             
             process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
