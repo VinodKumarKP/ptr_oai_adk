@@ -8,7 +8,7 @@ reports/
 build/
 dist/
 *hub_registry.json
-*.log
+*.log*
 *.db
 frontend/node_modules/
 frontend/build/

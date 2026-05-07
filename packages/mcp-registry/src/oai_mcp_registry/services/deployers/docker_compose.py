@@ -369,7 +369,11 @@ class DockerComposeManager(BaseDeployer):
             "image": "valkey/valkey:latest",
             "container_name": "mcp-valkey",
             "environment": {"REDIS_PASSWORD": "admin"},
-            "networks": ["mcp-server-network"],
+            "networks": {
+                "mcp-server-network": {
+                    "ipv4_address": '172.26.0.11'
+                }
+            },
             "command": "valkey-server --appendonly yes",
             "ports": ["6379:6379"],
             "volumes": ["valkey-mcp-data:/data"],
@@ -398,7 +402,11 @@ class DockerComposeManager(BaseDeployer):
                 "-c", "shared_buffers=256MB",
                 "-c", "effective_io_concurrency=200",
             ],
-            "networks": ["mcp-server-network"],
+            "networks": {
+                "mcp-server-network": {
+                    "ipv4_address": '172.26.0.10'
+                }
+            },
             "ports": ["5432:5432"],
             "volumes": ["mcp_postgres_data:/var/lib/postgresql/data"],
             "restart": "unless-stopped",
