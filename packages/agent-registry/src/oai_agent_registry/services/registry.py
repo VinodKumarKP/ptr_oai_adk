@@ -331,7 +331,7 @@ class AgentRegistry:
             },
             "agents": {
                 name: {
-                    "endpoint": f"{endpoint}:{self.registry_config.port}/{name}",
+                    "endpoint": f"{endpoint}/{name}",
                     "enabled": agent.enabled,
                     "status": "active" if agent.enabled else 'inactive',
                     "description": getattr(agent, "description", None),
