@@ -19,6 +19,7 @@ from oai_mcp_registry.services.deployers.factory import DeployerFactory
 
 logger = logging.getLogger("MCPRegistry")
 
+
 class MCPRegistry:
     def __init__(self, config_path: str = None):
         self.config_path = config_path or os.getenv("MCP_CONFIG_PATH", './config/proxy_config.json')
@@ -47,11 +48,11 @@ class MCPRegistry:
                 config_data = json.load(f)
                 self.config = AppConfig(**config_data)
                 self.registry_config = self.config.registry
-                
+
             # Add registered_via attribute for config servers
             for name, server in self.config.servers.items():
                 setattr(server, 'registered_via', 'config')
-                
+
             logger.info(f"Successfully loaded configuration from {self.config_path}")
         except (json.JSONDecodeError, Exception) as e:
             raise Exception(f"Configuration Invalid: {e}") from e
@@ -63,7 +64,7 @@ class MCPRegistry:
             mode = getattr(server_config, "deployment_mode", "docker") or "docker"
             if mode not in seeds:
                 seeds[mode] = {}
-            
+
             seeds[mode][server_name] = {
                 "port": server_config.port,
                 "source": server_config.source or "",
@@ -91,7 +92,17 @@ class MCPRegistry:
 
         # Initialize deployers for available modes
         seed_configs = self._build_seed_configs_from_servers()
-        
+
+        if os.environ.get('MCP_REGISTRY_URL'):
+            mcp_base_url = os.environ.get('MCP_REGISTRY_URL')
+        elif os.environ.get('MCP_BASE_URL'):
+            mcp_base_url = f"{os.environ.get('MCP_BASE_URL')}:{os.environ.get('MCP_BASE_URL_PORT', self.registry_config.port)}"
+        else:
+            mcp_base_url = f"http://localhost:{self.registry_config.port}"
+
+        if not mcp_base_url.startswith('http'):
+            mcp_base_url = f"http://{mcp_base_url}"
+
         for mode in ["docker", "python_package"]:
             try:
                 self.deployers[mode] = DeployerFactory.get_deployer(
@@ -99,7 +110,7 @@ class MCPRegistry:
                     seed_config=seed_configs.get(mode, {}),
                     compose_output_path=os.path.join(build_dir, "docker-compose.generated.yaml"),
                     base_compose_path=os.path.join(build_dir, "docker-compose.yaml"),
-                    agent_base_url=f"{os.environ.get('MCP_BASE_URL', 'localhost')}:{os.environ.get('MCP_BASE_URL_PORT', self.registry_config.port)}",
+                    agent_base_url=f"{mcp_base_url}",
                     agent_local_registry_url=f"http://host.docker.internal:{self.registry_config.port}",
                 )
                 logger.info(f"Deployer '{mode}' initialized with {len(seed_configs.get(mode, {}))} seed servers.")
@@ -118,7 +129,7 @@ class MCPRegistry:
                 deployer = self._get_deployer(getattr(server_config, 'deployment_mode', 'docker'))
                 if deployer:
                     deployer.remove_server(server)
-                    
+
         for mode, deployer in self.deployers.items():
             logger.info(f"Shutting down deployer '{mode}'...")
             await deployer.shutdown()
@@ -139,7 +150,7 @@ class MCPRegistry:
         for server_name, server_config in self.config.servers.items():
             if getattr(server_config, 'registered_via', 'dynamic') != 'config':
                 continue
-                
+
             try:
                 await self.db_logger.log_server_registration(
                     server_name=server_name,
@@ -208,7 +219,7 @@ class MCPRegistry:
         logger.info(f"Starting auto-discovery of MCP servers in port range {start}-{end} on host {host}...")
 
         for port in range(start, end + 1):
-            endpoint =  f"http://localhost:{port}/info"
+            endpoint = f"http://localhost:{port}/info"
             try:
                 async with httpx.AsyncClient() as client:
                     response = await client.get(endpoint, timeout=1.0)
@@ -218,7 +229,8 @@ class MCPRegistry:
                         if server_name and server_name not in self.config.servers:
                             server_config = ServerConfig(
                                 endpoint=f"http://{host}:{port}",
-                                description=server_info.get("server_config", {}).get("description", "Auto-discovered MCP server"),
+                                description=server_info.get("server_config", {}).get("description",
+                                                                                     "Auto-discovered MCP server"),
                                 source=server_info.get("source"),
                                 tags=server_info.get("tags", []),
                                 current_version=server_info.get("current_version"),
@@ -228,7 +240,7 @@ class MCPRegistry:
                             setattr(server_config, 'registered_via', 'dynamic')
                             self.config.servers[server_name] = server_config
                             logger.info(f"Discovered MCP server '{server_name}' at http://{host}:{port}")
-                            
+
                             # Log discovery to DB
                             await self.db_logger.log_server_registration(
                                 server_name=server_name,
@@ -287,27 +299,37 @@ class MCPRegistry:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def _get_merged_server_values(self, server_name: str, server_registration: ServerRegistration, registered_via: str) -> Dict[str, Any]:
+    async def _get_merged_server_values(self, server_name: str, server_registration: ServerRegistration,
+                                        registered_via: str) -> Dict[str, Any]:
         """Merges new registration values with existing database values for partial updates."""
         existing = await self.db_logger.get_server_details(server_name) if self.db_logger.is_active else None
         if existing is None:
             existing = {}
 
         merged = {
-            'endpoint': server_registration.endpoint if server_registration.endpoint is not None else existing.get('endpoint_url', ''),
+            'endpoint': server_registration.endpoint if server_registration.endpoint is not None else existing.get(
+                'endpoint', ''),
             'port': server_registration.port if server_registration.port is not None else existing.get('port'),
-            'source': server_registration.source if server_registration.source is not None else existing.get('source', ''),
+            'source': server_registration.source if server_registration.source is not None else existing.get('source',
+                                                                                                             ''),
             'active': True,
-            'registered_via': registered_via if registered_via is not None else existing.get('registered_via', 'dynamic'),
+            'registered_via': registered_via if registered_via is not None else existing.get('registered_via',
+                                                                                             'dynamic'),
             'tags': server_registration.tags if server_registration.tags is not None else existing.get('tags', []),
-            'description': server_registration.description if server_registration.description is not None else existing.get('description', ''),
-            'current_version': server_registration.current_version if server_registration.current_version is not None else existing.get('current_version'),
-            'available_versions': server_registration.available_versions if len(server_registration.available_versions) > 0 and server_registration.available_versions is not None else existing.get('available_versions', []),
-            'deployment_mode': server_registration.deployment_mode if server_registration.deployment_mode is not None else existing.get('deployment_mode', 'docker')
+            'description': server_registration.description if server_registration.description is not None else existing.get(
+                'description', ''),
+            'current_version': server_registration.current_version if server_registration.current_version is not None else existing.get(
+                'current_version'),
+            'available_versions': server_registration.available_versions if len(
+                server_registration.available_versions) > 0 and server_registration.available_versions is not None else existing.get(
+                'available_versions', []),
+            'deployment_mode': server_registration.deployment_mode if server_registration.deployment_mode is not None else existing.get(
+                'deployment_mode', 'docker')
         }
         return merged
 
-    async def register_server(self, app: FastAPI, server_registration: ServerRegistration, stream_output: bool = False) -> Union[JSONResponse, StreamingResponse]:
+    async def register_server(self, app: FastAPI, server_registration: ServerRegistration,
+                              stream_output: bool = False) -> Union[JSONResponse, StreamingResponse]:
         """Registers a new MCP server dynamically via the /register endpoint."""
         server_name = server_registration.name
         if server_name in self.config.servers:
@@ -346,17 +368,19 @@ class MCPRegistry:
                         ):
                             yield f"data: {line.strip()}\n\n"
 
-                        db_values = await self._get_merged_server_values(server_name, server_registration, registered_via)
+                        db_values = await self._get_merged_server_values(server_name, server_registration,
+                                                                         registered_via)
                         if assigned_port:
                             db_values['port'] = assigned_port
                         server_config = ServerConfig(**db_values)
                         self.config.servers[server_name] = server_config
 
-                        # Mount the proxy
+                        # Mount or update the proxy
                         url = self._build_upstream_url(server_config)
                         mcp = FastMCP.as_proxy(url, name=server_name)
                         sub_app = mcp.http_app()
-                        app.mount(f"/{server_name}", sub_app)
+                        if server_name not in self.sub_apps:
+                            app.mount(f"/{server_name}", sub_app)
                         self.sub_apps[server_name] = sub_app
                         if self.exit_stack:
                             await self.exit_stack.enter_async_context(sub_app.router.lifespan_context(sub_app))
@@ -407,10 +431,23 @@ class MCPRegistry:
         server_config = ServerConfig(**db_values)
         self.config.servers[server_name] = server_config
 
-        # Mount proxy if not already mounted
+        # Mount proxy if not already mounted; update endpoint if it is
         try:
-            if server_name not in self.sub_apps:
-                url = self._build_upstream_url(server_config)
+            url = self._build_upstream_url(server_config)
+            if server_name in self.sub_apps:
+                if url:
+                    # Server already mounted — re-create the proxy pointed at the
+                    # new URL and replace the entry in sub_apps.  FastAPI does not
+                    # support unmounting, so the old mount stays in the router but
+                    # the middleware in app.py (which reads config.servers) will
+                    # route traffic to the updated endpoint from this point on.
+                    mcp = FastMCP.as_proxy(url, name=server_name)
+                    sub_app = mcp.http_app()
+                    self.sub_apps[server_name] = sub_app
+                    if self.exit_stack:
+                        await self.exit_stack.enter_async_context(sub_app.router.lifespan_context(sub_app))
+                    logger.info(f"Updated proxy for existing server '{server_name}' -> {url}")
+            else:
                 if url:
                     mcp = FastMCP.as_proxy(url, name=server_name)
                     sub_app = mcp.http_app()
@@ -418,8 +455,9 @@ class MCPRegistry:
                     self.sub_apps[server_name] = sub_app
                     if self.exit_stack:
                         await self.exit_stack.enter_async_context(sub_app.router.lifespan_context(sub_app))
+                    logger.info(f"Mounted new proxy for server '{server_name}' -> {url}")
         except Exception as e:
-            logger.error(f"Failed to mount sub app proxy for {server_name}: {e}")
+            logger.error(f"Failed to mount/update sub app proxy for {server_name}: {e}")
 
         await self.db_logger.log_server_registration(
             server_name=server_name,
@@ -440,7 +478,7 @@ class MCPRegistry:
     async def deregister_server(self, server_deregistration: ServerDeregistration) -> JSONResponse:
         """Deregisters an MCP server."""
         server_name = server_deregistration.name
-        
+
         if server_name not in self.config.servers:
             logger.warning(f"Attempted to deregister server '{server_name}', but it was not found.")
             raise HTTPException(status_code=404, detail=f"Server '{server_name}' not found.")
@@ -448,12 +486,12 @@ class MCPRegistry:
         # Remove from running apps and stop deployer if running
         if server_name in self.sub_apps:
             del self.sub_apps[server_name]
-            
+
         server_config = self.config.servers[server_name]
         deployer = self._get_deployer(getattr(server_config, 'deployment_mode', 'docker'))
         if deployer:
             deployer.remove_server(server_name)
-            
+
         logger.info(f"Deactivating server '{server_name}'.")
 
         await self.db_logger.deregister_server(server_name=server_name)
@@ -469,13 +507,15 @@ class MCPRegistry:
         server_config = self.config.servers[server_name]
         deployer = self._get_deployer(getattr(server_config, 'deployment_mode', 'docker'))
 
-        logger.info(f"Executing lifecycle action '{action}' for server '{server_name}' using deployer '{getattr(server_config, 'deployment_mode', 'docker')}'")
+        logger.info(
+            f"Executing lifecycle action '{action}' for server '{server_name}' using deployer '{getattr(server_config, 'deployment_mode', 'docker')}'")
 
         if deployer:
             try:
                 if action in ["update", "upgrade", "downgrade"]:
                     if not version:
-                        raise HTTPException(status_code=400, detail="Version is required for update/upgrade/downgrade action.")
+                        raise HTTPException(status_code=400,
+                                            detail="Version is required for update/upgrade/downgrade action.")
 
                     image_already_exists = deployer.image_exists(server_name, version)
 
@@ -503,6 +543,7 @@ class MCPRegistry:
 
                     if stream_output:
                         _no_build = image_already_exists
+
                         async def stream_generator():
                             try:
                                 yield f"data: Server '{server_name}' switching to version {version}...\n\n"
@@ -573,6 +614,7 @@ class MCPRegistry:
                             except Exception as e:
                                 yield f"data: Error during rebuild: {str(e)}\n\n"
                                 raise
+
                         return StreamingResponse(stream_generator(), media_type="text/event-stream")
                     else:
                         deployer.remove_server(server_name)
@@ -610,6 +652,7 @@ class MCPRegistry:
                             except Exception as e:
                                 yield f"data: Error initiating redeploy: {str(e)}\n\n"
                                 raise
+
                         return StreamingResponse(stream_generator(), media_type="text/event-stream")
                     else:
                         asyncio.create_task(

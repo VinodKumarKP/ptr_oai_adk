@@ -1,7 +1,7 @@
 import logging
 import warnings
 from contextlib import asynccontextmanager, AsyncExitStack
-from fastapi import FastAPI, Request, Response, Depends, HTTPException
+from fastapi import FastAPI, Request, Response, Depends
 from fastapi.responses import JSONResponse
 import httpx
 
@@ -16,6 +16,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger("MCPRegistry")
 
+# Registry-internal route prefixes — never dispatched to a sub-app or proxied
+REGISTRY_ROUTES = frozenset([
+    "register", "deregister", "info", "health",
+    "reload-config", "lifecycle", "docs", "openapi.json", "redoc"
+])
+
+
+# ---------------------------------------------------------------------------
+# FastAPI app (innermost layer)
+# ---------------------------------------------------------------------------
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await registry_instance.initialize()
@@ -24,6 +35,8 @@ async def lifespan(app: FastAPI):
         host = registry_instance.registry_config.host
         await registry_instance.discover_servers(host)
 
+    # Mount servers known at startup so FastAPI's static router covers them.
+    # Servers that register dynamically later are handled by DynamicMCPDispatcher.
     for name, sub_app in registry_instance.sub_apps.items():
         app.mount(f"/{name}", sub_app)
 
@@ -43,7 +56,8 @@ async def lifespan(app: FastAPI):
         logger.info("--- Shutting Down ---")
         await registry_instance.shutdown()
 
-app = FastAPI(
+
+_fastapi_app = FastAPI(
     title="MCP Gateway",
     description="Unified Proxy for Distributed MCP Servers",
     lifespan=lifespan,
@@ -51,54 +65,182 @@ app = FastAPI(
     security=[{api_key_header.model.name: []}],
 )
 
-app.include_router(router)
+_fastapi_app.include_router(router)
 
-@app.middleware("http")
-async def proxy_middleware(request: Request, call_next):
-    path_parts = request.url.path.strip("/").split("/")
-    if not path_parts or not path_parts[0]:
-        return await call_next(request)
 
-    server_name = path_parts[0]
-    remaining_path = "/".join(path_parts[1:])
+# ---------------------------------------------------------------------------
+# Layer 1 (innermost ASGI wrapper): DynamicMCPDispatcher
+#
+# FastAPI freezes its router at startup, so app.mount() called later has no
+# effect on routing.  This pure-ASGI middleware intercepts every request
+# before FastAPI sees it and dispatches MCP/SSE paths to the correct sub-app
+# by looking it up in registry_instance.sub_apps at request time.
+# ---------------------------------------------------------------------------
 
-    # If it is not a known server, let standard routing handle it (which will trigger global verify_api_key)
-    # if server_name not in registry_instance.sub_apps or remaining_path.startswith(("mcp", "sse")):
-    #     return await call_next(request)
+class DynamicMCPDispatcher:
+    """
+    Routes  /{server_name}/mcp  and  /{server_name}/sse  directly to the
+    matching FastMCP sub-app ASGI callable.  Everything else is passed
+    through to the inner FastAPI app.
+    """
 
-    # Manual validation for middleware proxied requests
-    try:
-        _validate_token(request, registry_instance.registry_config, server_name)
-    except HTTPException as e:
-        return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"detail": str(e)})
+    def __init__(self, inner_app):
+        self.inner_app = inner_app
 
-    server_config = registry_instance.config.servers[server_name]
-    if server_config.endpoint:
-        base_url = server_config.endpoint.rstrip("/mcp").rstrip("/sse").rstrip("/")
-    elif server_config.port:
-        base_url = f"http://{registry_instance.host_ip}:{server_config.port}"
-    else:
-        return Response(status_code=503, content="Server configuration invalid")
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.inner_app(scope, receive, send)
+            return
 
-    target_url = f"{base_url}/{remaining_path}" if remaining_path else base_url
-    if request.url.query:
-        target_url = f"{target_url}?{request.url.query}"
+        path = scope.get("path", "")
+        path_parts = path.strip("/").split("/")
+        server_name = path_parts[0] if path_parts else ""
 
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.request(
-                method=request.method,
-                url=target_url,
-                headers=dict(request.headers),
-                content=await request.body(),
-                timeout=30
-            )
-            return Response(
-                content=response.content,
-                status_code=response.status_code,
-                headers=dict(response.headers)
-            )
-        except httpx.RequestError as e:
-            return Response(status_code=502, content=f"Proxy error: {str(e)}")
+        # Registry-internal routes go straight to FastAPI
+        if not server_name or server_name in REGISTRY_ROUTES:
+            await self.inner_app(scope, receive, send)
+            return
+
+        sub_app = registry_instance.sub_apps.get(server_name)
+        if sub_app is None:
+            await self.inner_app(scope, receive, send)
+            return
+
+        remaining = "/" + "/".join(path_parts[1:]) if len(path_parts) > 1 else "/"
+
+        # Only hand MCP/SSE sub-paths to the sub-app; other sub-paths fall
+        # through to the NonMCPProxyMiddleware (outer layer)
+        if not remaining.lstrip("/").startswith(("mcp", "sse")):
+            await self.inner_app(scope, receive, send)
+            return
+
+        # Rewrite scope so the sub-app sees itself rooted at /
+        child_scope = dict(scope)
+        child_scope["path"] = remaining
+        child_scope["root_path"] = scope.get("root_path", "") + f"/{server_name}"
+
+        logger.debug(f"[Dispatcher] {server_name}{remaining} -> sub_app")
+        await sub_app(child_scope, receive, send)
+
+
+# ---------------------------------------------------------------------------
+# Layer 2 (outermost ASGI wrapper): NonMCPProxyMiddleware
+#
+# Handles non-MCP/SSE sub-paths for known servers by forwarding them via
+# httpx to the upstream's base URL (e.g. custom REST endpoints on the
+# upstream container).  Everything else is passed inward.
+# ---------------------------------------------------------------------------
+
+class NonMCPProxyMiddleware:
+    """
+    Proxies  /{server_name}/<anything except mcp|sse>  to the upstream server
+    via httpx.  MCP/SSE paths are intentionally skipped here and handled by
+    DynamicMCPDispatcher (the inner layer).
+    """
+
+    HOP_BY_HOP = frozenset([
+        "connection", "keep-alive", "transfer-encoding", "te",
+        "trailer", "proxy-authorization", "proxy-authenticate", "upgrade",
+    ])
+
+    def __init__(self, inner_app):
+        self.inner_app = inner_app
+
+    def _resolve_base_url(self, server_config) -> str | None:
+        if server_config.endpoint:
+            base = server_config.endpoint.rstrip("/")
+            for suffix in ("/mcp", "/sse"):
+                if base.endswith(suffix):
+                    base = base[: -len(suffix)]
+                    break
+            return base
+        elif server_config.port:
+            return f"http://{registry_instance.host_ip}:{server_config.port}"
+        return None
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.inner_app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        path_parts = path.strip("/").split("/")
+        server_name = path_parts[0] if path_parts else ""
+
+        if not server_name or server_name in REGISTRY_ROUTES:
+            await self.inner_app(scope, receive, send)
+            return
+
+        remaining = "/".join(path_parts[1:])
+
+        # MCP/SSE paths are handled by the inner DynamicMCPDispatcher
+        if remaining.startswith(("mcp", "sse")):
+            await self.inner_app(scope, receive, send)
+            return
+
+        if not registry_instance.config:
+            await self.inner_app(scope, receive, send)
+            return
+
+        server_config = registry_instance.config.servers.get(server_name)
+        if not server_config:
+            await self.inner_app(scope, receive, send)
+            return
+
+        base_url = self._resolve_base_url(server_config)
+        if not base_url:
+            resp = Response(status_code=503, content="Server configuration invalid")
+            await resp(scope, receive, send)
+            return
+
+        query = scope.get("query_string", b"").decode()
+        target_url = f"{base_url}/{remaining}" if remaining else base_url
+        if query:
+            target_url = f"{target_url}?{query}"
+
+        raw_headers = {
+            k.decode(): v.decode()
+            for k, v in scope.get("headers", [])
+            if k.decode().lower() not in self.HOP_BY_HOP
+        }
+
+        body = b""
+        while True:
+            message = await receive()
+            body += message.get("body", b"")
+            if not message.get("more_body", False):
+                break
+
+        method = scope.get("method", "GET")
+        logger.debug(f"[NonMCPProxy] {method} {path} -> {target_url}")
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            try:
+                upstream = await client.request(
+                    method=method,
+                    url=target_url,
+                    headers=raw_headers,
+                    content=body,
+                )
+                resp = Response(
+                    content=upstream.content,
+                    status_code=upstream.status_code,
+                    headers=dict(upstream.headers),
+                )
+            except httpx.RequestError as e:
+                logger.error(f"[NonMCPProxy] Error -> {target_url}: {e}")
+                resp = Response(status_code=502, content=f"Proxy error: {str(e)}")
+
+        await resp(scope, receive, send)
+
+
+# ---------------------------------------------------------------------------
+# Final ASGI app exported to uvicorn
+#
+# Request flow:
+#   uvicorn
+#     -> NonMCPProxyMiddleware   (handles /{server}/non-mcp-path via httpx)
+#     -> DynamicMCPDispatcher    (handles /{server}/mcp|sse via sub-app ASGI)
+#     -> FastAPI                 (handles /health /register /info etc.)
+# ---------------------------------------------------------------------------
+app = NonMCPProxyMiddleware(DynamicMCPDispatcher(_fastapi_app))
