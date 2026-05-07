@@ -267,7 +267,7 @@ class PythonPackageDeployer(BaseDeployer):
             if fallback_py.exists():
                 server_py = fallback_py
 
-        cmd = [str(venv_python), str(server_py), "--port", str(port), "--transport", "streamable-htt"]
+        cmd = [str(venv_python), str(server_py), "--port", str(port), "--transport", "streamable-http"]
         logger.info(f"Starting python package server: {' '.join(cmd)}")
 
         log_dir = self.base_dir / "logs"

@@ -25,7 +25,7 @@ class ServerRegistration(BaseModel):
     tags: Optional[List[str]] = Field(default_factory=list)
     current_version: Optional[str] = None
     available_versions: Optional[List[str]] = Field(default_factory=list)
-    deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
+    deployment_mode: Literal["docker", "kubernetes", "python_package", "unknown"] = "unknown"
 
 class ServerDeregistration(BaseModel):
     """Payload for deregistering an MCP server."""
