@@ -104,11 +104,6 @@ async def lifespan(app: FastAPI):
         host = registry_instance.registry_config.host
         await registry_instance.discover_servers(host)
 
-    # Mount servers known at startup so FastAPI's static router covers them.
-    # Servers that register dynamically later are handled by DynamicMCPDispatcher.
-    for name, sub_app in registry_instance.sub_apps.items():
-        app.mount(f"/{name}", sub_app)
-
     # Start each sub-app in its own task so anyio cancel scopes stay within
     # the task that created them — avoids the cross-task context var errors.
     logger.info("--- Starting Upstream Connections ---")
