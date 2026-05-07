@@ -242,6 +242,13 @@ class BaseMCPServer(ABC):
         if transport not in VALID_TRANSPORTS:
             raise TransportError(f"Invalid transport: {transport}. Must be one of {VALID_TRANSPORTS}")
 
+        if os.environ.get('MCP_REGISTRY_URL', None):
+            parsed = urlparse(os.environ.get('MCP_REGISTRY_URL'))
+            os.environ['MCP_BASE_URL'] = parsed.netloc.split(':')[0]
+            os.environ['MCP_BASE_URL_PORT'] = str(parsed.port)
+        elif os.environ.get('MCP_BASE_URL', None):
+            os.environ['MCP_REGISTRY_URL'] = f"{os.environ.get('MCP_BASE_URL')}:{os.environ.get('MCP_BASE_URL_PORT')}"
+
         # Add authentication middleware first (runs first in the chain)
         self.mcp.add_middleware(AuthenticationMiddleware(self.server_name))
 

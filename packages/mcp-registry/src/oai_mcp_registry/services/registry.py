@@ -92,17 +92,6 @@ class MCPRegistry:
 
         # Initialize deployers for available modes
         seed_configs = self._build_seed_configs_from_servers()
-
-        if os.environ.get('MCP_REGISTRY_URL'):
-            mcp_base_url = os.environ.get('MCP_REGISTRY_URL')
-        elif os.environ.get('MCP_BASE_URL'):
-            mcp_base_url = f"{os.environ.get('MCP_BASE_URL')}:{os.environ.get('MCP_BASE_URL_PORT', self.registry_config.port)}"
-        else:
-            mcp_base_url = f"http://localhost:{self.registry_config.port}"
-
-        if not mcp_base_url.startswith('http'):
-            mcp_base_url = f"http://{mcp_base_url}"
-
         for mode in ["docker", "python_package"]:
             try:
                 self.deployers[mode] = DeployerFactory.get_deployer(
@@ -110,7 +99,7 @@ class MCPRegistry:
                     seed_config=seed_configs.get(mode, {}),
                     compose_output_path=os.path.join(build_dir, "docker-compose.generated.yaml"),
                     base_compose_path=os.path.join(build_dir, "docker-compose.yaml"),
-                    agent_base_url=f"{mcp_base_url}",
+                    agent_base_url=f"{os.environ.get('MCP_BASE_URL', 'localhost')}:{os.environ.get('MCP_BASE_URL_PORT', self.registry_config.port)}",
                     agent_local_registry_url=f"http://host.docker.internal:{self.registry_config.port}",
                 )
                 logger.info(f"Deployer '{mode}' initialized with {len(seed_configs.get(mode, {}))} seed servers.")

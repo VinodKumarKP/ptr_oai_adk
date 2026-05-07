@@ -3,6 +3,7 @@ import os
 import logging
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from oai_agent_registry.services.deployers.docker_compose import DockerComposeManager
 
@@ -11,6 +12,17 @@ def main():
     parser.add_argument("--output", "-o", default=None, help="Output path for docker-compose.yaml")
     parser.add_argument("--quiet", "-q", action="store_true", help="Suppress logs and only print the output path")
     args = parser.parse_args()
+
+    if os.environ.get('AGENT_REGISTRY_URL', None):
+        parsed = urlparse(os.environ.get('AGENT_REGISTRY_URL'))
+        host = parsed.netloc.split(':')[0]
+        port = parsed.port
+        os.environ['AGENT_BASE_URL'] = host
+        os.environ['AGENT_BASE_URL_PORT'] = str(port)
+    elif os.environ.get('AGENT_BASE_URL', None):
+        host = os.environ.get('AGENT_BASE_URL')
+        port = os.environ.get('AGENT_BASE_URL_PORT')
+        os.environ['AGENT_REGISTRY_URL'] = f"{host}:{port}"
 
     # Configure logging
     log_level = logging.WARNING if args.quiet else logging.INFO

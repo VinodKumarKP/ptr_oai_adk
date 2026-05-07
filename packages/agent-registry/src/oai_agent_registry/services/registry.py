@@ -322,7 +322,7 @@ class AgentRegistry:
         """Returns information about the registry and its agents."""
         enabled_agents = {name for name, agent in self.agents.items() if agent.enabled}
         endpoint = self.private_ip if os.environ.get('USE_PRIVATE_IP', 'false').lower() == 'true' else \
-            os.environ.get('AGENT_BASE_URL', "localhost")
+            endpoint = f"{os.environ.get('AGENT_BASE_URL')}:{os.environ.get('AGENT_BASE_URL_PORT', self.registry_config.port)}"
         info = {
             "registry": {
                 "uptime_seconds": time.time() - self.start_time,

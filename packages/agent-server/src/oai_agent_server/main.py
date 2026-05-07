@@ -234,7 +234,7 @@ class AgentHTTPServer:
         Get the local registry URL by parsing AGENT_BASE_URL and forcing localhost.
         Returns the local URL or None if the environment variable is not set.
         """
-        agent_base_url = os.environ.get('AGENT_LOCAL_REGISTRY_URL') or os.environ.get("AGENT_BASE_URL")
+        agent_base_url = os.environ.get('AGENT_REGISTRY_URL') or os.environ.get("AGENT_BASE_URL")
         if not agent_base_url:
             return None
 
@@ -242,14 +242,14 @@ class AgentHTTPServer:
             parsed_url = urlparse(agent_base_url)
             port = parsed_url.port
             if not port:
-                self.logger.warning(f"Could not extract port from AGENT_BASE_URL '{agent_base_url}'. Using original URL.")
+                self.logger.warning(f"Could not extract port from AGENT_REGISTRY_URL '{agent_base_url}'. Using original URL.")
                 return agent_base_url.rstrip('/')
             
-            local_url = os.environ.get('AGENT_LOCAL_REGISTRY_URL') or f"http://localhost:{port}"
-            self.logger.info(f"AGENT_BASE_URL is set. Forcing registry connection to {local_url}")
+            local_url = os.environ.get('AGENT_REGISTRY_URL') or f"http://localhost:{port}"
+            self.logger.info(f"AGENT_REGISTRY_URL is set. Forcing registry connection to {local_url}")
             return local_url
         except Exception as e:
-            self.logger.error(f"Failed to parse AGENT_BASE_URL '{agent_base_url}': {e}")
+            self.logger.error(f"Failed to parse AGENT_REGISTRY_URL '{agent_base_url}': {e}")
             return None
 
     async def _register_with_registry(self):
@@ -353,6 +353,14 @@ def main(server: AgentHTTPServer):
     port = args.port or config.get("port", 8000)
     server.agent.agent_config['port'] = port
     # server.set_allowed_modes(args.allowed_modes)
+
+    if os.environ.get('AGENT_REGISTRY_URL', None):
+        parsed = urlparse(os.environ.get('AGENT_REGISTRY_URL'))
+        os.environ['AGENT_BASE_URL'] = parsed.netloc.split(':')[0]
+        os.environ['AGENT_BASE_URL_PORT'] = str(parsed.port)
+    elif os.environ.get('AGENT_BASE_URL', None):
+        os.environ['AGENT_REGISTRY_URL'] = f"{os.environ.get('AGENT_BASE_URL')}:{os.environ.get('AGENT_BASE_URL_PORT')}"
+
     server.run(host=args.host, port=port)
 
 
