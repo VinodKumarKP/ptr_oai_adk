@@ -6,10 +6,7 @@ from abc import ABC
 from typing import Literal, List, Optional
 from urllib.parse import urlparse
 
-from fastapi import Query
 from starlette.middleware.cors import CORSMiddleware
-from starlette.requests import Request
-from starlette.responses import PlainTextResponse, JSONResponse
 
 import nest_asyncio
 
@@ -25,6 +22,7 @@ from oai_mcp_server_core.middleware.auth import AuthenticationMiddleware
 from oai_mcp_server_core.middleware.capture import HeaderCaptureMiddleware
 from oai_mcp_server_core.core.registry import MCPRegistry
 from oai_mcp_server_core.core.exceptions import TransportError
+from oai_mcp_server_core.core.routes import register_server_routes
 
 VALID_TRANSPORTS = {"stdio", "streamable-http", "sse"}
 
@@ -52,6 +50,12 @@ class BaseMCPServer(ABC):
         self.logger = get_logger()
         self.server_config: MCPServerConfig = get_server_config(server_name, source_file)
         self.mcp = FastMCP(server_name)
+        
+        # Ensure FastMCP is aware that this FastMCP instance has an internal FastAPI app.
+        # Calling this will trigger the generation of an internal FastAPI app instance and configure it with Swagger UI.
+        app = self.mcp.http_app()
+        app.title = f"MCP Server API - {server_name}"
+
         self.enable_request_isolation = enable_request_isolation
         self.registry = MCPRegistry(self.mcp)
         self.token_manager = TokenManager()
@@ -84,123 +88,13 @@ class BaseMCPServer(ABC):
 
     def _register_routes(self):
         """Register system routes."""
-
-        @self.mcp.custom_route("/health", methods=["GET"])
-        async def health_check(request: Request) -> PlainTextResponse:
-            """
-            Health check endpoint that returns "OK" when the server is healthy.
-            """
-            return PlainTextResponse("OK")
-
-        @self.mcp.custom_route("/info", methods=["GET"])
-        async def server_info(request: Request) -> JSONResponse:
-            """Get server information including configuration and status."""
-            # Get AUTH_ENABLED from original environ
-            original_environ = os.environ._original if isinstance(os.environ, RequestAwareEnviron) else os.environ
-            auth_enabled = original_environ.get('AUTH_ENABLED', '').lower() == 'true'
-
-            info = {
-                "server_name": self.server_name,
-                "status": "running",
-                "server_config": self.server_config.model_dump(),
-                "auth_enabled": auth_enabled,
-                "request_isolation": self.enable_request_isolation
-            }
-            return JSONResponse(info)
-
-        @self.mcp.custom_route("/", methods=["GET"])
-        async def root(request: Request):
-            """Root endpoint with API documentation."""
-            # Get AUTH_ENABLED from original environ
-            original_environ = os.environ._original if isinstance(os.environ, RequestAwareEnviron) else os.environ
-            auth_enabled = original_environ.get('AUTH_ENABLED', '').lower() == 'true'
-
-            info = {
-                "message": f"MCP Server: {self.server_name}",
-                "endpoints": {
-                    "POST /mcp": "MCP server tools via streamable http",
-                    "GET /health": "Health check endpoint",
-                    "GET /info": "Get MCP Server information",
-                    "GET /debug/env": "Debug request environment (if enabled)"
-                },
-                "auth_enabled": auth_enabled,
-                "features": {
-                    "request_isolation": self.enable_request_isolation,
-                    "concurrent_requests": "supported" if self.enable_request_isolation else "not isolated"
-                }
-            }
-            return JSONResponse(info)
-
-        @self.mcp.custom_route("/debug/env", methods=["GET"])
-        async def debug_env(request: Request) -> JSONResponse:
-            """
-            Debug endpoint to show current request environment.
-            Useful for testing request isolation.
-            """
-            req_env = request_env.get()
-
-            # Sanitize sensitive values
-            sanitized = {}
-            sensitive_keys = {'AUTHORIZATION', 'API_KEY', 'API_TOKEN', 'TOKEN', 'SECRET', 'PASSWORD'}
-
-            for key, value in req_env.items():
-                key_upper = key.upper()
-                if any(sensitive in key_upper for sensitive in sensitive_keys):
-                    if len(value) > 8:
-                        sanitized[key] = f"{value[:4]}...{value[-4:]}"
-                    else:
-                        sanitized[key] = "***"
-                else:
-                    sanitized[key] = value
-
-            return JSONResponse({
-                "request_env_count": len(req_env),
-                "request_env": sanitized,
-                "isolation_enabled": self.enable_request_isolation
-            })
-
-        @self.mcp.custom_route("/token/custom", methods=["POST"])
-        def generate_token(request: Request,
-                           user_id: Optional[str] = Query(None),
-                           role_id: Optional[str] = Query(None),
-                           ttl_seconds: Optional[int] = Query(3600)):
-            """Generate a token with embedded metadata."""
-            # Retrieve agent_name from app state (set in main.py)
-            server_key = getattr(request.app.state, "agent_name", "unknown")
-
-            result = self.token_manager.generate_token(server_key, user_id, role_id, ttl_seconds)
-            return JSONResponse(content=result)
-
-        @self.mcp.custom_route("/token/short-term", methods=["POST"])
-        def generate_short_term_token(request: Request,
-                                      user_id: Optional[str] = Query(None),
-                                      role_id: Optional[str] = Query(None)):
-            """Generate a short-term token (5 minutes)."""
-            server_key = getattr(request.app.state, "agent_name", "unknown")
-            # Fixed TTL of 300 seconds (5 minutes)
-            result = self.token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=300)
-            return JSONResponse(content=result)
-
-        @self.mcp.custom_route("/token/long-term", methods=["POST"])
-        def generate_long_term_token(request: Request,
-                                     user_id: Optional[str] = Query(None),
-                                     role_id: Optional[str] = Query(None)):
-            """Generate a long-term token (30 days)."""
-            server_key = getattr(request.app.state, "agent_name", "unknown")
-            # Fixed TTL of 30 days (2592000 seconds)
-            result = self.token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=2592000)
-            return JSONResponse(content=result)
-
-        @self.mcp.custom_route("/token/permanent", methods=["POST"])
-        def generate_permanent_token(request: Request,
-                                     user_id: Optional[str] = Query(None),
-                                     role_id: Optional[str] = Query(None)):
-            """Generate a permanent token (no expiration)."""
-            server_key = getattr(request.app.state, "agent_name", "unknown")
-            # TTL None means permanent
-            result = self.token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=None)
-            return JSONResponse(content=result)
-
+        register_server_routes(
+            self.mcp,
+            self.server_name,
+            self.server_config,
+            self.enable_request_isolation,
+            self.token_manager
+        )
 
     def _get_local_registry_url(self):
         """
