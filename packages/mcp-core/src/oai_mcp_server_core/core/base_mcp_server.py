@@ -3,14 +3,17 @@ import os
 import asyncio
 import httpx
 from abc import ABC
-from typing import Literal, List
+from typing import Literal, List, Optional
 from urllib.parse import urlparse
 
+from fastapi import Query
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, JSONResponse
 
 import nest_asyncio
+
+from oai_mcp_server_core.utils.token_manager import TokenManager
 
 nest_asyncio.apply()
 
@@ -51,6 +54,7 @@ class BaseMCPServer(ABC):
         self.mcp = FastMCP(server_name)
         self.enable_request_isolation = enable_request_isolation
         self.registry = MCPRegistry(self.mcp)
+        self.token_manager = TokenManager()
 
         # Setup request-aware environment if enabled
         if enable_request_isolation:
@@ -154,6 +158,49 @@ class BaseMCPServer(ABC):
                 "request_env": sanitized,
                 "isolation_enabled": self.enable_request_isolation
             })
+
+        @self.mcp.custom_route("/token/custom", methods=["POST"])
+        def generate_token(request: Request,
+                           user_id: Optional[str] = Query(None),
+                           role_id: Optional[str] = Query(None),
+                           ttl_seconds: Optional[int] = Query(3600)):
+            """Generate a token with embedded metadata."""
+            # Retrieve agent_name from app state (set in main.py)
+            server_key = getattr(request.app.state, "agent_name", "unknown")
+
+            result = self.token_manager.generate_token(server_key, user_id, role_id, ttl_seconds)
+            return JSONResponse(content=result)
+
+        @self.mcp.custom_route("/token/short-term", methods=["POST"])
+        def generate_short_term_token(request: Request,
+                                      user_id: Optional[str] = Query(None),
+                                      role_id: Optional[str] = Query(None)):
+            """Generate a short-term token (5 minutes)."""
+            server_key = getattr(request.app.state, "agent_name", "unknown")
+            # Fixed TTL of 300 seconds (5 minutes)
+            result = self.token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=300)
+            return JSONResponse(content=result)
+
+        @self.mcp.custom_route("/token/long-term", methods=["POST"])
+        def generate_long_term_token(request: Request,
+                                     user_id: Optional[str] = Query(None),
+                                     role_id: Optional[str] = Query(None)):
+            """Generate a long-term token (30 days)."""
+            server_key = getattr(request.app.state, "agent_name", "unknown")
+            # Fixed TTL of 30 days (2592000 seconds)
+            result = self.token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=2592000)
+            return JSONResponse(content=result)
+
+        @self.mcp.custom_route("/token/permanent", methods=["POST"])
+        def generate_permanent_token(request: Request,
+                                     user_id: Optional[str] = Query(None),
+                                     role_id: Optional[str] = Query(None)):
+            """Generate a permanent token (no expiration)."""
+            server_key = getattr(request.app.state, "agent_name", "unknown")
+            # TTL None means permanent
+            result = self.token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=None)
+            return JSONResponse(content=result)
+
 
     def _get_local_registry_url(self):
         """
