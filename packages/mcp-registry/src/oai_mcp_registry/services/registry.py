@@ -428,16 +428,14 @@ class MCPRegistry:
             if url:
                 mcp = FastMCP.as_proxy(url, name=server_name)
                 sub_app = mcp.http_app()
-                # Stop old lifespan task if re-registering, then start fresh
-                if server_name in self.sub_apps:
-                    await self.stop_sub_app(server_name)
-                    self.sub_apps[server_name] = sub_app
-                    await self.start_sub_app(server_name, sub_app)
-                    logger.info(f"Updated proxy for existing server '{server_name}' -> {url}")
-                else:
-                    self.sub_apps[server_name] = sub_app
-                    await self.start_sub_app(server_name, sub_app)
-                    logger.info(f"Registered new proxy for server '{server_name}' -> {url}")
+                # Always stop any existing lifespan task before starting fresh.
+                # sub_apps may have been cleared by deactivate_server, but a
+                # lifespan task can still be running — stop_sub_app handles both.
+                await self.stop_sub_app(server_name)
+                self.sub_apps[server_name] = sub_app
+                await self.start_sub_app(server_name, sub_app)
+                action = "Updated" if server_name in self.sub_apps else "Registered new"
+                logger.info(f"{action} proxy for server '{server_name}' -> {url}")
         except Exception as e:
             logger.error(f"Failed to mount/update sub app proxy for {server_name}: {e}")
 
@@ -472,7 +470,7 @@ class MCPRegistry:
         server_config = self.config.servers[server_name]
         deployer = self._get_deployer(getattr(server_config, 'deployment_mode', 'docker'))
         if deployer:
-            deployer.remove_server(server_name)
+            deployer.stop_server(server_name)
 
         self.config.servers[server_name].enabled = False
         logger.info(f"Deactivating server '{server_name}'.")

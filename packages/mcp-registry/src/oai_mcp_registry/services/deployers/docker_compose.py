@@ -134,6 +134,9 @@ def _build_service(service_name: str, config: Dict[str, Any],
         "command": f"--port {port} --transport streamable-http",
         "restart": "unless-stopped",
         "networks": ["mcp-server-network"],
+        "extra_hosts": [
+            "host.docker.internal:host-gateway"
+        ],
         "healthcheck": {
             "test": ["CMD", "curl", "-f", f"http://localhost:{port}/health"],
             "interval": "30s",

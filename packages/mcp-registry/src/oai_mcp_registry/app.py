@@ -50,29 +50,58 @@ async def _run_sub_app_lifespan(name: str, sub_app, ready: asyncio.Event, shutdo
     """
     Runs a single sub-app's lifespan entirely within this task.
     Signals `ready` once the lifespan has started, then waits for
-    `shutdown` before tearing down.
+    `shutdown` before tearing down.  Cleans itself out of _sub_app_tasks
+    on unexpected exit (e.g. upstream container crash) so re-registration
+    always starts a fresh task.
     """
+    logger.info(f"  [Lifespan Starting] {name} sub_app_id={id(sub_app)}")
     try:
         async with sub_app.router.lifespan_context(sub_app):
+            logger.info(f"  [Lifespan Active] {name} sub_app_id={id(sub_app)}")
             ready.set()
-            logger.info(f"  [Connected] {name}")
             await shutdown.wait()
+            logger.info(f"  [Lifespan Stopping] {name}")
     except Exception as e:
         logger.error(f"  [Lifespan Error] {name}: {e}")
         ready.set()  # unblock caller even on failure
+    finally:
+        logger.info(f"  [Lifespan Exited] {name} sub_app_id={id(sub_app)}")
+        # Remove stale entry so start_sub_app doesn't skip re-registration
+        _sub_app_tasks.pop(name, None)
 
 
 async def start_sub_app(name: str, sub_app) -> bool:
     """Start a sub-app lifespan task. Returns True if started successfully."""
-    if name in _sub_app_tasks:
-        return True  # already running
+    existing = _sub_app_tasks.get(name)
+    if existing is not None:
+        task, shutdown = existing
+        if not task.done():
+            # Check if this is the same sub-app object already running
+            running_sub_app = getattr(task, '_sub_app', None)
+            if running_sub_app is sub_app:
+                logger.info(f"  [Already Running] {name} sub_app_id={id(sub_app)}")
+                return True
+            # Different sub-app object — stop the old task before starting the new one
+            logger.info(f"  [Replacing] {name} old_sub_app_id={id(running_sub_app)} new_sub_app_id={id(sub_app)}")
+            _sub_app_tasks.pop(name, None)
+            shutdown.set()
+            try:
+                await asyncio.wait_for(task, timeout=10.0)
+            except (asyncio.TimeoutError, Exception) as e:
+                logger.warning(f"  [Stop Warning] {name}: {e}")
+        else:
+            # Task already done — stale entry
+            _sub_app_tasks.pop(name, None)
+            logger.warning(f"  [Restarting] stale lifespan task for '{name}', starting fresh")
 
+    logger.info(f"  [Starting] {name} sub_app_id={id(sub_app)}")
     ready = asyncio.Event()
     shutdown = asyncio.Event()
     task = asyncio.create_task(
         _run_sub_app_lifespan(name, sub_app, ready, shutdown),
         name=f"lifespan:{name}"
     )
+    task._sub_app = sub_app  # tag task with its sub-app for identity check above
     _sub_app_tasks[name] = (task, shutdown)
     await ready.wait()  # block until the sub-app's lifespan context is entered
     return not task.done() or not task.exception() if task.done() else True
@@ -188,7 +217,7 @@ class DynamicMCPDispatcher:
         child_scope["path"] = remaining
         child_scope["root_path"] = scope.get("root_path", "") + f"/{server_name}"
 
-        logger.debug(f"[Dispatcher] {server_name}{remaining} -> sub_app")
+        logger.debug(f"[Dispatcher] {server_name}{remaining} -> sub_app_id={id(sub_app)}")
         await sub_app(child_scope, receive, send)
 
 
