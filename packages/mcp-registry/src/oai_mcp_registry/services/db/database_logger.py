@@ -71,6 +71,7 @@ class PostgresBackend(DatabaseBackend):
             updated_at         = EXCLUDED.updated_at
     """
     MCP_REGISTRY_DEACTIVATE = "UPDATE mcp_registry SET active = FALSE, updated_at = $2 WHERE server_name = $1"
+    MCP_REGISTRY_DELETE = "DELETE FROM mcp_registry WHERE server_name = $1"
     MCP_REGISTRY_SELECT_ONE = "SELECT * FROM mcp_registry WHERE server_name = $1"
     MCP_REGISTRY_SELECT_ALL = "SELECT * FROM mcp_registry"
     MCP_REGISTRY_SELECT_ACTIVE_DYNAMIC = "SELECT * FROM mcp_registry WHERE active = TRUE AND registered_via = 'dynamic'"
@@ -197,6 +198,7 @@ class SQLiteBackend(DatabaseBackend):
             updated_at         = EXCLUDED.updated_at
     """
     MCP_REGISTRY_DEACTIVATE = "UPDATE mcp_registry SET active = 0, updated_at = ? WHERE server_name = ?"
+    MCP_REGISTRY_DELETE = "DELETE FROM mcp_registry WHERE server_name = ?"
     MCP_REGISTRY_SELECT_ONE = "SELECT * FROM mcp_registry WHERE server_name = ?"
     MCP_REGISTRY_SELECT_ALL = "SELECT * FROM mcp_registry"
     MCP_REGISTRY_SELECT_ACTIVE_DYNAMIC = "SELECT * FROM mcp_registry WHERE active = 1 AND registered_via = 'dynamic'"
@@ -358,6 +360,16 @@ class RegistryDatabaseLogger:
             if self.logger: self.logger.debug(f"Deregistered MCP server: {server_name}")
         except Exception as exc:
             if self.logger: self.logger.error(f"Failed to deregister MCP server {server_name}: {exc}")
+            raise
+
+    async def delete_server(self, server_name: str) -> None:
+        if not self._ready(): return
+        try:
+            params = (server_name,)
+            await self._backend.execute(self._backend.MCP_REGISTRY_DELETE, params)
+            if self.logger: self.logger.debug(f"Deleted MCP server entry: {server_name}")
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to delete MCP server {server_name}: {exc}")
             raise
 
     async def get_server_details(self, server_name: str) -> Optional[Dict[str, Any]]:

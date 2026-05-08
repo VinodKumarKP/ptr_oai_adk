@@ -578,6 +578,23 @@ class MCPRegistry:
                     deployer.start_server(server_name)
                     self.config.servers[server_name].enabled = True
 
+                elif action == "delete":
+                    deployer.remove_server(server_name)
+                    if server_name in self.sub_apps:
+                        del self.sub_apps[server_name]
+                    if server_name in self.config.servers:
+                        del self.config.servers[server_name]
+                    logger.info(f"Server '{server_name}' stopped and container removed.")
+                    await self.db_logger.delete_server(server_name)
+                    
+                    # Ensure enabled property can't be fetched later
+                    return JSONResponse({
+                        "message": f"Lifecycle action '{action}' executed for server '{server_name}'.",
+                        "agent": server_name,
+                        "action": action,
+                        "status": "completed"
+                    })
+
                 elif action == "rebuild":
                     if stream_output:
                         async def stream_generator():
@@ -673,6 +690,6 @@ class MCPRegistry:
                 "agent": server_name,
                 "action": action,
                 "status": "completed" if action != "redeploy" else "initiated",
-                "enabled": self.config.servers[server_name].enabled
+                "enabled": self.config.servers[server_name].enabled if server_name in self.config.servers else False
              }
         )

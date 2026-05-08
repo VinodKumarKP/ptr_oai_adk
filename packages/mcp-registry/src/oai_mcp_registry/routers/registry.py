@@ -54,6 +54,7 @@ async def get_config(registry: MCPRegistry = Depends(get_registry)):
                     "update",
                     "upgrade",
                     "downgrade",
+                    "delete"
                 ]
             }
     return {
