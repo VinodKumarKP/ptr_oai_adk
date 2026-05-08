@@ -72,6 +72,7 @@ class PostgresBackend(DatabaseBackend):
             updated_at         = EXCLUDED.updated_at
     """
     AGENT_REGISTRY_DEACTIVATE = "UPDATE agent_registry SET active = FALSE, updated_at = $2 WHERE agent_name = $1"
+    AGENT_REGISTRY_DELETE = "DELETE FROM agent_registry WHERE agent_name = $1"
     AGENT_REGISTRY_SELECT_ONE = "SELECT * FROM agent_registry WHERE agent_name = $1"
     AGENT_REGISTRY_SELECT_ALL = "SELECT * FROM agent_registry"
     AGENT_REGISTRY_SELECT_ACTIVE_DYNAMIC = "SELECT * FROM agent_registry WHERE active = TRUE AND registered_via = 'dynamic'"
@@ -210,6 +211,7 @@ class SQLiteBackend(DatabaseBackend):
             updated_at         = EXCLUDED.updated_at
     """
     AGENT_REGISTRY_DEACTIVATE = "UPDATE agent_registry SET active = 0, updated_at = ? WHERE agent_name = ?"
+    AGENT_REGISTRY_DELETE = "DELETE FROM agent_registry WHERE agent_name = ?"
     AGENT_REGISTRY_SELECT_ONE = "SELECT * FROM agent_registry WHERE agent_name = ?"
     AGENT_REGISTRY_SELECT_ALL = "SELECT * FROM agent_registry"
     AGENT_REGISTRY_SELECT_ACTIVE_DYNAMIC = "SELECT * FROM agent_registry WHERE active = 1 AND registered_via = 'dynamic'"
@@ -417,6 +419,16 @@ class RegistryDatabaseLogger:
             if self.logger: self.logger.debug(f"Deregistered agent: {agent_name}")
         except Exception as exc:
             if self.logger: self.logger.error(f"Failed to deregister agent {agent_name}: {exc}")
+            raise
+
+    async def delete_agent(self, agent_name: str) -> None:
+        if not self._ready(): return
+        try:
+            params = (agent_name,)
+            await self._backend.execute(self._backend.AGENT_REGISTRY_DELETE, params)
+            if self.logger: self.logger.debug(f"Deleted agent entry: {agent_name}")
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to delete agent {agent_name}: {exc}")
             raise
 
     async def get_agent_details(self, agent_name: str) -> Optional[Dict[str, Any]]:

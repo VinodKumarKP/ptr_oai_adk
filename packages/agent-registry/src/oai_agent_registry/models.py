@@ -43,7 +43,7 @@ class AgentDeregistration(BaseModel):
 
 class AgentLifecycleAction(BaseModel):
     """Payload for executing a lifecycle action on an agent."""
-    action: Literal["start", "stop", "redeploy", "refresh", "restart", "rebuild", "upgrade", "update", "downgrade"]
+    action: Literal["start", "stop", "redeploy", "refresh", "restart", "rebuild", "upgrade", "update", "downgrade", "delete"]
     version: Optional[str] = None
     stream_output: Optional[bool] = False
 

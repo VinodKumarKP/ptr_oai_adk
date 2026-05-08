@@ -348,6 +348,7 @@ class AgentRegistry:
                         "update",
                         "upgrade",
                         "downgrade",
+                        "delete"
                     ]
                 }
                 for name, agent in self.agents.items() if agent.endpoint is not None
@@ -644,6 +645,20 @@ class AgentRegistry:
                     await asyncio.sleep(1)
                     deployer.start_agent(agent_name)
                     self.agents[agent_name].enabled = True
+                    
+                elif action == "delete":
+                    deployer.remove_agent(agent_name)
+                    if agent_name in self.agents:
+                        del self.agents[agent_name]
+                    logger.info(f"Agent '{agent_name}' stopped and container removed.")
+                    await self.db_logger.delete_agent(agent_name)
+                    
+                    return JSONResponse({
+                        "message": f"Lifecycle action '{action}' executed for agent '{agent_name}'.",
+                        "agent": agent_name,
+                        "action": action,
+                        "status": "completed"
+                    })
 
                 elif action == "rebuild":
                     if stream_output:
@@ -756,7 +771,7 @@ class AgentRegistry:
             "agent": agent_name,
             "action": action,
             "status": "completed" if action != "redeploy" else "initiated",
-            "enabled": self.agents[agent_name].enabled
+            "enabled": self.agents[agent_name].enabled if agent_name in self.agents else False
         })
 
     async def proxy_request(self, agent_name: str, path: str, request: Request) -> Response:
