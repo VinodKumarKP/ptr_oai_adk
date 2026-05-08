@@ -134,9 +134,6 @@ def _build_service(service_name: str, config: Dict[str, Any],
         "command": f"--port {port} --transport streamable-http",
         "restart": "unless-stopped",
         "networks": ["mcp-server-network"],
-        "extra_hosts": [
-            "host.docker.internal:host-gateway"
-        ],
         "healthcheck": {
             "test": ["CMD", "curl", "-f", f"http://localhost:{port}/health"],
             "interval": "30s",
@@ -378,7 +375,7 @@ class DockerComposeManager(BaseDeployer):
                 }
             },
             "command": "valkey-server --appendonly yes",
-            "ports": ["6379:6379"],
+            "ports": ["6380:6379"],
             "volumes": ["valkey-mcp-data:/data"],
             "restart": "unless-stopped",
             "healthcheck": {
@@ -410,7 +407,7 @@ class DockerComposeManager(BaseDeployer):
                     "ipv4_address": '172.26.0.10'
                 }
             },
-            "ports": ["5432:5432"],
+            "ports": ["5433:5432"],
             "volumes": ["mcp_postgres_data:/var/lib/postgresql/data"],
             "restart": "unless-stopped",
             "healthcheck": {
@@ -423,6 +420,7 @@ class DockerComposeManager(BaseDeployer):
         }
 
         return {
+            "name": "mcp-registry",
             "services": services,
             "networks": {
                 "mcp-server-network": {
@@ -464,6 +462,7 @@ class DockerComposeManager(BaseDeployer):
             )
 
         return {
+            "name": "mcp-registry",
             "services": services,
             "networks": {
                 "mcp-server-network": None

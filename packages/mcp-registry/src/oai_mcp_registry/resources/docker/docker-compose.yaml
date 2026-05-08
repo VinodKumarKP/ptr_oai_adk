@@ -1,3 +1,4 @@
+name: mcp-registry
 services:
   base:
     build:
@@ -16,7 +17,7 @@ services:
         ipv4_address: 172.26.0.11
     command: valkey-server --appendonly yes
     ports:
-      - 6379:6379
+      - 6380:6379
     volumes:
       - valkey-mcp-data:/data
     restart: unless-stopped
@@ -51,7 +52,7 @@ services:
       mcp-server-network:
         ipv4_address: 172.26.0.10
     ports:
-      - 5432:5432
+      - 5433:5432
     volumes:
       - mcp_postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
