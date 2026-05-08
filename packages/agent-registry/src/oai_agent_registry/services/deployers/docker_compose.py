@@ -552,6 +552,7 @@ class DockerComposeManager(BaseDeployer):
         }
 
         return {
+            "name": "agent-registry",
             "services": services,
             "networks": {
                 "agent-server-network": {
@@ -594,6 +595,7 @@ class DockerComposeManager(BaseDeployer):
             )
 
         return {
+            "name": "agent-registry",
             "services": services,
             "networks": {
                 "agent-server-network": None
