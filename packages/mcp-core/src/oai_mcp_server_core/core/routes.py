@@ -84,9 +84,9 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
 
     @mcp_app.custom_route("/token/custom", methods=["POST"])
     def generate_token(request: Request,
-                       user_id: Optional[str] = Query(None),
-                       role_id: Optional[str] = Query(None),
-                       ttl_seconds: Optional[int] = Query(3600)):
+                       user_id: Optional[str] = None,
+                       role_id: Optional[str] = None,
+                       ttl_seconds: Optional[int] = 3600):
         """Generate a token with embedded metadata."""
         server_key = getattr(request.app.state, "agent_name", "unknown")
         result = token_manager.generate_token(server_key, user_id, role_id, ttl_seconds)
@@ -94,8 +94,8 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
 
     @mcp_app.custom_route("/token/short-term", methods=["POST"])
     def generate_short_term_token(request: Request,
-                                  user_id: Optional[str] = Query(None),
-                                  role_id: Optional[str] = Query(None)):
+                                  user_id: Optional[str] = None,
+                                  role_id: Optional[str] = None):
         """Generate a short-term token (5 minutes)."""
         server_key = getattr(request.app.state, "agent_name", "unknown")
         result = token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=300)
@@ -103,8 +103,8 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
 
     @mcp_app.custom_route("/token/long-term", methods=["POST"])
     def generate_long_term_token(request: Request,
-                                 user_id: Optional[str] = Query(None),
-                                 role_id: Optional[str] = Query(None)):
+                                 user_id: Optional[str] = None,
+                                 role_id: Optional[str] = None):
         """Generate a long-term token (30 days)."""
         server_key = getattr(request.app.state, "agent_name", "unknown")
         result = token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=2592000)
@@ -112,8 +112,8 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
 
     @mcp_app.custom_route("/token/permanent", methods=["POST"])
     def generate_permanent_token(request: Request,
-                                 user_id: Optional[str] = Query(None),
-                                 role_id: Optional[str] = Query(None)):
+                                 user_id: Optional[str] = None,
+                                 role_id: Optional[str] = None):
         """Generate a permanent token (no expiration)."""
         server_key = getattr(request.app.state, "agent_name", "unknown")
         result = token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=None)
