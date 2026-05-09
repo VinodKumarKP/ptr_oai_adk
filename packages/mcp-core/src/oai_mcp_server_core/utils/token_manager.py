@@ -34,7 +34,7 @@ class TokenManager:
     def generate_token(self, server_key: str,
                        user_id: Optional[str] = None,
                        role_id: Optional[str] = None,
-                       ttl_seconds: Optional[int] = None) -> str:
+                       ttl_seconds: Optional[int] = None) -> Dict[str, Any]:
         """
         Generate a token with embedded metadata.
 
@@ -102,7 +102,12 @@ class TokenManager:
         if ttl_seconds is not None:
             self.r.expire(f"tokens:{token}", ttl_seconds)
 
-        return token
+        return {
+            "token": token,
+            "user_id": user_id,
+            "role_id": role_id,
+            "ttl_seconds": ttl_seconds
+        }
 
     def parse_token(self, token: str) -> Optional[Dict]:
         """
