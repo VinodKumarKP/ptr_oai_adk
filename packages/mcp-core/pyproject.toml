@@ -25,7 +25,8 @@ dependencies = [
     "nest-asyncio",
     "ruamel.yaml",
     "requests",
-    "redis"
+    "redis",
+    "fastapi==0.136.1"
 ]
 
 
