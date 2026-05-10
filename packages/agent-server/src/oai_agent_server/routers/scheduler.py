@@ -9,9 +9,33 @@ import asyncio
 import inspect
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import AsyncGenerator, List, Optional
+
+try:
+    from slowapi import Limiter
+    from slowapi.util import get_remote_address
+    _SLOWAPI_AVAILABLE = True
+except ImportError:
+    _SLOWAPI_AVAILABLE = False
+    Limiter = None
+    get_remote_address = None
+
+_schedule_rate_limit = os.environ.get("RATE_LIMIT_SCHEDULE", "30/minute")
+if _SLOWAPI_AVAILABLE:
+    _limiter = Limiter(key_func=get_remote_address)
+else:
+    _limiter = None
+
+
+def _maybe_limit(rate: str):
+    if _limiter is None:
+        def _noop(func):
+            return func
+        return _noop
+    return _limiter.limit(rate)
 
 try:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -21,7 +45,7 @@ try:
 except ImportError:
     _APSCHEDULER_AVAILABLE = False
     
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from oai_agent_core.core.base_agent import BaseAgent
 from oai_agent_server.utils.response_extractor import ResponseContentExtractor
@@ -242,7 +266,8 @@ def create_schedule_router(agent: BaseAgent, db_logger: DatabaseLogger, allowed_
     # ---- endpoints ----
 
     @router.post("", response_model=ScheduleResponse)
-    async def create_schedule(request: ScheduleRequest):
+    @_maybe_limit(_schedule_rate_limit)
+    async def create_schedule(request: Request, schedule_request: ScheduleRequest):
         """Create a new scheduled agent job.
 
         Example UI payloads::
@@ -251,42 +276,42 @@ def create_schedule_router(agent: BaseAgent, db_logger: DatabaseLogger, allowed_
             One-time:   {"run_at": "2026-04-05T09:00:00Z", "prompt": "monthly summary"}
             Immediate:  {"prompt": "quick task", "run_now": true}
         """
-        job_id = request.job_id or uuid.uuid4().hex[:8]
-        session_id = request.session_id or f"schedule-{job_id}"
-        trigger = _build_trigger(request)
-        
+        job_id = schedule_request.job_id or uuid.uuid4().hex[:8]
+        session_id = schedule_request.session_id or f"schedule-{job_id}"
+        trigger = _build_trigger(schedule_request)
+
         # Log/update job in DB
         if db_logger.is_active:
             await db_logger.log_scheduled_job(
                 job_id=job_id,
                 agent_name=agent.agent_name,
-                cron_expression=request.cron_expression,
-                run_at=datetime.fromisoformat(request.run_at.replace('Z', '+00:00')) if request.run_at else None,
-                prompt=request.prompt,
+                cron_expression=schedule_request.cron_expression,
+                run_at=datetime.fromisoformat(schedule_request.run_at.replace('Z', '+00:00')) if schedule_request.run_at else None,
+                prompt=schedule_request.prompt,
                 session_id=session_id,
-                user_id=request.user_id,
-                enabled=request.enabled,
+                user_id=schedule_request.user_id,
+                enabled=schedule_request.enabled,
             )
 
         if trigger:
             scheduler.add_job(
                 _execute_agent_job_bg,
                 trigger=trigger,
-                args=[agent, db_logger, job_id, request.prompt, session_id, request.user_id],
+                args=[agent, db_logger, job_id, schedule_request.prompt, session_id, schedule_request.user_id],
                 id=job_id,
                 replace_existing=True,
             )
             # If job was paused, resume it
-            if not request.enabled:
+            if not schedule_request.enabled:
                 scheduler.pause_job(job_id)
 
 
         if not scheduler.running:
             scheduler.start()
 
-        if request.run_now or (not trigger and request.enabled):
+        if schedule_request.run_now or (not trigger and schedule_request.enabled):
             asyncio.create_task(
-                _execute_agent_job_bg(agent, db_logger, job_id, request.prompt, session_id, request.user_id)
+                _execute_agent_job_bg(agent, db_logger, job_id, schedule_request.prompt, session_id, schedule_request.user_id)
             )
 
         next_run = None
@@ -297,7 +322,7 @@ def create_schedule_router(agent: BaseAgent, db_logger: DatabaseLogger, allowed_
 
         return ScheduleResponse(
             job_id=job_id,
-            schedule=request.cron_expression,
+            schedule=schedule_request.cron_expression,
             next_run=next_run,
             status="scheduled" if trigger else "running",
         )

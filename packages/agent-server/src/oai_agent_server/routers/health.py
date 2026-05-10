@@ -2,10 +2,15 @@ import os
 import time
 from typing import List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from oai_agent_server.middleware.request_context import get_original_environ, request_env, sanitize_for_logging
+from oai_agent_server.security.dependencies import verify_api_key
+
+
+def _debug_mode_enabled() -> bool:
+    return os.environ.get("DEBUG_MODE", "").lower() == "true"
 
 
 def create_health_router(agent_name, server_state, enable_request_isolation, allowed_modes: Optional[List[str]] = None):
@@ -33,6 +38,7 @@ def create_health_router(agent_name, server_state, enable_request_isolation, all
         if "health" in allowed_modes:
             endpoints.update({
                 "GET /health": "Health check endpoint",
+                "GET /ready": "Readiness probe (agent + DB checks)",
                 "GET /status": "Get server status",
                 "GET /debug/env": "Debug request environment (if enabled)"
             })
@@ -55,8 +61,39 @@ def create_health_router(agent_name, server_state, enable_request_isolation, all
     if "health" in allowed_modes:
         @router.get("/health")
         async def health_check():
-            """Simple health check endpoint."""
+            """Liveness probe — returns 200 as long as the process is up."""
             return {"status": "healthy", "agent": agent_name}
+
+        @router.get("/ready")
+        async def readiness_check(request: Request):
+            """Readiness probe: agent initialised + DB reachable."""
+            failures = {}
+
+            srv_state = getattr(request.app.state, "server_state", server_state)
+            if not getattr(srv_state, "is_agent_ready", True):
+                failures["agent"] = "not ready"
+
+            # DB check (best-effort)
+            db_ok = True
+            db_logger = getattr(request.app.state, "db_logger", None)
+            if db_logger is None:
+                # Fallback: many setups attach the logger via the AgentHTTPServer instance.
+                pass
+            else:
+                try:
+                    backend = getattr(db_logger, "_backend", None)
+                    if backend is not None:
+                        await backend.fetch_one("SELECT 1", ())
+                    else:
+                        db_ok = False
+                        failures["database"] = "no active backend"
+                except Exception as exc:
+                    db_ok = False
+                    failures["database"] = f"unreachable: {type(exc).__name__}"
+
+            if failures:
+                return JSONResponse(status_code=503, content={"status": "not_ready", "checks": failures})
+            return {"status": "ready", "agent": agent_name, "database": "ok" if db_ok else "skipped"}
 
         @router.get("/status")
         async def server_status():
@@ -69,18 +106,23 @@ def create_health_router(agent_name, server_state, enable_request_isolation, all
                 "status": "shutting_down" if server_state.is_shutting_down else "running"
             }
 
-        @router.get("/check-env")
+        @router.get("/check-env", dependencies=[Depends(verify_api_key)])
         async def check_environment():
-            """Return all HTTP_ environment variables"""
+            """Return all HTTP_ environment variables. Gated behind DEBUG_MODE."""
+            if not _debug_mode_enabled():
+                return JSONResponse(status_code=404, content={"detail": "Not Found"})
             http_env_vars = {k: v for k, v in os.environ.items() if k.startswith('HTTP_')}
             return {"environment_variables": http_env_vars}
 
-        @router.get("/debug/env")
+        @router.get("/debug/env", dependencies=[Depends(verify_api_key)])
         async def debug_env():
             """
-            Debug endpoint to show current request environment.
+            Debug endpoint to show current request environment. Gated behind DEBUG_MODE.
             Useful for testing request isolation.
             """
+            if not _debug_mode_enabled():
+                return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
             req_env = request_env.get()
 
             # Sanitize sensitive values
