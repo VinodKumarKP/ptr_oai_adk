@@ -15,7 +15,7 @@ agent_list:
       tools:
         - search_flights
         - book_flight
-      structured_output_model: FlightConfirmation
+#      structured_output_model: FlightConfirmation
 
   - hotel_assistant:
       system_prompt: |
@@ -24,7 +24,7 @@ agent_list:
       tools:
         - search_hotels
         - book_hotel
-      structured_output_model: HotelConfirmation
+#      structured_output_model: HotelConfirmation
 
 system_prompt: |
   You are a travel concierge supervisor.
@@ -37,8 +37,8 @@ system_prompt: |
   Wait for the appropriate agents to complete their task and summarize the result 
 
 crew_config:
-  pattern: agent-as-tool
-  structured_output_model: FlightConfirmation
+  pattern: supervisor
+#  structured_output_model: FlightConfirmation
 
 structured_output:
   script_dir: "./structured_output"
