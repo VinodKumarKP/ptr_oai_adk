@@ -1,5 +1,6 @@
 import base64
 import os
+from functools import lru_cache
 from typing import Optional
 
 from fastapi import Header, HTTPException, Request, Depends
@@ -8,6 +9,13 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHea
 from oai_agent_server.exceptions import AuthenticationException
 from oai_agent_server.middleware.request_context import get_original_environ
 from oai_agent_server.utils.saml_token_validation import TokenValidator, TokenValidationError
+
+
+@lru_cache(maxsize=1)
+def _get_token_manager():
+    """Lazy module-level singleton for TokenManager (re-uses Redis connection)."""
+    from oai_agent_server.utils.token_manager import TokenManager
+    return TokenManager()
 
 # Define the API key security scheme
 api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
@@ -54,8 +62,8 @@ async def verify_api_key(
         AuthenticationException: If token is missing or invalid.
         HTTPException: If authentication service is unavailable.
     """
-    # Bypass authentication for /health and /status endpoints
-    if request.url.path in ["/health", "/status"]:
+    # Bypass authentication for /health, /ready and /status endpoints
+    if request.url.path in ["/health", "/ready", "/status"]:
         return True
 
     # 1. Check if Auth is globally enabled
@@ -113,8 +121,7 @@ async def verify_api_key(
             raise HTTPException(status_code=500, detail="SAML token validation service unavailable")
     else:
         try:
-            from oai_agent_server.utils.token_manager import TokenManager
-            token_manager = TokenManager()
+            token_manager = _get_token_manager()
 
             agent_name = getattr(request.app.state, "agent_name", "unknown")
 

@@ -58,11 +58,11 @@ class AgentService:
 
             return JSONResponse(content=response_data)
 
-        except Exception as e:
-            self.logger.info(f"[RESTART] Error during restart: {e}")
+        except Exception:
+            self.logger.error("[RESTART] Error during restart", exc_info=True)
             return JSONResponse(
                 status_code=500,
-                content={"detail": f"Restart failed: {str(e)}"}
+                content={"detail": "Internal server error"}
             )
 
     async def kill_switch(self):
@@ -80,11 +80,11 @@ class AgentService:
 
             return JSONResponse(content=response_data)
 
-        except Exception as e:
-            self.logger.info(f"[KILL] Error during kill: {e}")
+        except Exception:
+            self.logger.error("[KILL] Error during kill", exc_info=True)
             return JSONResponse(
                 status_code=500,
-                content={"detail": f"Kill failed: {str(e)}"}
+                content={"detail": "Internal server error"}
             )
 
     async def get_agent_info(self, auth_enabled, request_isolation):

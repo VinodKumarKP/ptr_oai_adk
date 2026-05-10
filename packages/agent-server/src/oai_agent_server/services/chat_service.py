@@ -87,8 +87,9 @@ class ChatService:
 
             return JSONResponse(
                 content={"content": content, "session_id": session_id, "interaction_id": interaction_id})
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
+        except Exception:
+            self.logger.error("Chat processing failed", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     async def process_stream_chat(self, http_request: Request,
                                   stream_request: StreamChatRequest,
@@ -174,8 +175,9 @@ class ChatService:
                 yield "data: [DONE]\n\n"
 
             return StreamingResponse(generate_response(), media_type="text/event-stream")
-        except Exception as e:
-            raise StreamingException(reason=str(e))
+        except Exception:
+            self.logger.error("Stream chat processing failed", exc_info=True)
+            raise StreamingException(reason="Internal server error")
 
     def _serialize_chunk(self, content, session_id, interaction_id):
         base_data = {'content': content, 'session_id': session_id, 'interaction_id': interaction_id}
