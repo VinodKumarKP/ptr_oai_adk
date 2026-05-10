@@ -1,3 +1,4 @@
+import traceback
 import argparse
 import os
 import asyncio
@@ -108,6 +109,8 @@ class BaseMCPServer(ABC):
         else:
             return None
 
+        self.logger.info(f"MCP_BASE_URL detected: {mcp_base_url}")
+
         if not mcp_base_url:
             return None
 
@@ -134,6 +137,8 @@ class BaseMCPServer(ABC):
         if not registry_base_url:
             self.logger.info("MCP_BASE_URL not set, skipping registration.")
             return
+        else:
+            self.logger.info(f"MCP_BASE_URL detected, attempting to register with registry at {registry_base_url}")
 
         registry_url = f"{registry_base_url}/register"
         server_info = {
@@ -154,6 +159,8 @@ class BaseMCPServer(ABC):
                     self.logger.error(f"Failed to register server using {registry_url}. Status: {response.status_code}, Response: {response.text}")
         except httpx.RequestError as e:
             self.logger.error(f"Error connecting to MCP registry at {registry_url}: {e}")
+        except Exception as e1:
+            self.logger.error(f"Unexpected error during registration with MCP registry at {registry_url}: {e1}")
 
     async def _deregister_from_registry(self):
         """Deregister the server from the MCP registry."""
@@ -222,6 +229,8 @@ class BaseMCPServer(ABC):
             try:
                 asyncio.run(self._register_with_registry(port))
             except Exception as e:
+                self.logger.error(traceback.format_exc())
+                self.logger.exception(f"Exception during registration: {e}")
                 self.logger.error(f"Error during registration: {e}")
 
             self.logger.info(f"Starting MCP server '{self.server_name}' on {transport}://0.0.0.0:{port}")
