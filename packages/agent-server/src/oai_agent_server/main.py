@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import sys
 import threading
@@ -12,6 +13,18 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+    _SLOWAPI_AVAILABLE = True
+except ImportError:
+    _SLOWAPI_AVAILABLE = False
+    Limiter = None
+    get_remote_address = None
+    RateLimitExceeded = None
+    _rate_limit_exceeded_handler = None
 
 from oai_agent_core.components.configuration.model_config import ConfigManager
 from oai_agent_core.core.base_agent import BaseAgent
@@ -55,6 +68,27 @@ class ServerState:
         self.shutdown_timeout = 30
         self.request_lock = threading.Lock()
         self.start_time = time.time()
+        self.is_agent_ready = True
+
+
+def _configure_structured_logging() -> None:
+    """Configure root logger format based on LOG_FORMAT env (text|json)."""
+    log_format = os.environ.get("LOG_FORMAT", "text").lower()
+    if log_format != "json":
+        return
+    try:
+        from pythonjsonlogger import jsonlogger
+    except ImportError:
+        return
+    handler = logging.StreamHandler()
+    formatter = jsonlogger.JsonFormatter(
+        "%(asctime)s %(levelname)s %(name)s %(message)s"
+    )
+    handler.setFormatter(formatter)
+    root = logging.getLogger()
+    # Replace existing handlers to ensure JSON-only output in prod
+    root.handlers = [handler]
+    root.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
 
 
 class AgentHTTPServer:
@@ -103,7 +137,15 @@ class AgentHTTPServer:
         if enable_request_isolation:
             setup_request_isolation(self.logger)
 
+        _configure_structured_logging()
+
         self.db_logger = DatabaseLogger(logger=self.logger)
+
+        # Rate limiter (slowapi)
+        if _SLOWAPI_AVAILABLE:
+            self.limiter = Limiter(key_func=get_remote_address)
+        else:
+            self.limiter = None
 
         @asynccontextmanager
         async def lifespan(app: FastAPI):
@@ -120,6 +162,14 @@ class AgentHTTPServer:
             security=[{api_key_header.model.name: []}],
         )
         self.app.state.agent_name = self.agent_name
+        self.app.state.server_state = self.server_state
+        self.app.state.db_logger = self.db_logger
+
+        # Attach the limiter to the app state and register handler so endpoints
+        # can use the @limiter.limit decorator.
+        if self.limiter is not None:
+            self.app.state.limiter = self.limiter
+            self.app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
         self._setup_middleware()
         self._setup_services()
@@ -270,7 +320,7 @@ class AgentHTTPServer:
         }
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
                 response = await client.post(registry_url, json=agent_info)
                 if response.status_code == 200:
                     self.logger.info(f"Successfully registered agent '{self.agent_name}' with registry at {registry_base_url}")
@@ -287,7 +337,7 @@ class AgentHTTPServer:
 
         registry_url = f"{registry_base_url}/deregister"
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
                 response = await client.post(registry_url, json={"name": self.agent_name})
                 if response.status_code == 200:
                     self.logger.info(f"Successfully deregistered agent '{self.agent_name}' from registry.")
@@ -303,14 +353,19 @@ class AgentHTTPServer:
             self.logger.info(f"Agent '{self.agent_name}' initialized successfully")
             await self.db_logger.initialize()
             await self._register_with_registry()
-        except Exception as e:
-            self.logger.info(
-                f"Warning: Failed to initialize agent during startup: {e}"
+        except Exception:
+            self.logger.error(
+                "Failed to initialize agent during startup", exc_info=True
             )
+            self.server_state.is_agent_ready = False
 
     async def shutdown(self):
         self.logger.info("Shutting down agent server.")
         await self._deregister_from_registry()
+        try:
+            await self.db_logger.close()
+        except Exception:
+            self.logger.error("Failed to close database logger", exc_info=True)
 
     def run(self, host: str = "0.0.0.0", port: int = 8000):
         if self.a2a_agent_card and 'placeholder' in self.a2a_agent_card.supported_interfaces[0].url:

@@ -180,7 +180,11 @@ class BaseAgentExecutor(AgentExecutor):
         self.llm_judge_service = llm_judge_service
         self.allowed_modes = allowed_modes
         self.use_streaming = use_streaming and hasattr(agent, "astream")
-        self._cancelled_tasks: set[str] = set()
+        # TTL-bounded cancellation registry: {task_id: timestamp_added}
+        # Pruned opportunistically; entries older than _CANCELLED_TASK_TTL
+        # are evicted on every access.
+        self._cancelled_tasks: Dict[str, float] = {}
+        self._CANCELLED_TASK_TTL = 300.0  # 5 minutes
 
     # ------------------------------------------------------------------
     # Helpers
@@ -212,7 +216,17 @@ class BaseAgentExecutor(AgentExecutor):
             "user_id": "a2a",
         }
 
+    def _prune_cancelled_tasks(self) -> None:
+        """Evict cancelled-task records older than _CANCELLED_TASK_TTL."""
+        if not self._cancelled_tasks:
+            return
+        cutoff = time.time() - self._CANCELLED_TASK_TTL
+        stale = [tid for tid, ts in self._cancelled_tasks.items() if ts < cutoff]
+        for tid in stale:
+            self._cancelled_tasks.pop(tid, None)
+
     def _is_cancelled(self, task_id: Optional[str]) -> bool:
+        self._prune_cancelled_tasks()
         return task_id is not None and task_id in self._cancelled_tasks
 
     @staticmethod
@@ -482,6 +496,7 @@ class BaseAgentExecutor(AgentExecutor):
                         status=TaskStatus(state=TaskState.TASK_STATE_CANCELED),
                     )
                 )
+                self._cancelled_tasks.pop(task_id, None)
                 return
 
             chunk_text = self._extract_text(chunk)
@@ -605,7 +620,8 @@ class BaseAgentExecutor(AgentExecutor):
         """
         task_id = context.task_id
         if task_id:
-            self._cancelled_tasks.add(task_id)
+            self._cancelled_tasks[task_id] = time.time()
+            self._prune_cancelled_tasks()
             logger.info(f"Cancellation requested for task '{task_id}'")
 
         await event_queue.enqueue_event(

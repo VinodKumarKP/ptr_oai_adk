@@ -29,7 +29,9 @@ dependencies = [
     "asyncpg",
     "aiosqlite",
     "oai-agent-core",
-    "a2a-sdk[http-server]==1.0.2"
+    "a2a-sdk[http-server]==1.0.2",
+    "slowapi>=0.1.9",
+    "python-json-logger>=2.0",
 ]
 
 [project.optional-dependencies]

@@ -9,6 +9,32 @@ from oai_agent_server.models.requests import ChatRequest, StreamChatRequest
 from oai_agent_server.models.responses import ChatResponse
 from oai_agent_server.security.dependencies import verify_api_key
 
+try:
+    from slowapi import Limiter
+    from slowapi.util import get_remote_address
+    _SLOWAPI_AVAILABLE = True
+except ImportError:
+    _SLOWAPI_AVAILABLE = False
+    Limiter = None
+    get_remote_address = None
+
+# Module-level limiter so the decorators can reference it at import time.
+# The app-level limiter (attached in main.py) handles the actual enforcement.
+_chat_rate_limit = os.environ.get("RATE_LIMIT_CHAT", "60/minute")
+if _SLOWAPI_AVAILABLE:
+    _limiter = Limiter(key_func=get_remote_address)
+else:
+    _limiter = None
+
+
+def _maybe_limit(rate: str):
+    """Return a no-op decorator when slowapi is unavailable."""
+    if _limiter is None:
+        def _noop(func):
+            return func
+        return _noop
+    return _limiter.limit(rate)
+
 
 def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = None) -> APIRouter:
     """Create the chat router with configured endpoints."""
@@ -60,14 +86,15 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
             return message
 
         @router.post("", response_model=ChatResponse)
-        async def chat(chat_request: ChatRequest, http_request: Request, background_tasks: BackgroundTasks):
+        @_maybe_limit(_chat_rate_limit)
+        async def chat(request: Request, chat_request: ChatRequest, background_tasks: BackgroundTasks):
             """Process a synchronous chat request."""
             original_message = chat_request.message
             chat_request.message = _append_files_to_message(chat_request.message, [], chat_request.session_id)
-            return await chat_service.process_chat(http_request=http_request,
+            return await chat_service.process_chat(http_request=request,
                                                    chat_request=chat_request,
                                                    background_tasks=background_tasks,
-                                                   headers=http_request.headers,
+                                                   headers=request.headers,
                                                    original_message=original_message)
 
         _with_files_openapi = {
@@ -123,15 +150,16 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                                                    original_message=original_message)
 
         @router.post("/stream")
-        async def chat_stream(stream_request: StreamChatRequest, http_request: Request,
+        @_maybe_limit(_chat_rate_limit)
+        async def chat_stream(request: Request, stream_request: StreamChatRequest,
                               background_tasks: BackgroundTasks):
             """Process a streaming chat request."""
             original_message = stream_request.message
             stream_request.message = _append_files_to_message(stream_request.message, [], stream_request.session_id)
-            return await chat_service.process_stream_chat(http_request=http_request,
+            return await chat_service.process_stream_chat(http_request=request,
                                                           stream_request=stream_request,
                                                           background_tasks=background_tasks,
-                                                          headers=http_request.headers,
+                                                          headers=request.headers,
                                                           original_message=original_message)
 
         _stream_with_files_openapi = {

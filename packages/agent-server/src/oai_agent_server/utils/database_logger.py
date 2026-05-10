@@ -4,6 +4,7 @@ Database logger for tracking agent chat interactions and scheduled jobs.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -186,6 +187,21 @@ class SQLiteBackend(DatabaseBackend):
 
     def __init__(self) -> None:
         self._db_path: Optional[str] = None
+        self._conn: Optional["aiosqlite.Connection"] = None
+        self._write_lock: asyncio.Lock = asyncio.Lock()
+
+    async def _get_conn(self) -> "aiosqlite.Connection":
+        if self._conn is None:
+            if self._db_path is None:
+                raise RuntimeError("SQLiteBackend not initialized")
+            conn = await aiosqlite.connect(self._db_path)
+            await conn.execute("PRAGMA journal_mode=WAL;")
+            await conn.execute("PRAGMA synchronous=NORMAL;")
+            await conn.execute("PRAGMA foreign_keys = ON;")
+            await conn.commit()
+            conn.row_factory = aiosqlite.Row
+            self._conn = conn
+        return self._conn
 
     async def initialize(self, logger: Optional[logging.Logger]) -> bool:
         if not _AIOSQLITE_AVAILABLE:
@@ -205,35 +221,40 @@ class SQLiteBackend(DatabaseBackend):
 
     async def execute(self, query: str, params: tuple) -> None:
         if self._db_path is None: raise RuntimeError("SQLiteBackend not initialized")
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute("PRAGMA foreign_keys = ON;")
+        async with self._write_lock:
+            db = await self._get_conn()
             await db.execute(query, params)
             await db.commit()
 
     async def execute_many(self, query: str, params_seq: List[tuple]) -> None:
         if self._db_path is None: raise RuntimeError("SQLiteBackend not initialized")
         if not params_seq: return
-        async with aiosqlite.connect(self._db_path) as db:
+        async with self._write_lock:
+            db = await self._get_conn()
             await db.executemany(query, params_seq)
             await db.commit()
 
     async def fetch(self, query: str, params: tuple) -> List[Dict[str, Any]]:
         if self._db_path is None: raise RuntimeError("SQLiteBackend not initialized")
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(query, params) as cursor:
-                rows = await cursor.fetchall()
+        db = await self._get_conn()
+        async with db.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
     async def fetch_one(self, query: str, params: tuple) -> Optional[Dict[str, Any]]:
         if self._db_path is None: raise RuntimeError("SQLiteBackend not initialized")
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(query, params) as cursor:
-                row = await cursor.fetchone()
+        db = await self._get_conn()
+        async with db.execute(query, params) as cursor:
+            row = await cursor.fetchone()
         return dict(row) if row else None
 
     async def close(self) -> None:
+        if self._conn is not None:
+            try:
+                await self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
         self._db_path = None
 
     @staticmethod
@@ -254,20 +275,20 @@ class SQLiteBackend(DatabaseBackend):
         activity_log_index_ddl = "CREATE INDEX IF NOT EXISTS idx_agent_activity_log_interaction_id ON agent_activity_log(interaction_id);"
         scheduled_job_runs_job_id_index_ddl = "CREATE INDEX IF NOT EXISTS idx_scheduled_job_runs_job_id ON scheduled_job_runs(job_id);"
 
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute("PRAGMA foreign_keys = ON;")
-            await db.execute(chat_logs_ddl)
-            await db.execute(activity_log_ddl)
-            await db.execute(evaluation_log_ddl)
-            await db.execute(scheduled_jobs_ddl)
-            await db.execute(scheduled_job_runs_ddl)
-            await db.execute(activity_log_index_ddl)
-            await db.execute(scheduled_job_runs_job_id_index_ddl)
-            try:
-                await db.execute("ALTER TABLE chat_logs ADD COLUMN interaction_id TEXT")
-                await db.execute("ALTER TABLE agent_activity_log ADD COLUMN interaction_id TEXT")
-            except aiosqlite.OperationalError as e:
-                if "duplicate column name" not in str(e): raise
+        db = await self._get_conn()
+        await db.execute(chat_logs_ddl)
+        await db.execute(activity_log_ddl)
+        await db.execute(evaluation_log_ddl)
+        await db.execute(scheduled_jobs_ddl)
+        await db.execute(scheduled_job_runs_ddl)
+        await db.execute(activity_log_index_ddl)
+        await db.execute(scheduled_job_runs_job_id_index_ddl)
+        try:
+            await db.execute("ALTER TABLE chat_logs ADD COLUMN interaction_id TEXT")
+            await db.execute("ALTER TABLE agent_activity_log ADD COLUMN interaction_id TEXT")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" not in str(e): raise
+        await db.commit()
 
 
 class DatabaseLogger:
@@ -536,13 +557,18 @@ class DatabaseLogger:
         session_id: str,
         user_id: str,
         enabled: bool,
+        agent_name: Optional[str] = None,
     ) -> None:
         if not self._ready(): return
         try:
             now = datetime.now(timezone.utc)
+            # SCHEDULED_JOBS_INSERT expects 10 params:
+            # (job_id, agent_name, cron_expression, run_at, prompt, session_id,
+            #  user_id, enabled, created_at, updated_at) — created_at is reused
+            # as the timestamp for ON CONFLICT path; updated_at takes `now`.
             params = (
-                job_id, cron_expression, run_at, prompt,
-                session_id, user_id, enabled, now, job_id, # job_id repeated for ON CONFLICT UPDATE
+                job_id, agent_name, cron_expression, run_at, prompt,
+                session_id, user_id, enabled, now, now,
             )
             # Using the same INSERT statement with ON CONFLICT DO UPDATE
             await self._backend.execute(self._backend.SCHEDULED_JOBS_INSERT, params)
