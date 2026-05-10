@@ -52,7 +52,7 @@ class MCPRegistry:
 
             # Add registered_via attribute for config servers
             for name, server in self.config.servers.items():
-                setattr(server, 'registered_via', 'config')
+                server.registered_via = 'config'
 
             logger.info(f"Successfully loaded configuration from {self.config_path}")
         except (json.JSONDecodeError, Exception) as e:
@@ -192,7 +192,7 @@ class MCPRegistry:
                     available_versions=row.get("available_versions", []),
                     deployment_mode=row.get("deployment_mode", "docker")
                 )
-                setattr(server_config, 'registered_via', 'dynamic')
+                server_config.registered_via = 'dynamic'
                 self.config.servers[server_name] = server_config
                 restored += 1
                 logger.debug(f"Restored dynamic server '{server_name}' from DB.")
@@ -209,45 +209,46 @@ class MCPRegistry:
             host = "localhost"
         logger.info(f"Starting auto-discovery of MCP servers in port range {start}-{end} on host {host}...")
 
-        for port in range(start, end + 1):
-            endpoint = f"http://localhost:{port}/info"
+        async def _probe(client: httpx.AsyncClient, port: int):
             try:
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(endpoint, timeout=1.0)
-                    if response.status_code == 200:
-                        server_info = response.json()
-                        server_name = server_info.get("server_name")
-                        if server_name and server_name not in self.config.servers:
-                            server_config = ServerConfig(
-                                endpoint=f"http://{host}:{port}",
-                                description=server_info.get("server_config", {}).get("description",
-                                                                                     "Auto-discovered MCP server"),
-                                source=server_info.get("source"),
-                                tags=server_info.get("tags", []),
-                                current_version=server_info.get("current_version"),
-                                available_versions=server_info.get("available_versions", []),
-                                deployment_mode=server_info.get("deployment_mode", "docker")
-                            )
-                            setattr(server_config, 'registered_via', 'dynamic')
-                            self.config.servers[server_name] = server_config
-                            logger.info(f"Discovered MCP server '{server_name}' at http://{host}:{port}")
-
-                            # Log discovery to DB
-                            await self.db_logger.log_server_registration(
-                                server_name=server_name,
-                                endpoint_url=f"http://{host}:{port}",
-                                port=port,
-                                description=server_config.description,
-                                active=True,
-                                registered_via="dynamic",
-                                source=server_config.source,
-                                tags=server_config.tags,
-                                current_version=server_config.current_version,
-                                available_versions=server_config.available_versions,
-                                deployment_mode=server_config.deployment_mode
-                            )
-            except (httpx.RequestError, json.JSONDecodeError) as e:
+                response = await client.get(f"http://localhost:{port}/info", timeout=1.0)
+                if response.status_code != 200:
+                    return
+                server_info = response.json()
+                server_name = server_info.get("server_name")
+                if not server_name or server_name in self.config.servers:
+                    return
+                server_config = ServerConfig(
+                    endpoint=f"http://{host}:{port}",
+                    description=server_info.get("server_config", {}).get("description", "Auto-discovered MCP server"),
+                    source=server_info.get("source"),
+                    tags=server_info.get("tags", []),
+                    current_version=server_info.get("current_version"),
+                    available_versions=server_info.get("available_versions", []),
+                    deployment_mode=server_info.get("deployment_mode", "docker"),
+                )
+                server_config.registered_via = 'dynamic'
+                self.config.servers[server_name] = server_config
+                logger.info(f"Discovered MCP server '{server_name}' at http://{host}:{port}")
+                await self.db_logger.log_server_registration(
+                    server_name=server_name,
+                    endpoint_url=f"http://{host}:{port}",
+                    port=port,
+                    description=server_config.description,
+                    active=True,
+                    registered_via="dynamic",
+                    source=server_config.source,
+                    tags=server_config.tags,
+                    current_version=server_config.current_version,
+                    available_versions=server_config.available_versions,
+                    deployment_mode=server_config.deployment_mode,
+                )
+            except (httpx.RequestError, json.JSONDecodeError):
                 pass
+
+        async with httpx.AsyncClient() as client:
+            await asyncio.gather(*[_probe(client, port) for port in range(start, end + 1)])
+
         self.initialize_proxies()
 
     def _build_upstream_url(self, server_info: ServerConfig) -> str:
@@ -297,27 +298,21 @@ class MCPRegistry:
         if existing is None:
             existing = {}
 
-        merged = {
-            'endpoint': server_registration.endpoint if server_registration.endpoint is not None else existing.get(
-                'endpoint', ''),
-            'port': server_registration.port if server_registration.port is not None else existing.get('port'),
-            'source': server_registration.source if server_registration.source is not None else existing.get('source',
-                                                                                                             ''),
+        reg = server_registration
+        new_versions = reg.available_versions if (reg.available_versions is not None and len(reg.available_versions) > 0) else None
+
+        return {
+            'endpoint': reg.endpoint if reg.endpoint is not None else existing.get('endpoint', ''),
+            'port': reg.port if reg.port is not None else existing.get('port'),
+            'source': reg.source if reg.source is not None else existing.get('source', ''),
             'active': True,
-            'registered_via': registered_via if registered_via is not None else existing.get('registered_via',
-                                                                                             'dynamic'),
-            'tags': server_registration.tags if server_registration.tags is not None else existing.get('tags', []),
-            'description': server_registration.description if server_registration.description is not None else existing.get(
-                'description', ''),
-            'current_version': server_registration.current_version if server_registration.current_version is not None else existing.get(
-                'current_version'),
-            'available_versions': server_registration.available_versions if len(
-                server_registration.available_versions) > 0 and server_registration.available_versions is not None else existing.get(
-                'available_versions', []),
-            'deployment_mode': server_registration.deployment_mode if server_registration.deployment_mode is not None else existing.get(
-                'deployment_mode', 'docker')
+            'registered_via': registered_via if registered_via is not None else existing.get('registered_via', 'dynamic'),
+            'tags': reg.tags if reg.tags is not None else existing.get('tags', []),
+            'description': reg.description if reg.description is not None else existing.get('description', ''),
+            'current_version': reg.current_version if reg.current_version is not None else existing.get('current_version'),
+            'available_versions': new_versions if new_versions is not None else existing.get('available_versions', []),
+            'deployment_mode': reg.deployment_mode if reg.deployment_mode is not None else existing.get('deployment_mode', 'docker'),
         }
-        return merged
 
     async def register_server(self, app: FastAPI, server_registration: ServerRegistration,
                               stream_output: bool = False) -> Union[JSONResponse, StreamingResponse]:

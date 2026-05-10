@@ -35,6 +35,7 @@ def get_common_server_env(
         "DB_POOL_MIN_SIZE": "1",
         "MCP_BASE_URL": base_url,
         "MCP_REGISTRY_URL": local_registry_url,
+        "FORCE_AUTH": "false"
     }
 
     # Apply overrides (user-supplied variables)

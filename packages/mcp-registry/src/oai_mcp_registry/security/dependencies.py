@@ -12,6 +12,9 @@ from oai_mcp_registry.security.token_manager import TokenManager
 # Define the API key security scheme
 api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
 
+# Shared TokenManager instance — one Redis connection pool for the process lifetime.
+_token_manager = TokenManager()
+
 def is_saml_token(token: str) -> bool:
     """
     Checks if a token is likely a SAML token by checking if it's base64 encoded XML.
@@ -38,12 +41,9 @@ def _validate_token(request: Request, registry_config: RegistryConfig, server_na
     if not auth_enabled:
         return True
 
-    if ('localhost' in str(request.url) or
-        '0.0.0.0' in str(request.url) or
-        '127.0.0.1' in str(request.url) or
-        '::1' in str(request.url) or
-        'host.docker.internal' in str(request.url)) and os.environ.get('FORCE_AUTH',
-                                                                             'false').lower() == 'false':
+    _LOCAL_PEERS = {"127.0.0.1", "::1", "localhost", "0.0.0.0", "host.docker.internal"}
+    peer = request.client.host if request.client else ""
+    if peer in _LOCAL_PEERS and os.environ.get('FORCE_AUTH', 'false').lower() == 'false':
         return True
 
     token = request.headers.get("api-token") or \
@@ -75,8 +75,7 @@ def _validate_token(request: Request, registry_config: RegistryConfig, server_na
         except Exception:
             raise HTTPException(status_code=500, detail="SAML token validation service unavailable")
     else:
-        token_manager = TokenManager()
-        user_info = token_manager.validate_token(server_name, token)
+        user_info = _token_manager.validate_token(server_name, token)
 
         if not user_info:
             raise HTTPException(status_code=401, detail="Invalid or expired API token")
