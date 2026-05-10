@@ -1,9 +1,12 @@
+import base64
 import os
+from starlette.exceptions import HTTPException
 from fastmcp.server.middleware.middleware import Middleware, MiddlewareContext
 from fastmcp.server.dependencies import get_http_headers
 from oai_mcp_server_core.utils.logger_utils import get_logger
 from oai_mcp_server_core.core.context import RequestAwareEnviron
-from oai_mcp_server_core.core.exceptions import AuthenticationError, DependencyError
+from oai_mcp_server_core.core.exceptions import AuthenticationError, DependencyError, AuthenticationException
+from oai_mcp_server_core.utils.saml_token_validation import TokenValidator, TokenValidationError
 
 
 class AuthenticationMiddleware(Middleware):
@@ -31,6 +34,19 @@ class AuthenticationMiddleware(Middleware):
             except ImportError as e:
                 self.logger.error(f"Failed to import TokenManager: {e}")
                 self.token_manager = None
+
+    def is_saml_token(self, token: str) -> bool:
+        """
+        Checks if a token is likely a SAML token by checking if it's base64 encoded XML.
+        """
+        if not token or not isinstance(token, str) or len(token) % 4 != 0:
+            return False
+        try:
+            decoded_token = base64.b64decode(token, validate=True)
+            # Check for SAML or SAMLP tags, without requiring the XML declaration
+            return b'<saml:' in decoded_token or b'<samlp:' in decoded_token
+        except (ValueError, TypeError):
+            return False
 
     async def __call__(self, context: MiddlewareContext, call_next):
         """
@@ -81,18 +97,35 @@ class AuthenticationMiddleware(Middleware):
             from starlette.exceptions import HTTPException
             raise HTTPException(status_code=401, detail="API token required")
 
-        # Validate token using TokenManager
-        if not self.token_manager:
-            self.logger.error("TokenManager not available")
-            from starlette.exceptions import HTTPException
-            raise HTTPException(status_code=500, detail="Authentication service unavailable")
+        if self.is_saml_token(api_token):
+            try:
+                validator = TokenValidator(os.environ.get("SAML_PUBLIC_KEY_PATH", None))
+                validation_result = validator.validate_token_and_get_role(api_token)
+                if validation_result.is_valid:
+                    # Store user info in request state if needed
+                    # request.state.user_role = validation_result.role
+                    # request.state.user_email = validation_result.email
+                    pass
+                else:
+                    raise AuthenticationException(reason=validation_result.error_message or "Invalid SAML token")
+            except TokenValidationError as e:
+                raise AuthenticationException(reason=str(e))
+            except Exception as e:
+                from starlette.exceptions import HTTPException
+                raise HTTPException(status_code=500, detail="SAML token validation service unavailable")
+        else:
+            # Validate token using TokenManager
+            if not self.token_manager:
+                self.logger.error("TokenManager not available")
+                from starlette.exceptions import HTTPException
+                raise HTTPException(status_code=500, detail="Authentication service unavailable")
 
-        is_valid = self.token_manager.validate_token(self.server_name, api_token)
+            is_valid = self.token_manager.validate_token(self.server_name, api_token)
 
-        if not is_valid:
-            self.logger.warning(f"Authentication failed: Invalid or expired token for {self.server_name}")
-            from starlette.exceptions import HTTPException
-            raise HTTPException(status_code=401, detail="Invalid or expired API token")
+            if not is_valid:
+                self.logger.warning(f"Authentication failed: Invalid or expired token for {self.server_name}")
+                from starlette.exceptions import HTTPException
+                raise HTTPException(status_code=401, detail="Invalid or expired API token")
 
         # Token is valid, proceed with request
         self.logger.info(f"Authentication successful for {self.server_name}")

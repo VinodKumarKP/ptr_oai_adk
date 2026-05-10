@@ -37,3 +37,14 @@ class DependencyError(MCPError):
     """Raised when a required dependency is missing or fails."""
     def __init__(self, message: str):
         super().__init__(message, code="DEPENDENCY_ERROR", status_code=500)
+
+
+class AuthenticationException(MCPError):
+    """Raised when authentication fails."""
+
+    def __init__(self, reason: str = "Invalid or expired token"):
+        super().__init__(
+            message=reason,
+            status_code=401,
+            code="AUTH_ERROR"
+        )
