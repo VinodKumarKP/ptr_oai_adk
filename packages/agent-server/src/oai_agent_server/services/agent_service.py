@@ -7,6 +7,27 @@ from fastapi.responses import JSONResponse
 from oai_agent_server.exceptions import AgentInitializationException
 
 
+# Whitelist of agent_config fields that are safe to expose via /info.
+# Anything not in this set (e.g. mcps, system_prompt, instructions, source,
+# environment, secrets) MUST NOT appear in the response.
+SAFE_AGENT_CONFIG_FIELDS = {
+    "name",
+    "description",
+    "type",
+    "cloud_provider",
+    "port",
+    "tags",
+    "prompts",
+}
+
+# Allow ops to extend the whitelist via env var (comma-separated) for dev use.
+_extra = os.environ.get("INFO_EXTRA_FIELDS", "")
+if _extra.strip():
+    SAFE_AGENT_CONFIG_FIELDS = SAFE_AGENT_CONFIG_FIELDS | {
+        f.strip() for f in _extra.split(",") if f.strip()
+    }
+
+
 class AgentService:
     """Service for managing agent lifecycle and information."""
 
@@ -95,7 +116,7 @@ class AgentService:
             "cloud_provider": self.agent.agent_config.get('cloud_provider', 'aws'),
             "description": self.agent.agent_config.get('description', 'No description available'),
             "initialized": self.agent._initialized,
-            "agent_config": self.agent.agent_config,
+            "agent_config": {k: v for k, v in self.agent.agent_config.items() if k in SAFE_AGENT_CONFIG_FIELDS},
             "auth_enabled": auth_enabled,
             "request_isolation": request_isolation,
             "endpoint": f"http://localhost:{self.agent.agent_config.get('port', 8081)}",
