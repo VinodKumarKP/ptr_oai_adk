@@ -6,7 +6,6 @@ from typing import Any, List, Optional, Union, Tuple
 from fastapi import APIRouter, Request, Depends, UploadFile, File, Form, BackgroundTasks
 
 from oai_agent_server.models.requests import ChatRequest, StreamChatRequest
-from oai_agent_server.models.responses import ChatResponse
 from oai_agent_server.security.dependencies import verify_api_key
 
 try:
@@ -85,10 +84,15 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                 # We don't need to add uploaded_files to message dict anymore as we pass it separately
             return message
 
-        @router.post("", response_model=ChatResponse)
+        @router.post("")
         @_maybe_limit(_chat_rate_limit)
         async def chat(request: Request, chat_request: ChatRequest, background_tasks: BackgroundTasks):
-            """Process a synchronous chat request."""
+            """Process a synchronous chat request.
+
+            Returns a free-form dict ``{"content": ..., "session_id": str, "interaction_id": str}``.
+            ``content`` is provider-dependent (string or dict with model/token_usage), so the
+            response shape isn't constrained by a Pydantic model.
+            """
             original_message = chat_request.message
             chat_request.message = _append_files_to_message(chat_request.message, [], chat_request.session_id)
             return await chat_service.process_chat(http_request=request,
@@ -119,7 +123,7 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
             }
         }
 
-        @router.post("/with-files", response_model=ChatResponse, openapi_extra=_with_files_openapi)
+        @router.post("/with-files", openapi_extra=_with_files_openapi)
         async def chat_with_files(
                 http_request: Request,
                 background_tasks: BackgroundTasks,

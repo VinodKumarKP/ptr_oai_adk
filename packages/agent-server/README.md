@@ -101,6 +101,9 @@ The server respects the following environment variables:
 *   `REDIS_HOST`: Redis host (default: `localhost`).
 *   `REDIS_PORT`: Redis port (default: `6379`).
 
+**Scheduler:**
+*   `ENABLE_SCHEDULER`: Set to `false` to disable scheduler endpoints (default: `true`). Requires the optional `apscheduler` dependency (install via `pip install oai-agent-server[scheduler]`). When apscheduler is not installed, scheduler endpoints are skipped automatically.
+
 ## API Endpoints
 
 ### Chat

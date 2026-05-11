@@ -112,10 +112,12 @@ class ScheduleInfo(BaseModel):
     active: bool
 
 
-if _APSCHEDULER_AVAILABLE:
-    scheduler = AsyncIOScheduler()
-else:
-    scheduler = None
+def _get_scheduler(request: Request):
+    """Fetch the app-owned scheduler. Raises 503 if unavailable."""
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler is None:
+        raise HTTPException(status_code=503, detail="Scheduler not available")
+    return scheduler
 
 
 # ---- helper: stream agent response as SSE (same format as /chat/stream) ----
@@ -281,6 +283,7 @@ def create_schedule_router(agent: BaseAgent, db_logger: DatabaseLogger, allowed_
             One-time:   {"run_at": "2026-04-05T09:00:00Z", "prompt": "monthly summary"}
             Immediate:  {"prompt": "quick task", "run_now": true}
         """
+        scheduler = _get_scheduler(request)
         job_id = schedule_request.job_id or uuid.uuid4().hex[:8]
         session_id = schedule_request.session_id or f"schedule-{job_id}"
         trigger = _build_trigger(schedule_request)
@@ -310,9 +313,6 @@ def create_schedule_router(agent: BaseAgent, db_logger: DatabaseLogger, allowed_
             if not schedule_request.enabled:
                 scheduler.pause_job(job_id)
 
-
-        if not scheduler.running:
-            scheduler.start()
 
         if schedule_request.run_now or (not trigger and schedule_request.enabled):
             asyncio.create_task(
@@ -353,8 +353,9 @@ def create_schedule_router(agent: BaseAgent, db_logger: DatabaseLogger, allowed_
         )
 
     @router.get("", response_model=dict)
-    async def list_schedules():
+    async def list_schedules(request: Request):
         """List all registered schedules."""
+        scheduler = _get_scheduler(request)
         jobs = []
         if db_logger.is_active:
             db_jobs = await db_logger.get_all_scheduled_jobs()
@@ -433,8 +434,9 @@ def create_schedule_router(agent: BaseAgent, db_logger: DatabaseLogger, allowed_
         )
 
     @router.put("/{job_id}/pause")
-    async def pause_schedule(job_id: str):
+    async def pause_schedule(request: Request, job_id: str):
         """Pause a recurring schedule."""
+        scheduler = _get_scheduler(request)
         if not db_logger.is_active:
             raise HTTPException(status_code=500, detail="Database logging not active.")
         
@@ -458,8 +460,9 @@ def create_schedule_router(agent: BaseAgent, db_logger: DatabaseLogger, allowed_
         return {"job_id": job_id, "status": "paused"}
 
     @router.put("/{job_id}/resume")
-    async def resume_schedule(job_id: str):
+    async def resume_schedule(request: Request, job_id: str):
         """Resume a paused schedule."""
+        scheduler = _get_scheduler(request)
         if not db_logger.is_active:
             raise HTTPException(status_code=500, detail="Database logging not active.")
 
@@ -483,8 +486,9 @@ def create_schedule_router(agent: BaseAgent, db_logger: DatabaseLogger, allowed_
         return {"job_id": job_id, "status": "resumed"}
 
     @router.delete("/{job_id}")
-    async def delete_schedule(job_id: str):
+    async def delete_schedule(request: Request, job_id: str):
         """Delete a schedule and discard its stored results."""
+        scheduler = _get_scheduler(request)
         if not db_logger.is_active:
             raise HTTPException(status_code=500, detail="Database logging not active.")
 

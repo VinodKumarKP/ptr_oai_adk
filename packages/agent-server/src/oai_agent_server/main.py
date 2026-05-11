@@ -84,23 +84,65 @@ class ServerState:
 
 
 def _configure_structured_logging() -> None:
-    """Configure root logger format based on LOG_FORMAT env (text|json)."""
+    """Configure root logger format based on LOG_FORMAT env (text|json).
+
+    Always attaches RequestIdFilter so log lines emitted during request
+    handling carry the request_id (matches the X-Request-ID response header).
+    """
+    from oai_agent_server.utils.logging_filter import RequestIdFilter
+
+    request_id_filter = RequestIdFilter()
     log_format = os.environ.get("LOG_FORMAT", "text").lower()
-    if log_format != "json":
-        return
-    try:
-        from pythonjsonlogger import jsonlogger
-    except ImportError:
-        return
-    handler = logging.StreamHandler()
-    formatter = jsonlogger.JsonFormatter(
-        "%(asctime)s %(levelname)s %(name)s %(message)s"
-    )
-    handler.setFormatter(formatter)
     root = logging.getLogger()
-    # Replace existing handlers to ensure JSON-only output in prod
-    root.handlers = [handler]
-    root.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
+
+    if log_format == "json":
+        try:
+            from pythonjsonlogger import jsonlogger
+            handler = logging.StreamHandler()
+            # Including %(request_id)s in the format string makes JsonFormatter
+            # auto-extract the field onto the JSON record.
+            formatter = jsonlogger.JsonFormatter(
+                "%(asctime)s %(levelname)s %(name)s %(request_id)s %(message)s"
+            )
+            handler.setFormatter(formatter)
+            handler.addFilter(request_id_filter)
+            root.handlers = [handler]
+            root.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
+        except ImportError:
+            # Fall through to text-style configuration below.
+            log_format = "text"
+
+    if log_format != "json":
+        # Update existing handlers (or install one) with the request_id format.
+        fmt = "%(asctime)s [%(request_id)s] %(levelname)s %(name)s: %(message)s"
+        if not root.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter(fmt))
+            root.addHandler(handler)
+        for h in root.handlers:
+            try:
+                h.setFormatter(logging.Formatter(fmt))
+            except Exception:
+                pass
+
+    # Attach the filter to the root logger (covers anything that propagates).
+    root.addFilter(request_id_filter)
+    for h in root.handlers:
+        h.addFilter(request_id_filter)
+
+    # Also wire uvicorn's loggers so request lines and errors carry the id.
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        lg = logging.getLogger(name)
+        lg.addFilter(request_id_filter)
+        for h in lg.handlers:
+            h.addFilter(request_id_filter)
+            try:
+                if log_format != "json":
+                    h.setFormatter(logging.Formatter(
+                        "%(asctime)s [%(request_id)s] %(levelname)s %(name)s: %(message)s"
+                    ))
+            except Exception:
+                pass
 
 
 class AgentHTTPServer:
@@ -145,6 +187,9 @@ class AgentHTTPServer:
         self.a2a_base_url = a2a_base_url
         self.a2a_streaming = a2a_streaming
         self.a2a_push_notifications = a2a_push_notifications
+
+        # Lazy: created in startup() so import doesn't break if APScheduler missing.
+        self.scheduler = None
 
         if enable_request_isolation:
             setup_request_isolation(self.logger)
@@ -231,13 +276,15 @@ class AgentHTTPServer:
             allow_methods=["*"],
             allow_headers=["*"],
         )
-        self.app.add_middleware(RequestTrackingMiddleware, server_state=self.server_state)
         self.app.add_middleware(LoggingMiddleware, logger=self.logger)
         self.app.add_middleware(
             HeaderCaptureMiddleware,
             logger=self.logger,
             enable_request_isolation=self.enable_request_isolation,
         )
+        # RequestTracking must be outermost (added LAST in Starlette) so the
+        # request_id contextvar is set before any other middleware logs.
+        self.app.add_middleware(RequestTrackingMiddleware, server_state=self.server_state)
 
     # ------------------------------------------------------------------
     # Services (unchanged)
@@ -305,11 +352,24 @@ class AgentHTTPServer:
             self.app.include_router(a2a_router, prefix="/a2a")
             self.a2a_agent_card = agent_card
 
-        schedule_router = create_schedule_router(self.agent, self.db_logger, self.allowed_modes)
-        if schedule_router:
-            self.app.include_router(
-                schedule_router,
-                prefix="/schedule",
+        if os.environ.get("ENABLE_SCHEDULER", "true").lower() != "false":
+            try:
+                schedule_router = create_schedule_router(
+                    self.agent, self.db_logger, self.allowed_modes
+                )
+                if schedule_router:
+                    self.app.include_router(
+                        schedule_router,
+                        prefix="/schedule",
+                    )
+                    self.logger.info("Scheduler router enabled")
+            except ImportError as e:
+                self.logger.warning(
+                    "Scheduler router skipped (apscheduler not installed): %s", e
+                )
+        else:
+            self.logger.info(
+                "Scheduler router disabled via ENABLE_SCHEDULER=false"
             )
 
         # Admin router — operator-only endpoints for inspecting the A2A
@@ -422,6 +482,31 @@ class AgentHTTPServer:
                         self.logger.error(
                             "InMemoryTaskStore fallback also failed", exc_info=True,
                         )
+            # Initialise APScheduler now so jobs can run as soon as the
+            # server accepts requests (no race with first /schedule call).
+            if os.environ.get("ENABLE_SCHEDULER", "true").lower() != "false":
+                try:
+                    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+                    self.scheduler = AsyncIOScheduler()
+                    self.scheduler.start()
+                    self.app.state.scheduler = self.scheduler
+                    self.logger.info("Scheduler started")
+                except ImportError:
+                    self.logger.warning(
+                        "APScheduler not installed; /schedule endpoints will return 503."
+                    )
+                    self.app.state.scheduler = None
+                except Exception:
+                    self.logger.error(
+                        "Failed to start APScheduler; /schedule endpoints will return 503.",
+                        exc_info=True,
+                    )
+                    self.app.state.scheduler = None
+            else:
+                self.logger.info(
+                    "Scheduler disabled via ENABLE_SCHEDULER=false"
+                )
+                self.app.state.scheduler = None
             await self._register_with_registry()
         except Exception:
             self.logger.error(
@@ -440,6 +525,14 @@ class AgentHTTPServer:
                 await self._a2a_task_store.shutdown()
         except Exception:
             self.logger.error("Failed to shutdown A2A task store", exc_info=True)
+        # Stop scheduler before closing the DB so in-flight jobs don't
+        # fire against a closed connection pool.
+        if self.scheduler is not None:
+            try:
+                self.scheduler.shutdown(wait=False)
+                self.logger.info("Scheduler shut down")
+            except Exception:
+                self.logger.error("Failed to shut down scheduler", exc_info=True)
         try:
             await self.db_logger.close()
         except Exception:
