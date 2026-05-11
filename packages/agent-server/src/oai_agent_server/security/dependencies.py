@@ -1,4 +1,6 @@
 import base64
+import ipaddress
+import logging
 import os
 from functools import lru_cache
 from typing import Optional
@@ -9,6 +11,42 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHea
 from oai_agent_server.exceptions import AuthenticationException
 from oai_agent_server.middleware.request_context import get_original_environ
 from oai_agent_server.utils.saml_token_validation import TokenValidator, TokenValidationError
+
+logger = logging.getLogger(__name__)
+
+
+# Default to loopback only. Override via env var TRUSTED_CIDRS=10.0.0.0/8,127.0.0.1/32
+DEFAULT_TRUSTED_CIDRS = "127.0.0.0/8,::1/128"
+
+
+@lru_cache(maxsize=1)
+def _trusted_networks():
+    raw = os.environ.get("TRUSTED_CIDRS", DEFAULT_TRUSTED_CIDRS)
+    nets = []
+    for cidr in raw.split(","):
+        cidr = cidr.strip()
+        if not cidr:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(cidr, strict=False))
+        except ValueError:
+            logger.warning("Invalid CIDR in TRUSTED_CIDRS: %r", cidr)
+    return nets
+
+
+def _client_in_trusted_network(request: Request) -> bool:
+    """Check whether the actual TCP peer of *request* is in a trusted CIDR.
+
+    Uses request.client.host (the peer IP) — never the URL string, which
+    can be spoofed via Host headers or shared with non-trusted pod IPs.
+    """
+    if not request.client:
+        return False
+    try:
+        ip = ipaddress.ip_address(request.client.host)
+    except (ValueError, AttributeError):
+        return False
+    return any(ip in net for net in _trusted_networks())
 
 
 @lru_cache(maxsize=1)
@@ -73,13 +111,11 @@ async def verify_api_key(
     if not auth_enabled:
         return True
 
-    # 2. Check for Localhost exception
-    if ('localhost' in str(request.url) or
-            '0.0.0.0' in str(request.url) or
-            '127.0.0.1' in str(request.url) or
-            '::1' in str(request.url) or
-            'host.docker.internal' in str(request.url)) and original_environ.get('FORCE_AUTH',
-                                                                                    'false').lower() == 'false':
+    # 2. Optional dev-mode trusted-network bypass.
+    # Default FORCE_AUTH=true → auth is required unless operators explicitly opt
+    # out AND the connection's actual peer IP is in TRUSTED_CIDRS.
+    force_auth = original_environ.get('FORCE_AUTH', 'true').lower() != 'false'
+    if not force_auth and _client_in_trusted_network(request):
         return True
 
     # 3. Extract Token (Support api-token, api_token, x-api-key header or Authorization: Bearer)
@@ -165,12 +201,8 @@ async def verify_jwt_token(
     if not auth_enabled:
         return {}
 
-    if ('localhost' in str(request.url) or
-        '0.0.0.0' in str(request.url) or
-        '127.0.0.1' in str(request.url) or
-        '::1' in str(request.url) or
-        'host.docker.internal' in str(request.url)) and original_environ.get('FORCE_AUTH',
-                                                                             'false').lower() == 'false':
+    force_auth = original_environ.get('FORCE_AUTH', 'true').lower() != 'false'
+    if not force_auth and _client_in_trusted_network(request):
         return True
 
     if not credentials:
@@ -216,3 +248,68 @@ async def verify_jwt_token(
         raise AuthenticationException(reason="Token has expired")
     except jwt.InvalidTokenError:
         raise AuthenticationException(reason="Invalid token")
+
+
+async def verify_api_key_strict(
+        request: Request,
+        api_token: Optional[str] = Header(None, alias="api-token"),
+        api_token_underscore: Optional[str] = Header(None, alias="api_token"),
+        x_api_key: Optional[str] = Header(None, alias="x-api-key"),
+        authorization: Optional[str] = Header(None, alias="authorization")
+):
+    """Strict API-key validator for destructive endpoints (e.g. /restart, /kill).
+
+    Always validates the token: it does NOT honor the FORCE_AUTH /
+    TRUSTED_CIDRS bypass. A misconfigured trusted CIDR must never enable
+    a remote kill switch. AGENT_AUTH_ENABLED=false still disables auth
+    globally (intentional, matches the rest of the system).
+    """
+    original_environ = get_original_environ()
+    auth_enabled = original_environ.get('AGENT_AUTH_ENABLED', 'true').lower() == 'true'
+
+    if not auth_enabled:
+        return True
+
+    token = api_token or api_token_underscore or x_api_key
+
+    if not token and authorization:
+        if authorization.lower().startswith('bearer '):
+            token = authorization[7:]
+        else:
+            token = authorization
+
+    if not token:
+        token = (
+            request.headers.get('api-token') or
+            request.headers.get('api_token') or
+            request.headers.get('x-api-key')
+        )
+
+    if not token:
+        raise AuthenticationException(reason="API token required")
+
+    if is_saml_token(token):
+        try:
+            validator = TokenValidator(os.environ.get("SAML_PUBLIC_KEY_PATH", None))
+            validation_result = validator.validate_token_and_get_role(token)
+            if validation_result.is_valid:
+                request.state.user_role = validation_result.role
+                request.state.user_email = validation_result.email
+                return True
+            raise AuthenticationException(reason=validation_result.error_message or "Invalid SAML token")
+        except TokenValidationError as e:
+            raise AuthenticationException(reason=str(e))
+        except Exception:
+            raise HTTPException(status_code=500, detail="SAML token validation service unavailable")
+    else:
+        try:
+            token_manager = _get_token_manager()
+            agent_name = getattr(request.app.state, "agent_name", "unknown")
+            user_info = token_manager.validate_token(agent_name, token)
+            if user_info:
+                request.state.user_id = user_info.get("user_id")
+                request.state.user_role = user_info.get("role_id")
+                return True
+            raise AuthenticationException(reason="Invalid or expired API token")
+        except ImportError:
+            raise HTTPException(status_code=500, detail="Authentication service unavailable")
