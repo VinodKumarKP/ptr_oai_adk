@@ -1,13 +1,26 @@
-import logging
-import pytest
-import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch
+"""Tests for the httpx-based agent client (async + sync)."""
+from __future__ import annotations
 
-from oai_agent_client import ClientConfig, AgentClient
+import asyncio
+import json
+import logging
+from typing import Callable, List, Optional
+from unittest.mock import AsyncMock, patch
+
+import httpx
+import pytest
+
+from oai_agent_client import (
+    AgentClient,
+    AsyncAgentClient,
+    ClientConfig,
+    SyncAgentClient,
+)
 from oai_agent_client.exceptions import (
     APIError,
     AuthError,
     BadRequestError,
+    ConfigurationError,
     ConnectionError,
     AgentConnectionError,
     AgentTimeoutError,
@@ -18,28 +31,61 @@ from oai_agent_client.exceptions import (
 from oai_agent_client.agent_client import _redact_headers
 from oai_agent_client._retry import compute_backoff
 
-# Mock server URL
+
 MOCK_URL = "http://localhost:8000"
+
+
+# ---------------------------------------------------------------------------
+# Mock-transport helpers
+# ---------------------------------------------------------------------------
+
+
+def make_async_transport(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.MockTransport:
+    return httpx.MockTransport(handler)
+
+
+def make_sync_transport(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.MockTransport:
+    return httpx.MockTransport(handler)
+
+
+def healthy_handler(
+    response_builder: Callable[[httpx.Request], httpx.Response]
+) -> Callable[[httpx.Request], httpx.Response]:
+    """Wrap a handler so /health always returns 200 OK."""
+    def _h(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health") or request.url.path.endswith("health"):
+            return httpx.Response(200, text="ok")
+        return response_builder(request)
+    return _h
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def remote_config():
-    """Fixture for a valid remote server configuration."""
     return ClientConfig(url=MOCK_URL, headers={"Authorization": "Bearer test"})
+
 
 @pytest.fixture
 def local_config():
-    """Fixture for a valid local server configuration."""
     return ClientConfig(
         command="dummy_command",
         args=["--port", "8000"],
-        headers={"Authorization": "Bearer test"}
+        headers={"Authorization": "Bearer test"},
     )
 
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+
 class TestClientConfig:
-    """Tests for the ClientConfig model."""
     def test_valid_remote_config(self):
         config = ClientConfig(url=MOCK_URL, headers={"X-Token": "test"})
-        # Pydantic's HttpUrl type adds a trailing slash.
         assert str(config.url) == MOCK_URL + "/"
         assert config.headers == {"X-Token": "test"}
 
@@ -56,122 +102,128 @@ class TestClientConfig:
         with pytest.raises(ValueError):
             ClientConfig(url=MOCK_URL, command="python")
 
+
+# ---------------------------------------------------------------------------
+# Async happy paths (rewritten on httpx MockTransport)
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_invoke_success(remote_config):
-    """Test a successful invoke call."""
-    with patch.object(AgentClient, '_wait_for_server', new_callable=AsyncMock):
-        async with AgentClient(config=remote_config) as client:
-            with patch.object(client, '_request', new_callable=AsyncMock) as mock_request:
-                mock_request.return_value = {"response": "success"}
-                
-                response = await client.invoke("hello", config={"session_id": "123"})
+    captured = {}
 
-                assert response == {"response": "success"}
-                args, kwargs = mock_request.call_args
-                assert args == ("POST", "chat")
-                assert kwargs["data"] == {"message": "hello", "session_id": "123"}
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        captured["url"] = str(request.url)
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json={"response": "success"})
+
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=remote_config, transport=transport) as client:
+        response = await client.invoke("hello", config={"session_id": "123"})
+    assert response == {"response": "success"}
+    assert captured["url"].endswith("/chat")
+    assert captured["json"] == {"message": "hello", "session_id": "123"}
+
 
 @pytest.mark.asyncio
 async def test_stream_success(remote_config):
-    """Test a successful stream call."""
-    async def mock_stream_gen():
-        yield {"chunk": 1}
-        yield {"chunk": 2}
+    body = "data: {\"chunk\": 1}\n\ndata: {\"chunk\": 2}\n\n"
 
-    with patch.object(AgentClient, '_wait_for_server', new_callable=AsyncMock):
-        async with AgentClient(config=remote_config) as client:
-            with patch.object(client, '_stream_request', return_value=mock_stream_gen()) as mock_stream:
-                chunks = [chunk async for chunk in client.stream("hello stream")]
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        return httpx.Response(
+            200,
+            text=body,
+            headers={"Content-Type": "text/event-stream"},
+        )
 
-                assert len(chunks) == 2
-                assert chunks[0] == {"chunk": 1}
-                args, kwargs = mock_stream.call_args
-                assert args == ("POST", "chat/stream")
-                assert kwargs["data"] == {"message": "hello stream"}
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=remote_config, transport=transport) as client:
+        chunks = [c async for c in client.stream("hello stream")]
+    assert chunks == [{"chunk": 1}, {"chunk": 2}]
+
 
 @pytest.mark.asyncio
 async def test_api_error_handling(remote_config):
-    """Test that APIError is raised on server error."""
-    with patch.object(AgentClient, '_wait_for_server', new_callable=AsyncMock):
-        async with AgentClient(config=remote_config) as client:
-            with patch.object(client._session, 'request') as mock_request:
-                mock_response = AsyncMock()
-                mock_response.status = 500
-                mock_response.text.return_value = "Internal Server Error"
-                
-                mock_request.return_value.__aenter__.return_value = mock_response
-                
-                with pytest.raises(APIError) as excinfo:
-                    await client.invoke("test")
-                
-                assert excinfo.value.status_code == 500
-                assert "Internal Server Error" in excinfo.value.message
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        return httpx.Response(500, text="Internal Server Error")
+
+    config = ClientConfig(url=MOCK_URL, max_retries=0)
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=config, transport=transport) as client:
+        with pytest.raises(APIError) as excinfo:
+            await client.invoke("test")
+    assert excinfo.value.status_code == 500
+    assert "Internal Server Error" in excinfo.value.message
+
 
 @pytest.mark.asyncio
 async def test_connection_error_handling():
-    """Test that ConnectionError is raised on connection failure."""
     config = ClientConfig(
         url="http://localhost:9999",
         headers={"Authorization": "Bearer test"},
         startup_timeout=2,
     )
     with pytest.raises(ConnectionError):
-        async with AgentClient(config=config):
+        async with AsyncAgentClient(config=config):
             pass
 
+
 @pytest.mark.asyncio
-@patch('asyncio.create_subprocess_exec')
+@patch("asyncio.create_subprocess_exec")
 async def test_local_server_management(mock_subprocess, local_config):
-    """Test that the client starts and stops a local server process."""
     mock_process = AsyncMock()
     mock_process.stdout.at_eof.side_effect = [False, True]
     mock_process.stdout.readline.return_value = b"log line"
     mock_subprocess.return_value = mock_process
 
-    with patch.object(AgentClient, '_wait_for_server', new_callable=AsyncMock):
-        async with AgentClient(config=local_config) as client:
+    with patch.object(AsyncAgentClient, "_wait_for_server", new_callable=AsyncMock):
+        async with AsyncAgentClient(config=local_config) as client:
             mock_subprocess.assert_called_once_with(
-                "dummy_command", "--port", "8000",
+                "dummy_command",
+                "--port",
+                "8000",
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             assert client._server_process is not None
 
         mock_process.terminate.assert_called_once()
 
+
 @pytest.mark.asyncio
-@patch('asyncio.create_subprocess_exec', side_effect=OSError("File not found"))
+@patch("asyncio.create_subprocess_exec", side_effect=OSError("File not found"))
 async def test_server_startup_error(mock_subprocess, local_config):
-    """Test that ServerStartupError is raised if the command fails."""
     with pytest.raises(ServerStartupError):
-        async with AgentClient(config=local_config):
+        async with AsyncAgentClient(config=local_config):
             pass
 
 
 # ---------------------------------------------------------------------------
-# Batch 1 production-readiness fix tests
+# Batch 1 tests (ported)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_aenter_failure_reraises_original(remote_config):
-    """__aenter__ must re-raise the original exception, not a cleanup error."""
     sentinel = RuntimeError("original boom")
-
     with patch.object(
-        AgentClient, "_wait_for_server", new_callable=AsyncMock, side_effect=sentinel
+        AsyncAgentClient, "_wait_for_server", new_callable=AsyncMock, side_effect=sentinel
     ):
         with pytest.raises(RuntimeError, match="original boom"):
-            async with AgentClient(config=remote_config):
+            async with AsyncAgentClient(config=remote_config):
                 pass
 
 
 @pytest.mark.asyncio
 @patch("asyncio.create_subprocess_exec")
 async def test_log_tasks_cancelled_on_close(mock_subprocess, local_config):
-    """Background log-reader tasks must be tracked and cancelled on cleanup."""
     mock_process = AsyncMock()
-    # Make the stream block forever so we can observe cancellation.
     mock_process.stdout.at_eof.return_value = False
     mock_process.stderr.at_eof.return_value = False
 
@@ -185,75 +237,58 @@ async def test_log_tasks_cancelled_on_close(mock_subprocess, local_config):
     mock_process.stderr.readline.side_effect = never_returns
     mock_subprocess.return_value = mock_process
 
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        client = AgentClient(config=local_config)
+    with patch.object(AsyncAgentClient, "_wait_for_server", new_callable=AsyncMock):
+        client = AsyncAgentClient(config=local_config)
         async with client:
             assert len(client._log_tasks) == 2
             tasks = list(client._log_tasks)
             assert all(not t.done() for t in tasks)
-
-        # After exit, tasks must be drained.
         assert client._log_tasks == []
         assert all(t.done() for t in tasks)
 
 
-def _mock_response(status, body_text="", body_json=None, content_length=None):
-    """Build an async context-manager mock for ``session.request(...)``."""
-    response = AsyncMock()
-    response.status = status
-    if content_length is None:
-        content_length = len(body_text.encode("utf-8")) if body_text else 0
-    response.content_length = content_length
-    response.text = AsyncMock(return_value=body_text)
-    response.json = AsyncMock(return_value=body_json if body_json is not None else {})
-    ctx = MagicMock()
-    ctx.__aenter__ = AsyncMock(return_value=response)
-    ctx.__aexit__ = AsyncMock(return_value=None)
-    return ctx
-
-
 @pytest.mark.asyncio
 async def test_accepts_201(remote_config):
-    """A 201 Created response is treated as success."""
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=remote_config) as client:
-            ctx = _mock_response(201, body_text='{"ok": true}', body_json={"ok": True})
-            with patch.object(client._session, "request", return_value=ctx):
-                result = await client.invoke("hi")
-                assert result == {"ok": True}
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        return httpx.Response(201, json={"ok": True})
+
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=remote_config, transport=transport) as client:
+        result = await client.invoke("hi")
+    assert result == {"ok": True}
 
 
 @pytest.mark.asyncio
 async def test_accepts_204_no_body(remote_config):
-    """A 204 No Content response returns an empty dict without parsing JSON."""
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=remote_config) as client:
-            ctx = _mock_response(204, body_text="", content_length=0)
-            # If .json() were called it would still succeed (returns {}), but we
-            # want to ensure the empty-body shortcut is taken.
-            ctx.__aenter__.return_value.json.side_effect = AssertionError(
-                "json() should not be called on 204"
-            )
-            with patch.object(client._session, "request", return_value=ctx):
-                result = await client.invoke("hi")
-                assert result == {}
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        return httpx.Response(204)
+
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=remote_config, transport=transport) as client:
+        result = await client.invoke("hi")
+    assert result == {}
 
 
 @pytest.mark.asyncio
 async def test_4xx_still_raises_api_error(remote_config):
-    """A 404 response surfaces as APIError with the original status code."""
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=remote_config) as client:
-            ctx = _mock_response(404, body_text="not found")
-            with patch.object(client._session, "request", return_value=ctx):
-                with pytest.raises(APIError) as excinfo:
-                    await client.invoke("hi")
-                assert excinfo.value.status_code == 404
-                assert "not found" in excinfo.value.message
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        return httpx.Response(404, text="not found")
+
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=remote_config, transport=transport) as client:
+        with pytest.raises(APIError) as excinfo:
+            await client.invoke("hi")
+    assert excinfo.value.status_code == 404
+    assert "not found" in excinfo.value.message
 
 
 def test_redact_headers_helper():
-    """The redaction helper masks the documented sensitive headers."""
     redacted = _redact_headers(
         {
             "Authorization": "Bearer secret",
@@ -272,18 +307,21 @@ def test_redact_headers_helper():
 
 @pytest.mark.asyncio
 async def test_redacted_headers_in_logs(caplog):
-    """Authorization header must not appear verbatim in debug log output."""
     config = ClientConfig(
         url=MOCK_URL,
         headers={"Authorization": "Bearer test"},
         log_level="DEBUG",
     )
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=config) as client:
-            ctx = _mock_response(200, body_text='{"x": 1}', body_json={"x": 1})
-            with caplog.at_level(logging.DEBUG, logger="oai_agent_client.agent_client"):
-                with patch.object(client._session, "request", return_value=ctx):
-                    await client.invoke("hi")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        return httpx.Response(200, json={"x": 1})
+
+    transport = make_async_transport(handler)
+    with caplog.at_level(logging.DEBUG, logger="oai_agent_client.async_client"):
+        async with AsyncAgentClient(config=config, transport=transport) as client:
+            await client.invoke("hi")
 
     combined = "\n".join(r.getMessage() for r in caplog.records)
     assert "Bearer test" not in combined
@@ -291,219 +329,182 @@ async def test_redacted_headers_in_logs(caplog):
 
 
 def test_old_connection_error_alias_works():
-    """Importing the deprecated name still yields the new exception class."""
     from oai_agent_client import ConnectionError as ImportedConnectionError
 
     assert ImportedConnectionError is AgentConnectionError
-    # And the alias from the exceptions module matches too.
     assert ConnectionError is AgentConnectionError
 
 
-# ---------------------------------------------------------------------------
-# Batch 2 production-readiness fix tests
-# ---------------------------------------------------------------------------
+def test_agent_client_alias_is_async():
+    """The legacy ``AgentClient`` name maps to ``AsyncAgentClient``."""
+    assert AgentClient is AsyncAgentClient
 
 
-def _mock_response_with_headers(status, body_text="", body_json=None, content_length=None, headers=None):
-    """Like _mock_response but lets callers stub response headers."""
-    response = AsyncMock()
-    response.status = status
-    if content_length is None:
-        content_length = len(body_text.encode("utf-8")) if body_text else 0
-    response.content_length = content_length
-    response.text = AsyncMock(return_value=body_text)
-    response.json = AsyncMock(return_value=body_json if body_json is not None else {})
-    response.headers = headers or {}
-    ctx = MagicMock()
-    ctx.__aenter__ = AsyncMock(return_value=response)
-    ctx.__aexit__ = AsyncMock(return_value=None)
-    return ctx
+# ---------------------------------------------------------------------------
+# Batch 2 tests (ported)
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_401_raises_auth_error(remote_config):
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=remote_config) as client:
-            ctx = _mock_response_with_headers(401, body_text="nope")
-            with patch.object(client._session, "request", return_value=ctx):
-                with pytest.raises(AuthError) as ei:
-                    await client.invoke("hi")
-                assert ei.value.status_code == 401
-                # AuthError IS-A APIError, preserving backward compat.
-                assert isinstance(ei.value, APIError)
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        return httpx.Response(401, text="nope")
+
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=remote_config, transport=transport) as client:
+        with pytest.raises(AuthError) as ei:
+            await client.invoke("hi")
+    assert ei.value.status_code == 401
+    assert isinstance(ei.value, APIError)
 
 
 @pytest.mark.asyncio
-async def test_429_raises_rate_limit_with_retry_after(remote_config):
-    # Disable retries so the error surfaces immediately.
+async def test_429_raises_rate_limit_with_retry_after():
     config = ClientConfig(url=MOCK_URL, max_retries=0)
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=config) as client:
-            ctx = _mock_response_with_headers(
-                429, body_text="slow down", headers={"Retry-After": "7"}
-            )
-            with patch.object(client._session, "request", return_value=ctx):
-                with pytest.raises(RateLimitError) as ei:
-                    await client.invoke("hi")
-                assert ei.value.retry_after == 7.0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        return httpx.Response(429, text="slow down", headers={"Retry-After": "7"})
+
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=config, transport=transport) as client:
+        with pytest.raises(RateLimitError) as ei:
+            await client.invoke("hi")
+    assert ei.value.retry_after == 7.0
 
 
 @pytest.mark.asyncio
-async def test_500_raises_server_error(remote_config):
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=remote_config) as client:
-            ctx = _mock_response_with_headers(500, body_text="boom")
-            with patch.object(client._session, "request", return_value=ctx):
-                with pytest.raises(ServerError) as ei:
-                    await client.invoke("hi")
-                assert ei.value.status_code == 500
-                assert isinstance(ei.value, APIError)
-
-
-@pytest.mark.asyncio
-async def test_timeout_raises_agent_timeout_error(remote_config):
+async def test_500_raises_server_error():
     config = ClientConfig(url=MOCK_URL, max_retries=0)
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=config) as client:
-            with patch.object(
-                client._session, "request", side_effect=asyncio.TimeoutError()
-            ):
-                with pytest.raises(AgentTimeoutError):
-                    await client.invoke("hi")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        return httpx.Response(500, text="boom")
+
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=config, transport=transport) as client:
+        with pytest.raises(ServerError) as ei:
+            await client.invoke("hi")
+    assert ei.value.status_code == 500
+    assert isinstance(ei.value, APIError)
 
 
 @pytest.mark.asyncio
-async def test_request_id_propagated_to_exception(remote_config):
+async def test_timeout_raises_agent_timeout_error():
     config = ClientConfig(url=MOCK_URL, max_retries=0)
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=config) as client:
-            ctx = _mock_response_with_headers(
-                500, body_text="boom", headers={"X-Request-ID": "server-id-xyz"}
-            )
-            with patch.object(client._session, "request", return_value=ctx):
-                with pytest.raises(ServerError) as ei:
-                    await client.invoke("hi")
-                # Server's X-Request-ID wins.
-                assert ei.value.request_id == "server-id-xyz"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        raise httpx.ReadTimeout("simulated")
+
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=config, transport=transport) as client:
+        with pytest.raises(AgentTimeoutError):
+            await client.invoke("hi")
+
+
+@pytest.mark.asyncio
+async def test_request_id_propagated_to_exception():
+    config = ClientConfig(url=MOCK_URL, max_retries=0)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        return httpx.Response(500, text="boom", headers={"X-Request-ID": "server-id-xyz"})
+
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=config, transport=transport) as client:
+        with pytest.raises(ServerError) as ei:
+            await client.invoke("hi")
+    assert ei.value.request_id == "server-id-xyz"
 
 
 @pytest.mark.asyncio
 async def test_request_id_in_outgoing_headers(remote_config):
     captured = {}
 
-    def fake_request(method, url, json=None, headers=None, **kw):
-        captured["headers"] = headers
-        return _mock_response_with_headers(200, body_text='{"ok": 1}', body_json={"ok": 1})
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        captured["headers"] = dict(request.headers)
+        return httpx.Response(200, json={"ok": 1})
 
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=remote_config) as client:
-            with patch.object(client._session, "request", side_effect=fake_request):
-                await client.invoke("hi")
-    assert "X-Request-ID" in captured["headers"]
-    # UUID4 form: 8-4-4-4-12
-    assert len(captured["headers"]["X-Request-ID"].split("-")) == 5
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=remote_config, transport=transport) as client:
+        await client.invoke("hi")
+    assert "x-request-id" in captured["headers"] or "X-Request-ID" in captured["headers"]
+    rid = captured["headers"].get("x-request-id") or captured["headers"].get("X-Request-ID")
+    assert len(rid.split("-")) == 5
 
 
 @pytest.mark.asyncio
 async def test_caller_supplied_request_id_used(remote_config):
     captured = {}
 
-    def fake_request(method, url, json=None, headers=None, **kw):
-        captured["headers"] = headers
-        return _mock_response_with_headers(200, body_text='{"ok": 1}', body_json={"ok": 1})
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        captured["headers"] = dict(request.headers)
+        return httpx.Response(200, json={"ok": 1})
 
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=remote_config) as client:
-            with patch.object(client._session, "request", side_effect=fake_request):
-                await client.invoke("hi", request_id="caller-id-123")
-    assert captured["headers"]["X-Request-ID"] == "caller-id-123"
-
-
-@pytest.mark.asyncio
-async def test_streaming_uses_stream_timeout(remote_config):
-    """The streaming path must pass its own ClientTimeout, not the request_timeout."""
-    config = ClientConfig(
-        url=MOCK_URL,
-        request_timeout=1.0,
-        stream_read_timeout=None,
-        connect_timeout=3.0,
-    )
-    captured = {}
-
-    def fake_request(method, url, json=None, headers=None, timeout=None, **kw):
-        captured["timeout"] = timeout
-        # Return a response context that yields no SSE lines.
-        response = AsyncMock()
-        response.status = 200
-        response.headers = {}
-
-        async def aiter():
-            if False:
-                yield b""
-            return
-
-        response.content = aiter()
-        ctx = MagicMock()
-        ctx.__aenter__ = AsyncMock(return_value=response)
-        ctx.__aexit__ = AsyncMock(return_value=None)
-        return ctx
-
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=config) as client:
-            with patch.object(client._session, "request", side_effect=fake_request):
-                async for _ in client.stream("hi"):
-                    pass
-
-    t = captured["timeout"]
-    assert t is not None
-    # Stream timeout is total=None (no overall cap) but has sock_connect set.
-    assert t.total is None
-    assert t.sock_connect == 3.0
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=remote_config, transport=transport) as client:
+        await client.invoke("hi", request_id="caller-id-123")
+    rid = captured["headers"].get("x-request-id") or captured["headers"].get("X-Request-ID")
+    assert rid == "caller-id-123"
 
 
 def test_config_is_frozen():
     config = ClientConfig(url=MOCK_URL)
-    with pytest.raises(Exception):  # pydantic raises ValidationError on frozen mutate
+    with pytest.raises(Exception):
         config.request_timeout = 99.0
 
 
 @pytest.mark.asyncio
-async def test_update_headers_propagates_to_session(remote_config):
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=remote_config) as client:
-            client.update_headers(**{"X-Custom": "v1"})
-            assert client._headers["X-Custom"] == "v1"
-            # And the live session has it too.
-            assert client._session.headers.get("X-Custom") == "v1"
+async def test_update_headers_propagates_to_client(remote_config):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="ok")
+
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=remote_config, transport=transport) as client:
+        client.update_headers(**{"X-Custom": "v1"})
+        assert client._headers["X-Custom"] == "v1"
+        assert client._client.headers.get("X-Custom") == "v1"
 
 
 @pytest.mark.asyncio
-async def test_retry_on_503_for_GET(remote_config):
-    """A GET that returns 503 should retry up to max_retries times."""
+async def test_retry_on_503_for_GET():
     config = ClientConfig(
         url=MOCK_URL,
         max_retries=2,
-        retry_backoff_factor=0.0,  # no real sleep
+        retry_backoff_factor=0.0,
         retry_jitter=0.0,
     )
     call_count = {"n": 0}
 
-    def fake_request(method, url, json=None, headers=None, **kw):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
         call_count["n"] += 1
         if call_count["n"] < 3:
-            return _mock_response_with_headers(503, body_text="busy")
-        return _mock_response_with_headers(200, body_text='{"ok": 1}', body_json={"ok": 1})
+            return httpx.Response(503, text="busy")
+        return httpx.Response(200, json={"ok": 1})
 
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=config) as client:
-            with patch.object(client._session, "request", side_effect=fake_request):
-                result = await client._request("GET", "ping")
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=config, transport=transport) as client:
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await client._request("GET", "ping")
     assert result == {"ok": 1}
     assert call_count["n"] == 3
 
 
 @pytest.mark.asyncio
-async def test_no_retry_on_503_for_POST_by_default(remote_config):
+async def test_no_retry_on_503_for_POST_by_default():
     config = ClientConfig(
         url=MOCK_URL,
         max_retries=3,
@@ -512,16 +513,17 @@ async def test_no_retry_on_503_for_POST_by_default(remote_config):
     )
     call_count = {"n": 0}
 
-    def fake_request(method, url, json=None, headers=None, **kw):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
         call_count["n"] += 1
-        return _mock_response_with_headers(503, body_text="busy")
+        return httpx.Response(503, text="busy")
 
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=config) as client:
-            with patch.object(client._session, "request", side_effect=fake_request):
-                with pytest.raises(ServerError):
-                    await client.invoke("hi")
-    assert call_count["n"] == 1  # no retry
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=config, transport=transport) as client:
+        with pytest.raises(ServerError):
+            await client.invoke("hi")
+    assert call_count["n"] == 1
 
 
 @pytest.mark.asyncio
@@ -534,28 +536,29 @@ async def test_retry_on_429_uses_retry_after_header():
     )
     call_count = {"n": 0}
 
-    def fake_request(method, url, json=None, headers=None, **kw):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
         call_count["n"] += 1
         if call_count["n"] == 1:
-            return _mock_response_with_headers(429, headers={"Retry-After": "0"})
-        return _mock_response_with_headers(200, body_text='{"ok": 1}', body_json={"ok": 1})
+            return httpx.Response(429, text="", headers={"Retry-After": "0"})
+        return httpx.Response(200, json={"ok": 1})
 
-    sleep_calls = []
+    sleep_calls: List[float] = []
 
     async def fake_sleep(d):
         sleep_calls.append(d)
 
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=config) as client:
-            with patch.object(client._session, "request", side_effect=fake_request):
-                with patch("asyncio.sleep", side_effect=fake_sleep):
-                    result = await client.invoke("hi")
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=config, transport=transport) as client:
+        with patch("asyncio.sleep", side_effect=fake_sleep):
+            result = await client.invoke("hi")
     assert result == {"ok": 1}
     assert sleep_calls == [0.0]
 
 
 @pytest.mark.asyncio
-async def test_max_retries_respected(remote_config):
+async def test_max_retries_respected():
     config = ClientConfig(
         url=MOCK_URL,
         max_retries=2,
@@ -564,24 +567,23 @@ async def test_max_retries_respected(remote_config):
     )
     call_count = {"n": 0}
 
-    def fake_request(method, url, json=None, headers=None, **kw):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
         call_count["n"] += 1
-        return _mock_response_with_headers(503, body_text="busy")
+        return httpx.Response(503, text="busy")
 
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=config) as client:
-            with patch.object(client._session, "request", side_effect=fake_request):
-                with pytest.raises(ServerError):
-                    await client._request("GET", "ping")
-    # initial attempt + 2 retries = 3 calls
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=config, transport=transport) as client:
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            with pytest.raises(ServerError):
+                await client._request("GET", "ping")
     assert call_count["n"] == 3
 
 
 def test_backoff_increases_then_caps():
-    # With jitter=0, deterministic.
     factor, cap, jitter = 1.0, 8.0, 0.0
     delays = [compute_backoff(i, factor, cap, jitter) for i in range(6)]
-    # 1, 2, 4, 8, 8 (capped), 8 (capped)
     assert delays[0] == 1.0
     assert delays[1] == 2.0
     assert delays[2] == 4.0
@@ -592,7 +594,6 @@ def test_backoff_increases_then_caps():
 
 def test_jitter_within_range():
     factor, cap, jitter = 1.0, 100.0, 1.0
-    # Full jitter: result in [0, factor * 2**attempt]
     for attempt in range(4):
         upper = factor * (2 ** attempt)
         for _ in range(20):
@@ -601,8 +602,7 @@ def test_jitter_within_range():
 
 
 @pytest.mark.asyncio
-async def test_per_call_retry_override_enables_post_retry(remote_config):
-    """Caller can opt-in to retry for POST via the ``retry`` kwarg."""
+async def test_per_call_retry_override_enables_post_retry():
     config = ClientConfig(
         url=MOCK_URL,
         max_retries=2,
@@ -611,16 +611,18 @@ async def test_per_call_retry_override_enables_post_retry(remote_config):
     )
     call_count = {"n": 0}
 
-    def fake_request(method, url, json=None, headers=None, **kw):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
         call_count["n"] += 1
         if call_count["n"] < 2:
-            return _mock_response_with_headers(503, body_text="busy")
-        return _mock_response_with_headers(200, body_text='{"ok": 1}', body_json={"ok": 1})
+            return httpx.Response(503, text="busy")
+        return httpx.Response(200, json={"ok": 1})
 
-    with patch.object(AgentClient, "_wait_for_server", new_callable=AsyncMock):
-        async with AgentClient(config=config) as client:
-            with patch.object(client._session, "request", side_effect=fake_request):
-                result = await client.invoke("hi", retry=True)
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=config, transport=transport) as client:
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await client.invoke("hi", retry=True)
     assert result == {"ok": 1}
     assert call_count["n"] == 2
 
@@ -632,3 +634,275 @@ def test_deprecated_timeout_field_maps_to_request_timeout():
         config = ClientConfig(url=MOCK_URL, timeout=120.0)
     assert config.request_timeout == 120.0
     assert any(issubclass(rec.category, DeprecationWarning) for rec in caught)
+
+
+# ---------------------------------------------------------------------------
+# Batch 3: Sync client tests
+# ---------------------------------------------------------------------------
+
+
+def test_sync_invoke(remote_config):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        captured["url"] = str(request.url)
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json={"response": "success"})
+
+    transport = make_sync_transport(handler)
+    with SyncAgentClient(config=remote_config, transport=transport) as client:
+        result = client.invoke("hello", config={"session_id": "abc"})
+    assert result == {"response": "success"}
+    assert captured["url"].endswith("/chat")
+    assert captured["json"] == {"message": "hello", "session_id": "abc"}
+
+
+def test_sync_stream(remote_config):
+    body = "data: {\"chunk\": 1}\n\ndata: {\"chunk\": 2}\n\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        return httpx.Response(200, text=body, headers={"Content-Type": "text/event-stream"})
+
+    transport = make_sync_transport(handler)
+    with SyncAgentClient(config=remote_config, transport=transport) as client:
+        chunks = list(client.stream("hi"))
+    assert chunks == [{"chunk": 1}, {"chunk": 2}]
+
+
+def test_sync_does_not_support_local_subprocess():
+    config = ClientConfig(command="python", args=["-m", "http.server"])
+    with pytest.raises(ConfigurationError):
+        SyncAgentClient(config=config)
+
+
+def test_sync_close_idempotent(remote_config):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="ok")
+
+    transport = make_sync_transport(handler)
+    client = SyncAgentClient(config=remote_config, transport=transport)
+    with client:
+        pass
+    client.close()  # second close: no error
+
+
+def test_sync_429_rate_limit():
+    config = ClientConfig(url=MOCK_URL, max_retries=0)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        return httpx.Response(429, text="slow", headers={"Retry-After": "3"})
+
+    transport = make_sync_transport(handler)
+    with SyncAgentClient(config=config, transport=transport) as client:
+        with pytest.raises(RateLimitError) as ei:
+            client.invoke("hi")
+    assert ei.value.retry_after == 3.0
+
+
+def test_sync_retry_on_503_for_GET():
+    """Sync client retries on retryable statuses the same way as async."""
+    config = ClientConfig(
+        url=MOCK_URL,
+        max_retries=2,
+        retry_backoff_factor=0.0,
+        retry_jitter=0.0,
+    )
+    call_count = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        call_count["n"] += 1
+        if call_count["n"] < 3:
+            return httpx.Response(503, text="busy")
+        return httpx.Response(200, json={"ok": 1})
+
+    transport = make_sync_transport(handler)
+    with SyncAgentClient(config=config, transport=transport) as client:
+        with patch("time.sleep") as sleeper:
+            result = client._request("GET", "ping")
+            assert sleeper.call_count == 2
+    assert result == {"ok": 1}
+    assert call_count["n"] == 3
+
+
+def test_async_and_sync_share_retry_semantics():
+    """Both clients use the same internal retry helper."""
+    from oai_agent_client._base import _is_retryable
+
+    cfg = ClientConfig(url=MOCK_URL, retry_on_methods={"GET"}, retry_on_statuses={503})
+    exc = ServerError(503, "")
+    assert _is_retryable(exc, "GET", cfg, None) is True
+    assert _is_retryable(exc, "POST", cfg, None) is False
+    # Retry override forces retry.
+    assert _is_retryable(exc, "POST", cfg, True) is True
+
+
+# ---------------------------------------------------------------------------
+# Batch 3: SSE parser correctness
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sse_handles_multi_line_data(remote_config):
+    """Multi-line ``data:`` fields are joined with newlines per the SSE spec."""
+    body = "data: line1\ndata: line2\n\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        return httpx.Response(200, text=body, headers={"Content-Type": "text/event-stream"})
+
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=remote_config, transport=transport) as client:
+        chunks = [c async for c in client.stream("x")]
+    # Joined non-JSON value falls back to {"content": ...}
+    assert chunks == [{"content": "line1\nline2"}]
+
+
+@pytest.mark.asyncio
+async def test_sse_handles_comments_and_event_field(remote_config):
+    """Lines starting with ``:`` are SSE comments and must be ignored. ``event:`` is passed through."""
+    body = ":heartbeat\ndata: {\"n\": 1}\n\nevent: ping\ndata: {\"n\": 2}\n\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        return httpx.Response(200, text=body, headers={"Content-Type": "text/event-stream"})
+
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=remote_config, transport=transport) as client:
+        chunks = [c async for c in client.stream("x")]
+    assert chunks == [{"n": 1}, {"n": 2}]
+
+
+@pytest.mark.asyncio
+async def test_sse_handles_partial_chunks(remote_config):
+    """SSE events split across multiple TCP chunks must still parse correctly."""
+
+    # An httpx transport that yields the body in tiny pieces.
+    body = "data: {\"a\": 1}\n\ndata: {\"b\": 2}\n\n"
+    pieces = [body[i : i + 3].encode("utf-8") for i in range(0, len(body), 3)]
+
+    async def stream_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+
+        async def gen():
+            for p in pieces:
+                yield p
+
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=gen(),
+        )
+
+    transport = httpx.MockTransport(stream_handler)
+    async with AsyncAgentClient(config=remote_config, transport=transport) as client:
+        chunks = [c async for c in client.stream("x")]
+    assert chunks == [{"a": 1}, {"b": 2}]
+
+
+# ---------------------------------------------------------------------------
+# Batch 3: URL and endpoint configurability (M3, M4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("base", [
+    "http://example.com",
+    "http://example.com/",
+    "http://example.com/api",
+    "http://example.com/api/",
+])
+@pytest.mark.asyncio
+async def test_url_join_robustness(base):
+    """Base URL with/without trailing slash and with a path prefix all work."""
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        captured["path"] = path
+        return httpx.Response(200, json={"ok": 1})
+
+    config = ClientConfig(url=base)
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=config, transport=transport) as client:
+        await client.invoke("hi")
+
+    # The path must contain /chat regardless of whether base had /api or not.
+    assert captured["path"].endswith("/chat")
+
+
+@pytest.mark.asyncio
+async def test_configurable_invoke_endpoint():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/health"):
+            return httpx.Response(200, text="ok")
+        captured["path"] = path
+        return httpx.Response(200, json={"ok": 1})
+
+    config = ClientConfig(url=MOCK_URL, invoke_endpoint="v1/chat")
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=config, transport=transport) as client:
+        await client.invoke("hi")
+    assert captured["path"].endswith("/v1/chat")
+
+
+@pytest.mark.asyncio
+async def test_configurable_health_endpoint():
+    seen_paths: List[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        return httpx.Response(200, text="ok")
+
+    config = ClientConfig(url=MOCK_URL, health_endpoint="ready")
+    transport = make_async_transport(handler)
+    async with AsyncAgentClient(config=config, transport=transport):
+        pass
+    assert any(p.endswith("/ready") for p in seen_paths)
+
+
+# ---------------------------------------------------------------------------
+# Batch 3: Keyword-only enforcement (M2)
+# ---------------------------------------------------------------------------
+
+
+def test_keyword_only_params_enforced():
+    """``config`` must be passed by keyword to the constructor."""
+    cfg = ClientConfig(url=MOCK_URL)
+    with pytest.raises(TypeError):
+        AsyncAgentClient(cfg)  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        SyncAgentClient(cfg)  # type: ignore[misc]
+
+
+def test_invoke_optional_kwargs_are_keyword_only():
+    """``request_id`` and ``retry`` must be keyword-only on invoke/stream."""
+    import inspect
+    sig = inspect.signature(AsyncAgentClient.invoke)
+    assert sig.parameters["request_id"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert sig.parameters["retry"].kind is inspect.Parameter.KEYWORD_ONLY
+    sig2 = inspect.signature(SyncAgentClient.invoke)
+    assert sig2.parameters["request_id"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert sig2.parameters["retry"].kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_bad_request_error_for_400():
+    """A vanilla 400 yields BadRequestError, not AuthError."""
+    from oai_agent_client._base import _raise_for_status
+    with pytest.raises(BadRequestError) as ei:
+        _raise_for_status(400, "bad", None, None)
+    assert ei.value.status_code == 400

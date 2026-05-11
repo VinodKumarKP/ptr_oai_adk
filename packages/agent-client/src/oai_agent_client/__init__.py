@@ -1,4 +1,5 @@
-from .agent_client import AgentClient
+from .async_client import AsyncAgentClient
+from .sync_client import SyncAgentClient
 from .config import ClientConfig
 from .exceptions import (
     AgentClientError,
@@ -14,8 +15,13 @@ from .exceptions import (
     ServerStartupError,
 )
 
+# Backward-compat: ``AgentClient`` was the original async-only class name.
+AgentClient = AsyncAgentClient
+
 __all__ = [
     "AgentClient",
+    "AsyncAgentClient",
+    "SyncAgentClient",
     "ClientConfig",
     "AgentClientError",
     "ConfigurationError",

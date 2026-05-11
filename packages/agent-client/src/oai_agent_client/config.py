@@ -47,7 +47,9 @@ class ClientConfig(BaseModel):
     # Server management settings
     port: int = Field(8000, description="The port for the local server, if managed.")
     host: str = Field("localhost", description="The host for the local server, if managed.")
-    health_endpoint: str = Field("/health", description="The health check endpoint for the server.")
+    health_endpoint: str = Field("health", description="The health check endpoint for the server.")
+    invoke_endpoint: str = Field("chat", description="The endpoint path for non-streaming invocations.")
+    stream_endpoint: str = Field("chat/stream", description="The endpoint path for streaming invocations.")
     startup_timeout: int = Field(30, description="Timeout in seconds for waiting for the managed server to start.")
 
     # Logging settings

@@ -10,7 +10,7 @@ authors = [{ name = "Vinod Kumar KP", email = "vinod.kunnum-purath@capgemini.com
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.11"
-keywords = ["agent-client", "oai-agent", "async-client", "aiohttp"]
+keywords = ["agent-client", "oai-agent", "async-client", "httpx", "sync-client"]
 dynamic = ["version"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -22,8 +22,9 @@ classifiers = [
 
 # Base dependencies
 dependencies = [
-    "aiohttp>=3.8.0",
-    "pydantic>=2.0.0"
+    "httpx>=0.27,<1",
+    "httpx-sse>=0.4,<1",
+    "pydantic>=2,<3",
 ]
 
 [tool.hatch.metadata]
@@ -41,6 +42,9 @@ raw-options = { root = "../.." }
 
 [tool.hatch.build.targets.wheel.sources]
 "src" = ""
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/oai_agent_client/py.typed" = "oai_agent_client/py.typed"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
