@@ -42,6 +42,7 @@ from oai_agent_server.routers.logs import create_logs_router
 from oai_agent_server.routers.tokens import create_token_router
 from oai_agent_server.routers.a2a import create_a2a_router
 from oai_agent_server.routers.scheduler import create_schedule_router
+from oai_agent_server.routers.admin import create_admin_router
 from oai_agent_server.security.dependencies import verify_api_key, api_key_header
 from oai_agent_server.services.agent_service import AgentService
 from oai_agent_server.services.chat_service import ChatService
@@ -311,6 +312,11 @@ class AgentHTTPServer:
                 prefix="/schedule",
             )
 
+        # Admin router — operator-only endpoints for inspecting the A2A
+        # task store. Strict auth (no localhost bypass) is enforced inside
+        # the router via Depends(verify_api_key_strict).
+        self.app.include_router(create_admin_router())
+
     # ------------------------------------------------------------------
     # Startup / run (unchanged)
     # ------------------------------------------------------------------
@@ -398,6 +404,9 @@ class AgentHTTPServer:
                         self.db_logger, self.logger,
                     )
                     self._a2a_task_store_proxy.bind(self._a2a_task_store)
+                    # Expose the real task store on app.state so admin
+                    # endpoints can introspect it.
+                    self.app.state.task_store = self._a2a_task_store
                 except Exception:
                     self.logger.error(
                         "Failed to initialise A2A task store; "
@@ -408,6 +417,7 @@ class AgentHTTPServer:
                         from a2a.server.tasks import InMemoryTaskStore
                         self._a2a_task_store = InMemoryTaskStore()
                         self._a2a_task_store_proxy.bind(self._a2a_task_store)
+                        self.app.state.task_store = self._a2a_task_store
                     except Exception:
                         self.logger.error(
                             "InMemoryTaskStore fallback also failed", exc_info=True,
