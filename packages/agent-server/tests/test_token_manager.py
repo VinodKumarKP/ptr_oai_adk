@@ -71,3 +71,136 @@ def test_revoke_tokens_by_user(token_manager):
 
 def test_parse_token_invalid(token_manager):
     assert token_manager.parse_token("invalid") is None
+
+
+# --- Email-domain stripping in user_id ---
+def test_generate_token_strips_email_domain(token_manager):
+    token = token_manager.generate_token("server1", "alice@example.com", ttl_seconds=60)
+    parsed = token_manager.parse_token(token)
+    assert parsed["user_id"] == "alice"
+
+
+def test_generate_token_anonymous_when_no_user(token_manager):
+    token = token_manager.generate_token("server1", None)
+    parsed = token_manager.parse_token(token)
+    assert parsed["user_id"] == "anonymous"
+    assert parsed["role_id"] == "default"
+
+
+# --- parse_token round-trip ---
+def test_parse_token_round_trip(token_manager):
+    token = token_manager.generate_token("srv-name", "u1", role_id="admin")
+    parsed = token_manager.parse_token(token)
+    assert parsed["server"] == "srv-name"
+    assert parsed["user_id"] == "u1"
+    assert parsed["role_id"] == "admin"
+    assert len(parsed["random_part"]) == 43
+
+
+def test_parse_token_too_short_returns_none(token_manager):
+    assert token_manager.parse_token("short") is None
+
+
+def test_parse_token_no_dot_at_position_43_returns_none(token_manager):
+    # 44 chars but no '.' at index 43
+    bad = "x" * 44
+    assert token_manager.parse_token(bad) is None
+
+
+def test_parse_token_bad_base64_returns_none(token_manager):
+    bad = ("a" * 43) + "." + "!!!not-base64!!!"
+    assert token_manager.parse_token(bad) is None
+
+
+# --- validate_token legacy paths ---
+def test_validate_token_legacy_permanent(token_manager):
+    token = "x" * 43 + ".meta"
+    token_manager.parse_token = MagicMock(return_value={
+        "server": "s1", "user_id": "u1", "role_id": "default"
+    })
+    token_manager.r.exists.return_value = False
+    token_manager.r.sismember.return_value = True
+
+    result = token_manager.validate_token("s1", token)
+    assert result == {"user_id": "u1", "role_id": "default"}
+
+
+def test_validate_token_legacy_ttl_active(token_manager):
+    token = "x" * 43 + ".meta"
+    token_manager.parse_token = MagicMock(return_value={
+        "server": "s1", "user_id": "u1", "role_id": "r1"
+    })
+    token_manager.r.exists.return_value = False
+    token_manager.r.sismember.return_value = False
+    token_manager.r.zscore.return_value = float(time.time() + 1000)
+
+    result = token_manager.validate_token("s1", token)
+    assert result == {"user_id": "u1", "role_id": "r1"}
+
+
+def test_validate_token_legacy_ttl_expired_removed(token_manager):
+    token = "x" * 43 + ".meta"
+    token_manager.parse_token = MagicMock(return_value={
+        "server": "s1", "user_id": "u1"
+    })
+    token_manager.r.exists.return_value = False
+    token_manager.r.sismember.return_value = False
+    token_manager.r.zscore.return_value = float(time.time() - 1000)
+
+    result = token_manager.validate_token("s1", token)
+    assert result is None
+    token_manager.r.zrem.assert_any_call("s1:u1:ttl", token)
+    token_manager.r.zrem.assert_any_call("s1:ttl", token)
+
+
+def test_validate_token_not_found(token_manager):
+    token = "x" * 43 + ".meta"
+    token_manager.parse_token = MagicMock(return_value={"server": "s1", "user_id": "u1"})
+    token_manager.r.exists.return_value = False
+    token_manager.r.sismember.return_value = False
+    token_manager.r.zscore.return_value = None
+
+    assert token_manager.validate_token("s1", token) is None
+
+
+def test_validate_token_malformed_returns_none(token_manager):
+    token_manager.parse_token = MagicMock(return_value=None)
+    assert token_manager.validate_token("s1", "garbage") is None
+
+
+# --- revoke_token guard ---
+def test_revoke_token_unparseable_returns_false(token_manager):
+    token_manager.parse_token = MagicMock(return_value=None)
+    assert token_manager.revoke_token("garbage") is False
+
+
+# --- cleanup_expired_tokens ---
+def test_cleanup_expired_tokens(token_manager):
+    token_manager.r.zremrangebyscore.return_value = 3
+    removed = token_manager.cleanup_expired_tokens("s1")
+    assert removed == 3
+    token_manager.r.zremrangebyscore.assert_called_once()
+
+
+# --- get_tokens_by_server delegates to get_all_tokens ---
+def test_get_tokens_by_server(token_manager):
+    token_manager.get_all_tokens = MagicMock(return_value=[])
+    token_manager.get_tokens_by_server("s1")
+    token_manager.get_all_tokens.assert_called_with("s1", False)
+
+
+# --- revoke_tokens_by_server ---
+def test_revoke_tokens_by_server(token_manager):
+    token_manager.get_all_tokens = MagicMock(return_value=[
+        {"token": "t1"}, {"token": "t2"}
+    ])
+    token_manager.revoke_token = MagicMock(side_effect=[True, False])
+    assert token_manager.revoke_tokens_by_server("s1") == 1
+
+
+# --- get_token_info ---
+def test_get_token_info_returns_hash_data(token_manager):
+    token_manager.r.hgetall.return_value = {"server_name": "s1", "user_id": "u1"}
+    result = token_manager.get_token_info("some.token")
+    assert result == {"server_name": "s1", "user_id": "u1"}
+    token_manager.r.hgetall.assert_called_with("tokens:some.token")

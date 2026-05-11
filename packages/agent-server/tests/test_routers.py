@@ -8,7 +8,7 @@ from oai_agent_server.routers.health import create_health_router
 from oai_agent_server.routers.logs import create_logs_router
 from oai_agent_server.routers.tokens import create_token_router
 from oai_agent_server.main import ServerState
-from oai_agent_server.security.dependencies import verify_api_key, verify_jwt_token
+from oai_agent_server.security.dependencies import verify_api_key, verify_jwt_token, verify_api_key_strict
 
 
 # --- Agent Router Tests ---
@@ -27,7 +27,8 @@ def agent_router_app(mock_agent):
     
     # Override dependency to bypass auth
     app.dependency_overrides[verify_api_key] = lambda: True
-    
+    app.dependency_overrides[verify_api_key_strict] = lambda: True
+
     return app, agent_service
 
 def test_agent_initialize(agent_router_app):
@@ -111,6 +112,7 @@ def health_router_app():
     router = create_health_router("test_agent", server_state, True)
     app = FastAPI()
     app.include_router(router)
+    app.dependency_overrides[verify_api_key] = lambda: True
     return app, server_state
 
 def test_health_root(health_router_app):
@@ -135,11 +137,158 @@ def test_server_status(health_router_app):
     assert response.status_code == 200
     assert response.json()["active_requests"] == 5
 
-def test_debug_env(health_router_app):
+def test_debug_env(health_router_app, monkeypatch):
+    monkeypatch.setenv("DEBUG_MODE", "true")
     app, _ = health_router_app
     client = TestClient(app)
     response = client.get("/debug/env")
     assert response.status_code == 200
+
+
+def test_debug_env_returns_404_when_debug_mode_unset(health_router_app, monkeypatch):
+    monkeypatch.delenv("DEBUG_MODE", raising=False)
+    app, _ = health_router_app
+    client = TestClient(app)
+    response = client.get("/debug/env")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Not Found"
+
+
+def test_check_env_happy_path(health_router_app, monkeypatch):
+    monkeypatch.setenv("DEBUG_MODE", "true")
+    monkeypatch.setenv("HTTP_X_TEST_HEADER", "test_value")
+    app, _ = health_router_app
+    client = TestClient(app)
+    response = client.get("/check-env")
+    assert response.status_code == 200
+    body = response.json()
+    assert "environment_variables" in body
+    assert body["environment_variables"].get("HTTP_X_TEST_HEADER") == "test_value"
+
+
+def test_check_env_returns_404_when_debug_mode_unset(health_router_app, monkeypatch):
+    monkeypatch.delenv("DEBUG_MODE", raising=False)
+    app, _ = health_router_app
+    client = TestClient(app)
+    response = client.get("/check-env")
+    assert response.status_code == 404
+
+
+def test_check_env_returns_401_when_auth_missing(monkeypatch):
+    """Without overriding verify_api_key, missing/invalid auth should be rejected."""
+    from fastapi import HTTPException
+    monkeypatch.setenv("DEBUG_MODE", "true")
+    server_state = ServerState()
+    router = create_health_router("test_agent", server_state, True)
+    app = FastAPI()
+    app.include_router(router)
+
+    def deny():
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    app.dependency_overrides[verify_api_key] = deny
+    client = TestClient(app)
+    response = client.get("/check-env")
+    assert response.status_code == 401
+
+
+def test_debug_env_returns_401_when_auth_missing(monkeypatch):
+    from fastapi import HTTPException
+    monkeypatch.setenv("DEBUG_MODE", "true")
+    server_state = ServerState()
+    router = create_health_router("test_agent", server_state, True)
+    app = FastAPI()
+    app.include_router(router)
+
+    def deny():
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    app.dependency_overrides[verify_api_key] = deny
+    client = TestClient(app)
+    response = client.get("/debug/env")
+    assert response.status_code == 401
+
+
+def test_ready_returns_200_when_agent_ready_and_db_ok(health_router_app):
+    app, state = health_router_app
+    state.is_agent_ready = True
+
+    backend = MagicMock()
+    backend.fetch_one = AsyncMock(return_value={"?column?": 1})
+    db_logger = MagicMock()
+    db_logger._backend = backend
+    app.state.db_logger = db_logger
+
+    client = TestClient(app)
+    response = client.get("/ready")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ready"
+    assert body["database"] == "ok"
+
+
+def test_ready_returns_503_when_agent_not_ready(health_router_app):
+    app, state = health_router_app
+    state.is_agent_ready = False
+
+    backend = MagicMock()
+    backend.fetch_one = AsyncMock(return_value={"?column?": 1})
+    db_logger = MagicMock()
+    db_logger._backend = backend
+    app.state.db_logger = db_logger
+    app.state.server_state = state
+
+    client = TestClient(app)
+    response = client.get("/ready")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "not_ready"
+    assert body["checks"]["agent"] == "not ready"
+
+
+def test_ready_returns_503_when_db_ping_fails(health_router_app):
+    app, state = health_router_app
+    state.is_agent_ready = True
+
+    backend = MagicMock()
+    backend.fetch_one = AsyncMock(side_effect=ConnectionError("db down"))
+    db_logger = MagicMock()
+    db_logger._backend = backend
+    app.state.db_logger = db_logger
+
+    client = TestClient(app)
+    response = client.get("/ready")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "not_ready"
+    assert "database" in body["checks"]
+    assert "ConnectionError" in body["checks"]["database"]
+
+
+def test_ready_returns_503_when_backend_is_none(health_router_app):
+    app, state = health_router_app
+    state.is_agent_ready = True
+
+    db_logger = MagicMock()
+    db_logger._backend = None
+    app.state.db_logger = db_logger
+
+    client = TestClient(app)
+    response = client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["checks"]["database"] == "no active backend"
+
+
+def test_ready_returns_200_when_db_logger_missing(health_router_app):
+    """When db_logger is not attached, route should pass through (db_ok stays True)."""
+    app, state = health_router_app
+    state.is_agent_ready = True
+    # Don't set app.state.db_logger
+    client = TestClient(app)
+    response = client.get("/ready")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ready"
 
 
 # -- Token Router Tests

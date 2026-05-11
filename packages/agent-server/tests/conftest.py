@@ -29,6 +29,7 @@ if 'oai_agent_core' not in sys.modules:
             self.agent_name = kwargs.get('agent_name', 'mock_agent')
             self.session_id = kwargs.get('session_id', 'default')
             self.agent_config = kwargs.get('agent_config', {})
+            self.agent_type = kwargs.get('agent_type', 'mock_framework')
             self.logger = MagicMock()
             self._initialized = False
             

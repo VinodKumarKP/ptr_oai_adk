@@ -70,7 +70,7 @@ async def test_restart_server_exception(agent_service):
         response = await agent_service.restart_server()
         assert response.status_code == 500
         body = json.loads(response.body)
-        assert "Restart failed" in body['detail']
+        assert "Internal server error" in body['detail']
 
 @pytest.mark.asyncio
 async def test_kill_switch_success(agent_service):
@@ -86,7 +86,7 @@ async def test_kill_switch_exception(agent_service):
         response = await agent_service.kill_switch()
         assert response.status_code == 500
         body = json.loads(response.body)
-        assert "Kill failed" in body['detail']
+        assert "Internal server error" in body['detail']
 
 @pytest.mark.asyncio
 async def test_get_agent_info(agent_service):

@@ -61,21 +61,31 @@ class _FakeCursorCM:
 
 class _FakeAiosqlite(types.ModuleType):
     class Row(dict): pass
+    class OperationalError(Exception): pass
     def __init__(self):
         super().__init__("aiosqlite")
         self.calls: List[Dict] = []
         self.Row = _FakeAiosqlite.Row
+        self.OperationalError = _FakeAiosqlite.OperationalError
     def connect(self, path: str):
+        """Returns an awaitable that yields a connection (matches new code path).
+
+        Also supports being used as an async context manager for older callers.
+        """
         outer = self
-        @asynccontextmanager
-        async def _ctx():
-            conn = _FakeDBConn(outer.calls)
-            conn.row_factory = _FakeAiosqlite.Row
-            def _execute(sql, params=()):
-                return _FakeCursorCM(outer.calls, sql, params)
-            conn.execute = _execute
-            yield conn
-        return _ctx()
+        conn = _FakeDBConn(outer.calls)
+        conn.row_factory = _FakeAiosqlite.Row
+        def _execute(sql, params=()):
+            return _FakeCursorCM(outer.calls, sql, params)
+        conn.execute = _execute
+
+        class _Awaitable:
+            def __await__(self_inner):
+                async def _f(): return conn
+                return _f().__await__()
+            async def __aenter__(self_inner): return conn
+            async def __aexit__(self_inner, *args): pass
+        return _Awaitable()
 
 class _FakeAsyncpg(types.ModuleType):
     def __init__(self):
@@ -900,3 +910,773 @@ class TestReadMethods:
         _, db, backend = make_read_db()
         backend.fetch = AsyncMock(side_effect=RuntimeError("db down"))
         assert run(db.get_user_stats()) == []
+
+
+# ---------------------------------------------------------------------------
+# PostgresBackend tests (mocked asyncpg)
+# ---------------------------------------------------------------------------
+
+class _FakePostgresConn:
+    def __init__(self, executions, fetch_rows=None, fetchrow_row=None):
+        self.executions = executions
+        self._fetch_rows = fetch_rows if fetch_rows is not None else []
+        self._fetchrow_row = fetchrow_row
+    async def execute(self, query, *params):
+        self.executions.append({"sql": query, "params": params, "via": "execute"})
+    async def executemany(self, query, params_seq):
+        for p in params_seq:
+            self.executions.append({"sql": query, "params": p, "via": "executemany"})
+    async def fetch(self, query, *params):
+        self.executions.append({"sql": query, "params": params, "via": "fetch"})
+        return self._fetch_rows
+    async def fetchrow(self, query, *params):
+        self.executions.append({"sql": query, "params": params, "via": "fetchrow"})
+        return self._fetchrow_row
+
+
+class _AcquireCM:
+    def __init__(self, conn):
+        self._conn = conn
+    async def __aenter__(self):
+        return self._conn
+    async def __aexit__(self, *args):
+        return False
+
+
+class _FakePool:
+    def __init__(self, conn):
+        self._conn = conn
+        self.closed = 0
+    def acquire(self):
+        return _AcquireCM(self._conn)
+    async def close(self):
+        self.closed += 1
+
+
+def _make_pg_module(conn=None, create_pool_raises=None):
+    """Load the module with asyncpg.create_pool patched to return a fake pool."""
+    fake = _FakeAsyncpg()
+    if conn is None:
+        conn = _FakePostgresConn(executions=[])
+    pool = _FakePool(conn)
+    if create_pool_raises is not None:
+        async def _bad_pool(*a, **kw):
+            raise create_pool_raises
+        fake.create_pool = _bad_pool
+    else:
+        async def _make(*a, **kw):
+            return pool
+        fake.create_pool = _make
+    mod = load_module(fake_aiosqlite=_FakeAiosqlite(), fake_asyncpg=fake)
+    return mod, conn, pool
+
+
+class TestPostgresBackend:
+    """Tests for PostgresBackend with mocked asyncpg."""
+
+    def test_initialize_success_returns_true(self):
+        mod, conn, pool = _make_pg_module()
+        backend = mod.PostgresBackend()
+        assert run(backend.initialize(silent_logger())) is True
+        assert backend._pool is pool
+
+    def test_initialize_runs_select_1(self):
+        mod, conn, _ = _make_pg_module()
+        backend = mod.PostgresBackend()
+        run(backend.initialize(silent_logger()))
+        sqls = [c["sql"] for c in conn.executions]
+        assert "SELECT 1" in sqls
+
+    def test_initialize_creates_schema(self):
+        mod, conn, _ = _make_pg_module()
+        backend = mod.PostgresBackend()
+        run(backend.initialize(silent_logger()))
+        sqls = " ".join(c["sql"] for c in conn.executions)
+        assert "chat_logs" in sqls
+        assert "agent_activity_log" in sqls
+        assert "scheduled_jobs" in sqls
+        assert "scheduled_job_runs" in sqls
+
+    def test_initialize_failure_returns_false(self):
+        mod, _, _ = _make_pg_module(create_pool_raises=OSError("boom"))
+        backend = mod.PostgresBackend()
+        assert run(backend.initialize(silent_logger())) is False
+        assert backend._pool is None
+
+    def test_initialize_failure_no_logger(self):
+        mod, _, _ = _make_pg_module(create_pool_raises=OSError("boom"))
+        backend = mod.PostgresBackend()
+        assert run(backend.initialize(None)) is False
+
+    def test_env_vars_used_in_dsn(self, monkeypatch):
+        captured = {}
+        mod, conn, _ = _make_pg_module()
+        async def _capture(dsn, **kwargs):
+            captured["dsn"] = dsn
+            captured["kwargs"] = kwargs
+            return _FakePool(conn)
+        monkeypatch.setattr(mod.asyncpg, "create_pool", _capture)
+        monkeypatch.setenv("LOGGING_DB_HOST", "h.example.com")
+        monkeypatch.setenv("LOGGING_DB_PORT", "6543")
+        monkeypatch.setenv("LOGGING_DB_NAME", "mydb")
+        monkeypatch.setenv("LOGGING_DB_USER", "alice")
+        monkeypatch.setenv("LOGGING_DB_PASSWORD", "secret")
+        monkeypatch.setenv("DB_POOL_MIN_SIZE", "5")
+        monkeypatch.setenv("DB_POOL_MAX_SIZE", "9")
+        monkeypatch.setenv("DB_POOL_TIMEOUT", "60")
+        backend = mod.PostgresBackend()
+        run(backend.initialize(silent_logger()))
+        assert "alice" in captured["dsn"]
+        assert "h.example.com" in captured["dsn"]
+        assert "6543" in captured["dsn"]
+        assert "mydb" in captured["dsn"]
+        assert captured["kwargs"]["min_size"] == 5
+        assert captured["kwargs"]["max_size"] == 9
+        assert captured["kwargs"]["command_timeout"] == 60
+
+    def test_env_var_defaults_applied(self, monkeypatch):
+        captured = {}
+        mod, conn, _ = _make_pg_module()
+        async def _capture(dsn, **kwargs):
+            captured["dsn"] = dsn
+            captured["kwargs"] = kwargs
+            return _FakePool(conn)
+        monkeypatch.setattr(mod.asyncpg, "create_pool", _capture)
+        for k in ["LOGGING_DB_HOST", "LOGGING_DB_PORT", "LOGGING_DB_NAME",
+                  "LOGGING_DB_USER", "LOGGING_DB_PASSWORD",
+                  "DB_POOL_MIN_SIZE", "DB_POOL_MAX_SIZE", "DB_POOL_TIMEOUT"]:
+            monkeypatch.delenv(k, raising=False)
+        backend = mod.PostgresBackend()
+        run(backend.initialize(silent_logger()))
+        assert "localhost" in captured["dsn"]
+        assert "5432" in captured["dsn"]
+        assert "agent_logs" in captured["dsn"]
+        assert captured["kwargs"]["min_size"] == 2
+        assert captured["kwargs"]["max_size"] == 4
+
+    def test_execute_raises_when_not_initialised(self):
+        mod, _, _ = _make_pg_module()
+        backend = mod.PostgresBackend()
+        with pytest.raises(RuntimeError):
+            run(backend.execute("SELECT 1", ()))
+
+    def test_execute_many_raises_when_not_initialised(self):
+        mod, _, _ = _make_pg_module()
+        backend = mod.PostgresBackend()
+        with pytest.raises(RuntimeError):
+            run(backend.execute_many("SELECT 1", [(1,)]))
+
+    def test_fetch_raises_when_not_initialised(self):
+        mod, _, _ = _make_pg_module()
+        backend = mod.PostgresBackend()
+        with pytest.raises(RuntimeError):
+            run(backend.fetch("SELECT 1", ()))
+
+    def test_fetch_one_raises_when_not_initialised(self):
+        mod, _, _ = _make_pg_module()
+        backend = mod.PostgresBackend()
+        with pytest.raises(RuntimeError):
+            run(backend.fetch_one("SELECT 1", ()))
+
+    def test_execute_calls_conn_execute(self):
+        mod, conn, _ = _make_pg_module()
+        backend = mod.PostgresBackend()
+        run(backend.initialize(silent_logger()))
+        conn.executions.clear()
+        run(backend.execute("INSERT INTO foo VALUES ($1)", ("bar",)))
+        assert any(c["sql"] == "INSERT INTO foo VALUES ($1)" and c["params"] == ("bar",)
+                   for c in conn.executions)
+
+    def test_execute_many_empty_is_noop(self):
+        mod, conn, _ = _make_pg_module()
+        backend = mod.PostgresBackend()
+        run(backend.initialize(silent_logger()))
+        before = len(conn.executions)
+        run(backend.execute_many("INSERT INTO foo VALUES ($1)", []))
+        assert len(conn.executions) == before
+
+    def test_execute_many_records_each_row(self):
+        mod, conn, _ = _make_pg_module()
+        backend = mod.PostgresBackend()
+        run(backend.initialize(silent_logger()))
+        conn.executions.clear()
+        run(backend.execute_many("INSERT INTO foo VALUES ($1)", [("a",), ("b",)]))
+        execm = [c for c in conn.executions if c.get("via") == "executemany"]
+        assert len(execm) == 2
+
+    def test_fetch_returns_list_of_dicts(self):
+        rows = [{"a": 1}, {"a": 2}]
+        conn = _FakePostgresConn(executions=[], fetch_rows=rows)
+        mod, _, _ = _make_pg_module(conn=conn)
+        backend = mod.PostgresBackend()
+        run(backend.initialize(silent_logger()))
+        result = run(backend.fetch("SELECT a FROM t", ()))
+        assert result == rows
+
+    def test_fetch_empty_returns_empty_list(self):
+        conn = _FakePostgresConn(executions=[], fetch_rows=[])
+        mod, _, _ = _make_pg_module(conn=conn)
+        backend = mod.PostgresBackend()
+        run(backend.initialize(silent_logger()))
+        assert run(backend.fetch("SELECT a FROM t", ())) == []
+
+    def test_fetch_one_returns_dict(self):
+        conn = _FakePostgresConn(executions=[], fetchrow_row={"x": 1})
+        mod, _, _ = _make_pg_module(conn=conn)
+        backend = mod.PostgresBackend()
+        run(backend.initialize(silent_logger()))
+        assert run(backend.fetch_one("SELECT x FROM t", ())) == {"x": 1}
+
+    def test_fetch_one_returns_none_when_no_row(self):
+        conn = _FakePostgresConn(executions=[], fetchrow_row=None)
+        mod, _, _ = _make_pg_module(conn=conn)
+        backend = mod.PostgresBackend()
+        run(backend.initialize(silent_logger()))
+        assert run(backend.fetch_one("SELECT x FROM t", ())) is None
+
+    def test_close_closes_pool_and_idempotent(self):
+        mod, conn, pool = _make_pg_module()
+        backend = mod.PostgresBackend()
+        run(backend.initialize(silent_logger()))
+        run(backend.close())
+        assert pool.closed == 1
+        assert backend._pool is None
+        # Second close is a no-op
+        run(backend.close())
+        assert pool.closed == 1
+
+    def test_close_before_initialize_safe(self):
+        mod, _, _ = _make_pg_module()
+        backend = mod.PostgresBackend()
+        run(backend.close())  # should not raise
+
+    def test_create_schema_handles_alter_failure(self):
+        """If ALTER TABLE raises, _create_schema swallows it and logs."""
+        class _FlakyConn(_FakePostgresConn):
+            async def execute(self, query, *params):
+                self.executions.append({"sql": query, "params": params})
+                if "ALTER TABLE" in query:
+                    raise RuntimeError("alter failed")
+        conn = _FlakyConn(executions=[])
+        mod, _, _ = _make_pg_module(conn=conn)
+        backend = mod.PostgresBackend()
+        # Should still return True; ALTER failure is caught inside _create_schema
+        assert run(backend.initialize(silent_logger())) is True
+
+
+# ---------------------------------------------------------------------------
+# DatabaseLogger orchestration: more fallback / lifecycle paths
+# ---------------------------------------------------------------------------
+
+class TestDatabaseLoggerFallback:
+    """Backend selection / lifecycle behaviours not covered above."""
+
+    def test_postgres_chosen_when_first_success(self):
+        mod = load_module(fake_aiosqlite=_FakeAiosqlite(), fake_asyncpg=_FakeAsyncpg())
+        pg = make_mock_backend(True, "postgres")
+        sqlite = make_mock_backend(True, "sqlite")
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "true"}):
+            db = mod.DatabaseLogger(backends=[pg, sqlite], logger=silent_logger())
+            run(db.initialize())
+        assert db._backend is pg
+        sqlite.initialize.assert_not_called()
+
+    def test_falls_back_to_sqlite_when_postgres_fails(self):
+        mod = load_module(fake_aiosqlite=_FakeAiosqlite(), fake_asyncpg=_FakeAsyncpg())
+        pg = make_mock_backend(False, "postgres")
+        sqlite = make_mock_backend(True, "sqlite")
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "true"}):
+            db = mod.DatabaseLogger(backends=[pg, sqlite], logger=silent_logger())
+            run(db.initialize())
+        assert db._backend is sqlite
+
+    def test_initialize_default_backends_when_none_provided(self):
+        mod = load_module(fake_aiosqlite=_FakeAiosqlite(), fake_asyncpg=_FakeAsyncpg())
+        # default backends = [PostgresBackend, SQLiteBackend]; PG fails (no pool),
+        # SQLite succeeds via fake aiosqlite
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "true",
+                                      "SQLITE_DB_PATH": "/tmp/dl_default.db"}):
+            db = mod.DatabaseLogger(logger=silent_logger())
+            run(db.initialize())
+        assert db.is_active
+        assert isinstance(db._backend, mod.SQLiteBackend)
+
+
+# ---------------------------------------------------------------------------
+# log_llm_judge_evaluation and get_*_evaluation methods
+# ---------------------------------------------------------------------------
+
+class TestEvaluations:
+    """Tests for LLM judge evaluation logging and lookups."""
+
+    def test_log_evaluation_calls_execute(self, mod, backend, active_db):
+        backend.EVALUATION_LOG_INSERT = "INSERT_EVAL"
+        run(active_db.log_llm_judge_evaluation(
+            interaction_id="i1", agent_name="a", session_id="s",
+            evaluation_data={"quality_score": 0.9, "hallucination_detected": "true"}))
+        backend.execute.assert_called_once()
+        query, params = backend.execute.call_args[0]
+        assert query == "INSERT_EVAL"
+        assert params[0] == "i1"
+        assert params[3] == 0.9
+        assert params[4] is True
+
+    def test_log_evaluation_hallucination_false_string(self, mod, backend, active_db):
+        backend.EVALUATION_LOG_INSERT = "INSERT_EVAL"
+        run(active_db.log_llm_judge_evaluation(
+            interaction_id="i1", agent_name="a", session_id="s",
+            evaluation_data={"quality_score": 0.5, "hallucination_detected": "false"}))
+        _, params = backend.execute.call_args[0]
+        assert params[4] is False
+
+    def test_log_evaluation_quality_score_none(self, mod, backend, active_db):
+        backend.EVALUATION_LOG_INSERT = "INSERT_EVAL"
+        run(active_db.log_llm_judge_evaluation(
+            interaction_id="i1", agent_name="a", session_id="s",
+            evaluation_data={"quality_score": None}))
+        _, params = backend.execute.call_args[0]
+        assert params[3] is None
+
+    def test_log_evaluation_disabled_is_noop(self, mod):
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "false"}):
+            db = mod.DatabaseLogger(backends=[], logger=silent_logger())
+            run(db.initialize())
+            run(db.log_llm_judge_evaluation("i", "a", "s", {"quality_score": 1}))
+
+    def test_log_evaluation_backend_exception_propagates(self, mod, backend, active_db):
+        backend.EVALUATION_LOG_INSERT = "INSERT_EVAL"
+        backend.execute = AsyncMock(side_effect=RuntimeError("down"))
+        with pytest.raises(RuntimeError):
+            run(active_db.log_llm_judge_evaluation(
+                "i", "a", "s", {"quality_score": 0.5, "hallucination_detected": "false"}))
+
+    def test_get_chat_log_by_interaction_id_returns_row(self):
+        _, db, backend = make_read_db(fetch_one_result=chat_log_row())
+        result = run(db.get_chat_log_by_interaction_id("x"))
+        assert result["agent_name"] == "agent"
+        assert isinstance(result["input_message"], dict)
+
+    def test_get_chat_log_by_interaction_id_none_when_not_found(self):
+        _, db, _ = make_read_db(fetch_one_result=None)
+        assert run(db.get_chat_log_by_interaction_id("x")) is None
+
+    def test_get_chat_log_by_interaction_id_returns_none_on_error(self):
+        _, db, backend = make_read_db()
+        backend.fetch_one = AsyncMock(side_effect=RuntimeError("boom"))
+        assert run(db.get_chat_log_by_interaction_id("x")) is None
+
+    def test_get_chat_log_by_interaction_id_disabled_returns_none(self, mod):
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "false"}):
+            db = mod.DatabaseLogger(backends=[], logger=silent_logger())
+            run(db.initialize())
+            assert run(db.get_chat_log_by_interaction_id("x")) is None
+
+    def test_get_chat_log_uses_postgres_query_for_pg_backend(self):
+        mod = load_module(fake_aiosqlite=_FakeAiosqlite(), fake_asyncpg=_FakeAsyncpg())
+        # Make the active backend an actual PostgresBackend instance
+        pg = mod.PostgresBackend()
+        pg.fetch_one = AsyncMock(return_value=None)
+        pg.initialize = AsyncMock(return_value=True)
+        pg.close = AsyncMock()
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "true"}):
+            db = mod.DatabaseLogger(backends=[pg], logger=silent_logger())
+            run(db.initialize())
+        run(db.get_chat_log_by_interaction_id("xyz"))
+        query, _ = pg.fetch_one.call_args[0]
+        assert "$1" in query
+
+    def test_get_evaluation_by_interaction_id(self):
+        _, db, _ = make_read_db(
+            fetch_one_result={"evaluation_data": '{"quality_score": 1}'})
+        result = run(db.get_evaluation_by_interaction_id("x"))
+        assert result == {"quality_score": 1}
+
+    def test_get_evaluation_by_interaction_id_none(self):
+        _, db, _ = make_read_db(fetch_one_result=None)
+        assert run(db.get_evaluation_by_interaction_id("x")) is None
+
+    def test_get_evaluation_by_interaction_id_handles_exception(self):
+        _, db, backend = make_read_db()
+        backend.fetch_one = AsyncMock(side_effect=RuntimeError("x"))
+        assert run(db.get_evaluation_by_interaction_id("x")) is None
+
+    def test_get_evaluation_by_interaction_id_disabled(self, mod):
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "false"}):
+            db = mod.DatabaseLogger(backends=[], logger=silent_logger())
+            run(db.initialize())
+            assert run(db.get_evaluation_by_interaction_id("x")) is None
+
+    def test_get_evaluation_by_interaction_id_pg_query(self):
+        mod = load_module(fake_aiosqlite=_FakeAiosqlite(), fake_asyncpg=_FakeAsyncpg())
+        pg = mod.PostgresBackend()
+        pg.fetch_one = AsyncMock(return_value=None)
+        pg.initialize = AsyncMock(return_value=True)
+        pg.close = AsyncMock()
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "true"}):
+            db = mod.DatabaseLogger(backends=[pg], logger=silent_logger())
+            run(db.initialize())
+        run(db.get_evaluation_by_interaction_id("x"))
+        query, _ = pg.fetch_one.call_args[0]
+        assert "$1" in query
+
+    def test_get_evaluations_by_session_id(self):
+        rows = [{"evaluation_data": '{"a": 1}', "timestamp": "2024-01-01T00:00:00",
+                 "created_at": "2024-01-01T00:00:00"}]
+        _, db, _ = make_read_db(fetch_result=rows)
+        result = run(db.get_evaluations_by_session_id("s"))
+        assert len(result) == 1
+        assert result[0]["evaluation_data"] == {"a": 1}
+
+    def test_get_evaluations_by_session_id_returns_empty_on_error(self):
+        _, db, backend = make_read_db()
+        backend.fetch = AsyncMock(side_effect=RuntimeError("x"))
+        assert run(db.get_evaluations_by_session_id("s")) == []
+
+    def test_get_evaluations_by_session_id_disabled(self, mod):
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "false"}):
+            db = mod.DatabaseLogger(backends=[], logger=silent_logger())
+            run(db.initialize())
+            assert run(db.get_evaluations_by_session_id("s")) == []
+
+    def test_get_evaluations_by_session_id_pg_query(self):
+        mod = load_module(fake_aiosqlite=_FakeAiosqlite(), fake_asyncpg=_FakeAsyncpg())
+        pg = mod.PostgresBackend()
+        pg.fetch = AsyncMock(return_value=[])
+        pg.initialize = AsyncMock(return_value=True)
+        pg.close = AsyncMock()
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "true"}):
+            db = mod.DatabaseLogger(backends=[pg], logger=silent_logger())
+            run(db.initialize())
+        run(db.get_evaluations_by_session_id("s"))
+        query, _ = pg.fetch.call_args[0]
+        assert "$1" in query
+
+    def test_get_evaluations_by_agent_name(self):
+        rows = [{"evaluation_data": '{"a": 2}', "timestamp": None, "created_at": None}]
+        _, db, _ = make_read_db(fetch_result=rows)
+        result = run(db.get_evaluations_by_agent_name("agent"))
+        assert result[0]["evaluation_data"] == {"a": 2}
+
+    def test_get_evaluations_by_agent_name_disabled(self, mod):
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "false"}):
+            db = mod.DatabaseLogger(backends=[], logger=silent_logger())
+            run(db.initialize())
+            assert run(db.get_evaluations_by_agent_name("a")) == []
+
+    def test_get_evaluations_by_agent_name_returns_empty_on_error(self):
+        _, db, backend = make_read_db()
+        backend.fetch = AsyncMock(side_effect=RuntimeError("x"))
+        assert run(db.get_evaluations_by_agent_name("a")) == []
+
+    def test_get_evaluations_by_agent_name_pg_query(self):
+        mod = load_module(fake_aiosqlite=_FakeAiosqlite(), fake_asyncpg=_FakeAsyncpg())
+        pg = mod.PostgresBackend()
+        pg.fetch = AsyncMock(return_value=[])
+        pg.initialize = AsyncMock(return_value=True)
+        pg.close = AsyncMock()
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "true"}):
+            db = mod.DatabaseLogger(backends=[pg], logger=silent_logger())
+            run(db.initialize())
+        run(db.get_evaluations_by_agent_name("a"))
+        query, _ = pg.fetch.call_args[0]
+        assert "$1" in query
+
+
+# ---------------------------------------------------------------------------
+# Scheduled job CRUD + runs
+# ---------------------------------------------------------------------------
+
+class TestScheduledJobs:
+    """Tests for scheduled-job CRUD, runs, and stream chunk retrieval."""
+
+    def _attach_consts(self, backend):
+        backend.SCHEDULED_JOBS_INSERT = "INSERT_JOB"
+        backend.SCHEDULED_JOBS_SELECT_ONE = "SELECT_ONE_JOB"
+        backend.SCHEDULED_JOBS_SELECT_ALL = "SELECT_ALL_JOBS"
+        backend.SCHEDULED_JOBS_DELETE = "DELETE_JOB"
+        backend.SCHEDULED_JOB_RUNS_INSERT = "INSERT_RUN"
+        backend.SCHEDULED_JOB_RUNS_SELECT_ALL_FOR_JOB = "SELECT_ALL_RUNS"
+        backend.SCHEDULED_JOB_RUNS_SELECT_ONE_FOR_JOB = "SELECT_ONE_RUN"
+        backend.SCHEDULED_JOB_RUNS_DELETE_FOR_JOB = "DELETE_RUNS"
+
+    def test_log_scheduled_job_passes_10_params(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        run(active_db.log_scheduled_job(
+            job_id="j1", agent_name="a", cron_expression="* * * * *",
+            run_at=ts, prompt="p", session_id="s", user_id="u", enabled=True))
+        query, params = backend.execute.call_args[0]
+        assert query == "INSERT_JOB"
+        assert len(params) == 10
+        assert params[0] == "j1"
+        assert params[1] == "a"
+        assert params[7] is True
+
+    def test_log_scheduled_job_disabled_noop(self, mod):
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "false"}):
+            db = mod.DatabaseLogger(backends=[], logger=silent_logger())
+            run(db.initialize())
+            run(db.log_scheduled_job("j", "a", None, None, "p", "s", "u", True))
+
+    def test_log_scheduled_job_exception_propagates(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.execute = AsyncMock(side_effect=RuntimeError("down"))
+        with pytest.raises(RuntimeError):
+            run(active_db.log_scheduled_job(
+                "j", "a", None, None, "p", "s", "u", True))
+
+    def test_update_scheduled_job_includes_agent_name(self, mod, backend, active_db):
+        """Regression: agent_name must be in the params tuple."""
+        self._attach_consts(backend)
+        run(active_db.update_scheduled_job(
+            job_id="j1", cron_expression="* * * * *", run_at=None, prompt="p",
+            session_id="s", user_id="u", enabled=True, agent_name="my-agent"))
+        query, params = backend.execute.call_args[0]
+        assert query == "INSERT_JOB"
+        assert len(params) == 10
+        assert params[0] == "j1"
+        assert params[1] == "my-agent"
+        assert "my-agent" in params
+
+    def test_update_scheduled_job_default_agent_name_none(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        run(active_db.update_scheduled_job(
+            job_id="j1", cron_expression=None, run_at=None, prompt="p",
+            session_id="s", user_id="u", enabled=False))
+        _, params = backend.execute.call_args[0]
+        assert params[1] is None
+        assert params[7] is False
+
+    def test_update_scheduled_job_disabled_noop(self, mod):
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "false"}):
+            db = mod.DatabaseLogger(backends=[], logger=silent_logger())
+            run(db.initialize())
+            run(db.update_scheduled_job("j", None, None, "p", "s", "u", True))
+
+    def test_update_scheduled_job_exception_propagates(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.execute = AsyncMock(side_effect=RuntimeError("down"))
+        with pytest.raises(RuntimeError):
+            run(active_db.update_scheduled_job(
+                "j", None, None, "p", "s", "u", True))
+
+    def test_get_scheduled_job_returns_row(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.fetch_one = AsyncMock(return_value={
+            "job_id": "j1", "run_at": "2024-01-01T00:00:00", "created_at": None,
+            "updated_at": None})
+        result = run(active_db.get_scheduled_job("j1"))
+        assert result["job_id"] == "j1"
+
+    def test_get_scheduled_job_none_when_missing(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.fetch_one = AsyncMock(return_value=None)
+        assert run(active_db.get_scheduled_job("j")) is None
+
+    def test_get_scheduled_job_returns_none_on_error(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.fetch_one = AsyncMock(side_effect=RuntimeError("x"))
+        assert run(active_db.get_scheduled_job("j")) is None
+
+    def test_get_scheduled_job_disabled(self, mod):
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "false"}):
+            db = mod.DatabaseLogger(backends=[], logger=silent_logger())
+            run(db.initialize())
+            assert run(db.get_scheduled_job("j")) is None
+
+    def test_get_all_scheduled_jobs(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.fetch = AsyncMock(return_value=[
+            {"job_id": "j1", "run_at": None, "created_at": None, "updated_at": None},
+            {"job_id": "j2", "run_at": None, "created_at": None, "updated_at": None},
+        ])
+        result = run(active_db.get_all_scheduled_jobs())
+        assert len(result) == 2
+        assert result[0]["job_id"] == "j1"
+
+    def test_get_all_scheduled_jobs_returns_empty_on_error(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.fetch = AsyncMock(side_effect=RuntimeError("x"))
+        assert run(active_db.get_all_scheduled_jobs()) == []
+
+    def test_get_all_scheduled_jobs_disabled(self, mod):
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "false"}):
+            db = mod.DatabaseLogger(backends=[], logger=silent_logger())
+            run(db.initialize())
+            assert run(db.get_all_scheduled_jobs()) == []
+
+    def test_delete_scheduled_job_calls_execute(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        run(active_db.delete_scheduled_job("j1"))
+        query, params = backend.execute.call_args[0]
+        assert query == "DELETE_JOB"
+        assert params == ("j1",)
+
+    def test_delete_scheduled_job_exception_propagates(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.execute = AsyncMock(side_effect=RuntimeError("x"))
+        with pytest.raises(RuntimeError):
+            run(active_db.delete_scheduled_job("j"))
+
+    def test_delete_scheduled_job_disabled(self, mod):
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "false"}):
+            db = mod.DatabaseLogger(backends=[], logger=silent_logger())
+            run(db.initialize())
+            run(db.delete_scheduled_job("j"))
+
+    def test_log_scheduled_job_run(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        run(active_db.log_scheduled_job_run(
+            job_id="j1", run_id="r1", timestamp=ts, session_id="s",
+            status="success", error_message=None,
+            stream_chunks=[{"text": "hi"}]))
+        query, params = backend.execute.call_args[0]
+        assert query == "INSERT_RUN"
+        assert params[0] == "j1"
+        assert params[1] == "r1"
+        assert params[2] is ts
+        assert json.loads(params[6]) == [{"text": "hi"}]
+
+    def test_log_scheduled_job_run_exception_propagates(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.execute = AsyncMock(side_effect=RuntimeError("x"))
+        with pytest.raises(RuntimeError):
+            run(active_db.log_scheduled_job_run(
+                "j", "r", datetime.now(timezone.utc), "s", "ok", None, []))
+
+    def test_log_scheduled_job_run_disabled(self, mod):
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "false"}):
+            db = mod.DatabaseLogger(backends=[], logger=silent_logger())
+            run(db.initialize())
+            run(db.log_scheduled_job_run(
+                "j", "r", datetime.now(timezone.utc), "s", "ok", None, []))
+
+    def test_get_scheduled_job_runs(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.fetch = AsyncMock(return_value=[
+            {"job_id": "j", "stream_chunks": '[{"a":1}]',
+             "timestamp": None, "created_at": None},
+        ])
+        result = run(active_db.get_scheduled_job_runs("j", limit=5))
+        assert len(result) == 1
+        assert result[0]["stream_chunks"] == [{"a": 1}]
+
+    def test_get_scheduled_job_runs_returns_empty_on_error(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.fetch = AsyncMock(side_effect=RuntimeError("x"))
+        assert run(active_db.get_scheduled_job_runs("j")) == []
+
+    def test_get_scheduled_job_runs_disabled(self, mod):
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "false"}):
+            db = mod.DatabaseLogger(backends=[], logger=silent_logger())
+            run(db.initialize())
+            assert run(db.get_scheduled_job_runs("j")) == []
+
+    def test_get_scheduled_job_run_stream_chunks_negative_index(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.fetch_one = AsyncMock(return_value={
+            "stream_chunks": '[{"x": 1}]', "timestamp": None, "created_at": None})
+        result = run(active_db.get_scheduled_job_run_stream_chunks("j", run_index=-1))
+        assert result == [{"x": 1}]
+        # offset should be 0 for run_index=-1
+        _, params = backend.fetch_one.call_args[0]
+        assert params == ("j", 0)
+
+    def test_get_scheduled_job_run_stream_chunks_positive_index(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.fetch_one = AsyncMock(return_value={
+            "stream_chunks": '[]', "timestamp": None, "created_at": None})
+        run(active_db.get_scheduled_job_run_stream_chunks("j", run_index=2))
+        _, params = backend.fetch_one.call_args[0]
+        assert params == ("j", 2)
+
+    def test_get_scheduled_job_run_stream_chunks_no_row(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.fetch_one = AsyncMock(return_value=None)
+        assert run(active_db.get_scheduled_job_run_stream_chunks("j")) is None
+
+    def test_get_scheduled_job_run_stream_chunks_returns_none_on_error(self, mod, backend, active_db):
+        self._attach_consts(backend)
+        backend.fetch_one = AsyncMock(side_effect=RuntimeError("x"))
+        assert run(active_db.get_scheduled_job_run_stream_chunks("j")) is None
+
+    def test_get_scheduled_job_run_stream_chunks_disabled(self, mod):
+        with patch.dict(os.environ, {"DB_LOGGING_ENABLED": "false"}):
+            db = mod.DatabaseLogger(backends=[], logger=silent_logger())
+            run(db.initialize())
+            assert run(db.get_scheduled_job_run_stream_chunks("j")) is None
+
+
+# ---------------------------------------------------------------------------
+# Deserialisation helpers and small utility branches
+# ---------------------------------------------------------------------------
+
+class TestDeserializers:
+    """Coverage for _deserialize_* helpers and parse/format utilities."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mod):
+        self.mod = mod
+        self.db = mod.DatabaseLogger(backends=[], logger=silent_logger())
+
+    def test_deserialize_evaluation_row_empty(self):
+        assert self.db._deserialize_evaluation_row({}) == {}
+
+    def test_deserialize_evaluation_row_full(self):
+        ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        row = {"evaluation_data": '{"q": 1}', "timestamp": ts, "created_at": ts}
+        result = self.db._deserialize_evaluation_row(row)
+        assert result["evaluation_data"] == {"q": 1}
+        assert result["timestamp"] == ts.isoformat()
+
+    def test_deserialize_scheduled_job_row_empty(self):
+        assert self.db._deserialize_scheduled_job_row({}) == {}
+
+    def test_deserialize_scheduled_job_row_with_dates(self):
+        ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        row = {"job_id": "j", "run_at": ts, "created_at": ts, "updated_at": ts}
+        result = self.db._deserialize_scheduled_job_row(row)
+        assert result["run_at"] == ts.isoformat()
+        assert result["updated_at"] == ts.isoformat()
+
+    def test_deserialize_scheduled_job_run_row_empty(self):
+        assert self.db._deserialize_scheduled_job_run_row({}) == {}
+
+    def test_deserialize_scheduled_job_run_row_full(self):
+        ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        row = {"stream_chunks": '[1,2]', "timestamp": ts, "created_at": ts}
+        result = self.db._deserialize_scheduled_job_run_row(row)
+        assert result["stream_chunks"] == [1, 2]
+        assert result["timestamp"] == ts.isoformat()
+
+    def test_parse_json_field_invalid_returns_input(self):
+        assert self.mod.DatabaseLogger._parse_json_field("not json") == "not json"
+
+    def test_parse_json_field_non_string_passthrough(self):
+        assert self.mod.DatabaseLogger._parse_json_field({"a": 1}) == {"a": 1}
+
+    def test_isoformat_none(self):
+        assert self.mod.DatabaseLogger._isoformat(None) is None
+
+    def test_isoformat_datetime(self):
+        ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        assert self.mod.DatabaseLogger._isoformat(ts) == ts.isoformat()
+
+    def test_isoformat_other_value(self):
+        assert self.mod.DatabaseLogger._isoformat("2024-01-01") == "2024-01-01"
+
+    def test_serialize_for_json_pydantic_model_dump_exception(self):
+        class BadModel:
+            def model_dump(self): raise ValueError("nope")
+            def dict(self): return {"fallback": "dict"}
+        result = self.mod.DatabaseLogger._serialize_for_json(BadModel())
+        assert result == {"fallback": "dict"}
+
+    def test_serialize_for_json_pydantic_v1_dict_exception(self):
+        class BadV1:
+            def dict(self): raise ValueError("nope")
+            def __init__(self): self.x = 1
+        result = self.mod.DatabaseLogger._serialize_for_json(BadV1())
+        # Falls through to __dict__
+        assert result == {"x": 1}

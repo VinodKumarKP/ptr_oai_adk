@@ -51,10 +51,15 @@ def test_request_tracking_middleware(app):
     server_state.is_shutting_down = True
     response = client.get("/")
     assert response.status_code == 503
-    
-    # Verify restart endpoint bypass
-    response = client.get("/restart") # Not defined in app but middleware runs
-    # Should be 404 not 503
+    # Response should propagate X-Request-ID header
+    assert "X-Request-ID" in response.headers
+
+    # Reset shutdown flag and verify normal request again returns 200
+    server_state.is_shutting_down = False
+    response = client.get("/")
+    assert response.status_code == 200
+    # Unknown route returns 404 once shutdown is cleared
+    response = client.get("/restart")
     assert response.status_code == 404
 
 def test_logging_middleware(app):
