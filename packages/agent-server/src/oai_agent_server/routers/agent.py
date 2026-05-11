@@ -1,8 +1,9 @@
 from typing import List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from oai_agent_server.middleware.request_context import get_original_environ
+from oai_agent_server.security.dependencies import verify_api_key_strict
 
 
 def create_agent_router(agent_service, enable_request_isolation, allowed_modes: Optional[List[str]] = None):
@@ -18,12 +19,12 @@ def create_agent_router(agent_service, enable_request_isolation, allowed_modes: 
             """Initialize the agent."""
             return await agent_service.initialize_agent()
 
-        @router.post("/restart")
+        @router.post("/restart", dependencies=[Depends(verify_api_key_strict)])
         async def restart_server():
             """Restart the server."""
             return await agent_service.restart_server()
 
-        @router.post("/kill")
+        @router.post("/kill", dependencies=[Depends(verify_api_key_strict)])
         async def kill_switch():
             """Kill the server process."""
             return await agent_service.kill_switch()

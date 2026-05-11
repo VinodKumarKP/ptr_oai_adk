@@ -45,9 +45,10 @@ try:
 except ImportError:
     _APSCHEDULER_AVAILABLE = False
     
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from oai_agent_core.core.base_agent import BaseAgent
+from oai_agent_server.security.dependencies import verify_api_key
 from oai_agent_server.utils.response_extractor import ResponseContentExtractor
 from oai_agent_server.utils.serialization import make_serializable
 from oai_agent_server.utils.database_logger import DatabaseLogger
@@ -261,7 +262,11 @@ def create_schedule_router(agent: BaseAgent, db_logger: DatabaseLogger, allowed_
         logger.warning("APScheduler is not installed. Schedule endpoints will not be available. Install it using `pip install apscheduler`.")
         return None
 
-    router = APIRouter(prefix="/schedule", tags=["schedule"])
+    router = APIRouter(
+        prefix="/schedule",
+        tags=["schedule"],
+        dependencies=[Depends(verify_api_key)],
+    )
 
     # ---- endpoints ----
 

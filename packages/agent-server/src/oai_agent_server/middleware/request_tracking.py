@@ -12,9 +12,8 @@ class RequestTrackingMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         """Track active requests and enforce shutdown state"""
-        # Skip tracking for restart/kill endpoints
-        if request.url.path in ["/restart", "/kill"]:
-            return await call_next(request)
+        # Note: /restart and /kill are tracked too — they are high-value
+        # audit events.
 
         # Check if shutting down
         if self.server_state.is_shutting_down:
