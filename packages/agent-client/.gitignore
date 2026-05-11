@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# Logs
+*.log
+examples/logs/
+
+# Build artifacts
+build/
+dist/
