@@ -50,6 +50,17 @@ from oai_agent_server.services.logging_service import LoggingService
 from oai_agent_server.services.token_service import TokenService
 from oai_agent_server.utils.database_logger import DatabaseLogger
 
+try:
+    from oai_agent_server.a2a.database_task_store import (
+        _LazyTaskStoreProxy,
+        build_task_store_from_env,
+    )
+    _A2A_TASK_STORE_AVAILABLE = True
+except ImportError:
+    _LazyTaskStoreProxy = None  # type: ignore[assignment]
+    build_task_store_from_env = None  # type: ignore[assignment]
+    _A2A_TASK_STORE_AVAILABLE = False
+
 file_root = os.path.dirname(os.path.abspath(__file__))
 for path in [
     file_root,
@@ -141,6 +152,13 @@ class AgentHTTPServer:
 
         self.db_logger = DatabaseLogger(logger=self.logger)
 
+        # A2A task store: proxy now, real store bound during startup() so the
+        # router can be wired up before the DB backend is initialised.
+        self._a2a_task_store_proxy = (
+            _LazyTaskStoreProxy() if _A2A_TASK_STORE_AVAILABLE else None
+        )
+        self._a2a_task_store = None  # populated in startup()
+
         # Rate limiter (slowapi)
         if _SLOWAPI_AVAILABLE:
             self.limiter = Limiter(key_func=get_remote_address)
@@ -189,10 +207,26 @@ class AgentHTTPServer:
 
 
     def _setup_middleware(self):
+        _origins_env = os.environ.get("ALLOWED_ORIGINS", "")
+        if _origins_env.strip() == "*":
+            # Explicit opt-in for development only.
+            allowed_origins = ["*"]
+            allow_credentials = False  # Browsers reject credentials with wildcard
+        else:
+            allowed_origins = [o.strip() for o in _origins_env.split(",") if o.strip()]
+            allow_credentials = True
+
+        if not allowed_origins:
+            allowed_origins = ["http://localhost:3000"]
+
+        self.logger.info(
+            f"[CORS] Allowed origins: {allowed_origins} (allow_credentials={allow_credentials})"
+        )
+
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],
-            allow_credentials=True,
+            allow_origins=allowed_origins,
+            allow_credentials=allow_credentials,
             allow_methods=["*"],
             allow_headers=["*"],
         )
@@ -264,6 +298,7 @@ class AgentHTTPServer:
             a2a_streaming=self.a2a_streaming,
             a2a_push_notifications=self.a2a_push_notifications,
             agent_config=self.agent.agent_config,
+            task_store=self._a2a_task_store_proxy,
         )
         if a2a_router:
             self.app.include_router(a2a_router, prefix="/a2a")
@@ -352,6 +387,31 @@ class AgentHTTPServer:
             await self.agent.initialize()
             self.logger.info(f"Agent '{self.agent_name}' initialized successfully")
             await self.db_logger.initialize()
+            # Build the persistent A2A task store now that the DB backend is up.
+            if (
+                _A2A_TASK_STORE_AVAILABLE
+                and self._a2a_task_store_proxy is not None
+                and "a2a" in self.allowed_modes
+            ):
+                try:
+                    self._a2a_task_store = await build_task_store_from_env(
+                        self.db_logger, self.logger,
+                    )
+                    self._a2a_task_store_proxy.bind(self._a2a_task_store)
+                except Exception:
+                    self.logger.error(
+                        "Failed to initialise A2A task store; "
+                        "falling back to in-memory store.",
+                        exc_info=True,
+                    )
+                    try:
+                        from a2a.server.tasks import InMemoryTaskStore
+                        self._a2a_task_store = InMemoryTaskStore()
+                        self._a2a_task_store_proxy.bind(self._a2a_task_store)
+                    except Exception:
+                        self.logger.error(
+                            "InMemoryTaskStore fallback also failed", exc_info=True,
+                        )
             await self._register_with_registry()
         except Exception:
             self.logger.error(
@@ -362,6 +422,14 @@ class AgentHTTPServer:
     async def shutdown(self):
         self.logger.info("Shutting down agent server.")
         await self._deregister_from_registry()
+        # Stop the A2A task-store cleanup loop before closing DB connections.
+        try:
+            if self._a2a_task_store is not None and hasattr(
+                self._a2a_task_store, "shutdown"
+            ):
+                await self._a2a_task_store.shutdown()
+        except Exception:
+            self.logger.error("Failed to shutdown A2A task store", exc_info=True)
         try:
             await self.db_logger.close()
         except Exception:

@@ -58,6 +58,7 @@ def create_a2a_router(
     a2a_streaming: bool = True,
     a2a_push_notifications: bool = True,
     agent_config: Optional[Dict[str, Any]] = None,
+    task_store: Any = None,
 ) -> Optional[Tuple[APIRouter, AgentCard]]:
     logger = get_logger()
 
@@ -89,9 +90,12 @@ def create_a2a_router(
         use_streaming=a2a_streaming,
     )
 
+    # Use injected task store (DatabaseTaskStore or InMemoryTaskStore).
+    # Falls back to InMemoryTaskStore if none was provided (e.g. tests).
+    effective_task_store = task_store if task_store is not None else InMemoryTaskStore()
     request_handler = DefaultRequestHandler(
         agent_executor=executor,
-        task_store=InMemoryTaskStore(),
+        task_store=effective_task_store,
         agent_card=agent_card,
     )
 
