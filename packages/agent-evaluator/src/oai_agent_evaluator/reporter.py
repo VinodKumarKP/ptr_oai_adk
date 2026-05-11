@@ -14,14 +14,42 @@ class HtmlReporter:
 
     def generate_report(self, results: List[Dict[str, Any]], agent_class_name: str) -> str:
         """
-        Generates an HTML report from the test results.
+        Generates a detailed HTML report from test results.
+
+        Creates a professional HTML report with:
+        - Summary statistics: total count, pass/fail counts, pass rate percentage
+        - Results table: scenario details, pass/fail status, scores, metrics badges
+        - Expandable details: input/output, metric explanations, token usage, errors
+        - Markdown rendering: agent outputs rendered as HTML for better readability
+        - Responsive design: works on desktop and mobile
+        - Timestamp: report generation time included in filename and footer
+
+        Result dict format expected:
+        {
+            'scenario': str,
+            'agent_name': str,
+            'model_id': str,
+            'passed': bool,
+            'score': float (0-10),
+            'input': str,
+            'actual_output': str,
+            'expected_output': str,
+            'explanation': str,
+            'metrics': {metric_name: {score: float, explanation: str}},
+            'token_usage': dict (optional),
+            'error': str (optional)
+        }
 
         Args:
-            results: List of test result dictionaries.
-            agent_class_name: Name of the agent class being tested.
+            results: List of test result dictionaries (one per scenario evaluation).
+            agent_class_name: Agent class name for report title and filename.
 
         Returns:
-            Path to the generated HTML file.
+            Path to the generated HTML file (report_{agent_class_name}_{timestamp}.html).
+
+        Note:
+            Creates output directory if it doesn't exist.
+            Filename includes timestamp to avoid overwrites across multiple runs.
         """
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         filename = f"report_{agent_class_name}_{timestamp}.html"

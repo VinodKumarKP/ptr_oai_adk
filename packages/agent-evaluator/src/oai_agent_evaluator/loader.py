@@ -1,15 +1,56 @@
 import yaml
 import os
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any
 from pathlib import Path
 from .scenario import TestScenario
 
 class ScenarioLoader:
     """Loads test scenarios from YAML files."""
-    
+
     @staticmethod
     def load_from_file(file_path: str) -> List[TestScenario]:
-        """Loads scenarios from a single YAML file."""
+        """
+        Loads test scenarios from a single YAML file.
+
+        Supports flexible YAML structures:
+        - Single scenario at document root with name and input_message
+        - List of scenarios under 'scenarios' key
+        - Multiple YAML documents (separated by ---)
+
+        Supports global configuration (applied to all scenarios in the document):
+        - agent_config: Agent configuration dict or path to external config file
+        - agent_name: Agent identifier
+        - metrics: List of metrics to evaluate
+        - agent_class: Full Python path to agent class
+        - agent_model_config: Single config dict or list for matrix testing
+        - judge_model_id: Model ID for the judge agent
+        - pass_threshold: Pass/fail threshold (0-10)
+
+        Precedence for settings (highest to lowest):
+        1. Per-scenario value
+        2. Global document-level value
+        3. Default value
+
+        Path resolution:
+        - External config file paths (strings) resolved relative to scenario file directory
+        - Supports absolute paths and environment variable expansion ($VAR_NAME)
+        - Raises FileNotFoundError if external config file not found
+
+        Matrix testing:
+        - If agent_model_config is a list, creates separate scenario for each model config
+
+        Args:
+            file_path: Path to YAML file containing scenario definitions.
+
+        Returns:
+            List of TestScenario objects. May include multiple scenarios if:
+            - Document contains a list of scenarios
+            - Matrix testing is enabled (multiple model configs)
+
+        Raises:
+            FileNotFoundError: If external agent config file referenced but not found.
+            ValueError: If scenario missing required fields or invalid threshold.
+        """
         with open(file_path, 'r') as f:
             # Load all documents if multiple are present (separated by ---)
             documents = list(yaml.safe_load_all(f))
@@ -51,7 +92,12 @@ class ScenarioLoader:
             global_judge_model_id = None
             if isinstance(doc, dict) and 'judge_model_id' in doc:
                 global_judge_model_id = doc['judge_model_id']
-                
+
+            # Check for global pass_threshold
+            global_pass_threshold = 7.0
+            if isinstance(doc, dict) and 'pass_threshold' in doc:
+                global_pass_threshold = doc['pass_threshold']
+
             items = []
             # Check if the document has a 'scenarios' key
             if isinstance(doc, dict) and 'scenarios' in doc:
@@ -80,8 +126,15 @@ class ScenarioLoader:
                     
                 # Handle external agent config file reference
                 if isinstance(agent_config, str):
-                    # Resolve relative path
-                    config_path = os.path.join(base_path, agent_config)
+                    # Expand environment variables (e.g., $PROJECT_ROOT, ${HOME})
+                    config_path_str = os.path.expandvars(agent_config)
+
+                    # Resolve path: absolute paths used as-is, relative paths relative to scenario file
+                    if os.path.isabs(config_path_str):
+                        config_path = config_path_str
+                    else:
+                        config_path = os.path.join(base_path, config_path_str)
+
                     if os.path.exists(config_path):
                         with open(config_path, 'r') as cf:
                             agent_config = yaml.safe_load(cf)
@@ -112,6 +165,9 @@ class ScenarioLoader:
                 # Determine judge model id: item specific > global doc level
                 judge_model_id = item.get('judge_model_id', global_judge_model_id)
 
+                # Determine pass_threshold: item specific > global doc level > default
+                pass_threshold = item.get('pass_threshold', global_pass_threshold)
+
                 # Handle list of model configs for matrix testing
                 model_configs = []
                 if isinstance(agent_model_config, list):
@@ -135,13 +191,27 @@ class ScenarioLoader:
                         metrics=metrics,
                         agent_class=agent_class,
                         agent_model_config=model_cfg,
-                        judge_model_id=judge_model_id
+                        judge_model_id=judge_model_id,
+                        pass_threshold=pass_threshold
                     ))
         return scenarios
 
     @staticmethod
     def load_from_directory(directory_path: str) -> List[TestScenario]:
-        """Loads scenarios from all YAML files in a directory."""
+        """
+        Loads test scenarios from all YAML files in a directory.
+
+        Discovers all .yaml files in the directory (non-recursive) and loads
+        scenarios from each file using load_from_file(). Useful for organizing
+        scenarios across multiple files (e.g., by component or feature).
+
+        Args:
+            directory_path: Path to directory containing .yaml scenario files.
+
+        Returns:
+            Combined list of TestScenario objects from all files.
+            Returns empty list if directory contains no .yaml files.
+        """
         scenarios = []
         path = Path(directory_path)
         for file_path in path.glob('*.yaml'):

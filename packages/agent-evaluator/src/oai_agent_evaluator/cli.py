@@ -58,6 +58,13 @@ def main():
         help="Maximum number of concurrent scenarios to run (default: 1)"
     )
 
+    parser.add_argument(
+        "--pass-threshold",
+        type=float,
+        default=7.0,
+        help="Pass/fail threshold score (0-10, default: 7.0)"
+    )
+
     args = parser.parse_args()
     
     # Add project root to sys.path to ensure we can import the agent class
@@ -73,7 +80,8 @@ def main():
         project_root=args.project_root,
         judge_model_id=args.judge_model,
         output_dir=args.output_dir,
-        max_concurrency=args.concurrency
+        max_concurrency=args.concurrency,
+        pass_threshold=args.pass_threshold
     )
     
     # Run the regression suite

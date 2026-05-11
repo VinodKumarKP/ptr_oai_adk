@@ -16,7 +16,10 @@ class TestScenario:
     agent_class: Optional[str] = None
     agent_model_config: Optional[Dict[str, Any]] = None
     judge_model_id: Optional[str] = None
-    
+    pass_threshold: float = 7.0
+
     def __post_init__(self):
         if not self.expected_output and not self.evaluation_criteria:
             raise ValueError("Either expected_output or evaluation_criteria must be provided.")
+        if not 0 <= self.pass_threshold <= 10:
+            raise ValueError("pass_threshold must be between 0 and 10.")

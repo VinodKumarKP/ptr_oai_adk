@@ -3,6 +3,7 @@ import os
 import sys
 import logging
 import importlib
+import time
 from typing import Type, Optional, List, Dict, Any
 
 from .evaluator import AgentEvaluator
@@ -24,7 +25,8 @@ class RegressionRunner:
         default_scenarios: Optional[List[TestScenario]] = None,
         logger: Optional[logging.Logger] = None,
         output_dir: str = "reports",
-        max_concurrency: int = 1
+        max_concurrency: int = 1,
+        pass_threshold: float = 7.0
     ):
         """
         Initialize the RegressionRunner.
@@ -37,6 +39,7 @@ class RegressionRunner:
             logger: Optional logger instance.
             output_dir: Directory to save reports.
             max_concurrency: Maximum number of concurrent scenarios to run.
+            pass_threshold: Default pass/fail threshold score (0-10, default 7.0).
         """
         self.agent_class = agent_class
         self.project_root = project_root
@@ -44,6 +47,7 @@ class RegressionRunner:
         self.default_scenarios = default_scenarios or []
         self.output_dir = output_dir
         self.max_concurrency = max_concurrency
+        self.pass_threshold = pass_threshold
         
         # Configure logging if not provided
         if logger:
@@ -75,6 +79,8 @@ class RegressionRunner:
         Returns:
             True if all tests passed, False otherwise.
         """
+        suite_start = time.time()
+
         # Check for API Key
         # if not os.getenv("OPENAI_API_KEY"):
         #     self.logger.error("OPENAI_API_KEY environment variable is not set.")
@@ -137,7 +143,8 @@ class RegressionRunner:
                 project_root=self.project_root,
                 judge_model_id=self.judge_model_id,
                 logger=self.logger,
-                max_concurrency=self.max_concurrency
+                max_concurrency=self.max_concurrency,
+                pass_threshold=self.pass_threshold
             )
 
             results = await evaluator.run_suite(class_scenarios)
@@ -145,7 +152,7 @@ class RegressionRunner:
 
         # Generate HTML Report
         reporter = HtmlReporter(output_dir=self.output_dir)
-        
+
         # Determine report name safely
         if len(scenarios_by_class) == 1:
             report_name = getattr(self.agent_class, '__name__', 'Agent')
@@ -154,6 +161,20 @@ class RegressionRunner:
 
         report_path = reporter.generate_report(all_results, report_name)
         self.logger.info(f"HTML Report generated at: {report_path}")
+
+        # Log suite-level timing statistics
+        suite_duration_ms = (time.time() - suite_start) * 1000
+        scenario_count = len(all_results)
+        avg_duration_ms = suite_duration_ms / scenario_count if scenario_count > 0 else 0
+
+        # Calculate total agent and judge time
+        total_agent_ms = sum(r.get('agent_invocation_ms', 0) for r in all_results)
+        total_judge_ms = sum(r.get('judge_invocation_ms', 0) for r in all_results)
+
+        self.logger.info(
+            f"Regression suite completed: {scenario_count} scenarios in {suite_duration_ms:.0f}ms "
+            f"(avg {avg_duration_ms:.0f}ms/scenario, agent: {total_agent_ms:.0f}ms, judge: {total_judge_ms:.0f}ms)"
+        )
 
         return self._report_results(all_results)
 

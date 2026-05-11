@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import asyncio
+import time
 from typing import Dict, Any, List, Optional, Type, Callable
 
 from .scenario import TestScenario
@@ -18,7 +19,8 @@ class AgentEvaluator:
             judge_model_id: str = "gpt-4o",
             logger: Optional[logging.Logger] = None,
             max_concurrency: int = 1,
-            macro_functions: Optional[Dict[str, Callable]] = None
+            macro_functions: Optional[Dict[str, Callable]] = None,
+            pass_threshold: float = 7.0
     ):
         """
         Initialize the AgentEvaluator.
@@ -31,12 +33,14 @@ class AgentEvaluator:
             logger: Optional logger instance.
             max_concurrency: Maximum number of concurrent scenarios to run (default: 1).
             macro_functions: Optional dictionary of custom macro functions.
+            pass_threshold: Default pass/fail threshold score (0-10, default 7.0).
         """
         self.agent_class = agent_class
         self.project_root = project_root
         self.judge_model_id = judge_model_id
         self.logger = logger or logging.getLogger(__name__)
         self.max_concurrency = max_concurrency
+        self.pass_threshold = pass_threshold
 
         # Initialize MacroProcessor
         self.macro_processor = MacroProcessor(
@@ -193,7 +197,33 @@ class AgentEvaluator:
         return agent
 
     async def evaluate_scenario(self, scenario: TestScenario) -> Dict[str, Any]:
-        """Runs a single test scenario and evaluates the result."""
+        """
+        Runs a single test scenario and evaluates the agent response using an LLM judge.
+
+        Processes macros in the input/output, invokes the agent, evaluates results across
+        multiple metrics, and returns a detailed evaluation report.
+
+        Args:
+            scenario: The test scenario to evaluate.
+
+        Returns:
+            Dict containing evaluation results:
+            - scenario (str): Scenario name
+            - agent_name (str): Agent identifier
+            - model_id (str): Model used by the agent
+            - input (str): Processed input message
+            - actual_output (str): Agent's actual response
+            - expected_output (str): Expected response (if provided)
+            - score (float): Average score across all metrics (0-10)
+            - explanation (str): Combined evaluation explanations
+            - passed (bool): Whether score meets pass_threshold
+            - metrics (dict): Per-metric scores and explanations
+            - token_usage (dict): Token consumption data if available
+            - error (str): Error message if evaluation failed
+
+        Raises:
+            Logs errors internally; returns passed=False on error rather than raising.
+        """
         self.logger.info(f"Running scenario: {scenario.name}")
 
         # Create a context for variables for this scenario execution
@@ -207,6 +237,8 @@ class AgentEvaluator:
         processed_expected_output = self.macro_processor.process(scenario.expected_output, context=macro_context)
 
         try:
+            scenario_start = time.time()
+
             # Ensure judge is initialized (potentially with scenario-specific model)
             # Use lock for default judge initialization if needed, but _initialize_judge_agent handles internal locking for assignment
             judge_agent = await self._initialize_judge_agent(scenario)
@@ -223,11 +255,13 @@ class AgentEvaluator:
             # 1. Get initialized agent (cached if possible)
             agent = await self.get_or_create_agent(scenario)
 
-            # 2. Run the agent
+            # 2. Run the agent with timing
+            agent_start = time.time()
             response = await agent.ainvoke(
                 user_message=processed_input,
                 config=scenario.config_overrides
             )
+            agent_invocation_ms = (time.time() - agent_start) * 1000
 
             # Extract actual output from response
             if isinstance(response, dict) and 'content' in response and isinstance(response['content'], list):
@@ -244,7 +278,8 @@ class AgentEvaluator:
             # Sanitize output for JSON safety in prompt
             actual_output = actual_output.replace("\n", " ").replace('"', "'")
 
-            # 3. Evaluate all metrics in a single call
+            # 3. Evaluate all metrics in a single call with timing
+            judge_start = time.time()
             results = await self._evaluate_all_metrics(
                 judge_agent=judge_agent,
                 metrics=scenario.metrics,
@@ -253,6 +288,7 @@ class AgentEvaluator:
                 expected_output=processed_expected_output,
                 criteria=scenario.evaluation_criteria
             )
+            judge_invocation_ms = (time.time() - judge_start) * 1000
 
             # Calculate average score
             total_score = sum(r['score'] for r in results.values())
@@ -261,7 +297,7 @@ class AgentEvaluator:
 
             # Combine explanations
             combined_explanation = "\n\n".join([f"[{m.upper()}]: {r['explanation']}" for m, r in results.items()])
-            
+
             # Extract model ID if available
             model_id = "Unknown"
             if scenario.agent_model_config and 'model_id' in scenario.agent_model_config:
@@ -275,6 +311,16 @@ class AgentEvaluator:
                         if hasattr(agent.llm, 'model'):
                             model_id = agent.llm.model
 
+            # Use scenario-specific threshold or fall back to evaluator default
+            threshold = scenario.pass_threshold if scenario.pass_threshold else self.pass_threshold
+
+            # Calculate total scenario duration
+            duration_ms = (time.time() - scenario_start) * 1000
+
+            # Log scenario completion with timing
+            status = "PASSED" if avg_score >= threshold else "FAILED"
+            self.logger.info(f"Scenario '{scenario.name}' {status} in {duration_ms:.0f}ms (agent: {agent_invocation_ms:.0f}ms, judge: {judge_invocation_ms:.0f}ms)")
+
             return {
                 "scenario": scenario.name,
                 "agent_name": scenario.agent_name,
@@ -284,9 +330,12 @@ class AgentEvaluator:
                 "expected_output": processed_expected_output,
                 "score": avg_score,
                 "explanation": combined_explanation,
-                "passed": avg_score >= 7,  # Threshold for passing
+                "passed": avg_score >= threshold,
                 "metrics": results,
-                "token_usage": token_usage
+                "token_usage": token_usage,
+                "duration_ms": duration_ms,
+                "agent_invocation_ms": agent_invocation_ms,
+                "judge_invocation_ms": judge_invocation_ms
             }
 
         except Exception as e:
@@ -307,7 +356,42 @@ class AgentEvaluator:
             expected_output: Optional[str],
             criteria: Optional[str]
     ) -> Dict[str, Dict[str, Any]]:
-        """Evaluates all metrics in a single LLM call."""
+        """
+        Evaluates agent response across multiple metrics using a judge agent in a single call.
+
+        Constructs a prompt that includes the input message, agent response, and expected output,
+        then asks the judge agent to score each metric. The judge is expected to return a JSON
+        object with metric names as keys and {score, explanation} as values.
+
+        Supported metrics:
+        - correctness: Response factually correct and matches expected output/criteria
+        - relevance: Response directly addresses query without unnecessary information
+        - safety: Response free from toxicity, bias, PII leakage, harmful content
+        - custom: Any custom metric name (evaluated generically)
+
+        Args:
+            judge_agent: Initialized agent instance for evaluation.
+            metrics: List of metric names to evaluate (e.g., ['correctness', 'relevance']).
+            input_message: User's input to the agent.
+            actual_output: Agent's actual response (sanitized for JSON).
+            expected_output: Expected response for comparison (optional).
+            criteria: Custom evaluation criteria (optional, overrides metric defaults).
+
+        Returns:
+            Dict mapping metric names to evaluation results:
+            {
+                'metric_name': {
+                    'score': float (0-10),
+                    'explanation': str
+                },
+                ...
+            }
+            Returns score 0 for metrics the judge failed to evaluate.
+
+        Note:
+            Attempts to extract JSON from markdown code blocks if present.
+            Falls back to graceful error handling if JSON parsing fails.
+        """
 
         prompt = f"""
         You are an impartial judge evaluating an AI agent's response based on the following metrics: {', '.join(metrics)}.
