@@ -1,9 +1,11 @@
 from unittest.mock import MagicMock, patch, AsyncMock
+import json
 
 import pytest
 
 from oai_agent_evaluator.runner import RegressionRunner
 from oai_agent_evaluator.scenario import TestScenario
+from oai_agent_evaluator.evaluator import AgentEvaluator
 
 
 @pytest.fixture
@@ -144,3 +146,70 @@ def test_run_sync_success():
             with patch('sys.exit') as mock_exit:
                 runner.run("path")
                 mock_exit.assert_called_with(0)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_failures(mock_agent_class):
+    """Test that suite handles partial failures with concurrent execution."""
+    runner = RegressionRunner(
+        agent_class=mock_agent_class,
+        project_root="/tmp",
+        max_concurrency=2
+    )
+
+    # Create scenarios that will have mixed pass/fail results
+    scenarios = [
+        TestScenario(
+            name="Passing Scenario",
+            description="Should pass",
+            input_message="Input1",
+            expected_output="Output1",
+            metrics=["correctness"]
+        ),
+        TestScenario(
+            name="Failing Scenario",
+            description="Should fail",
+            input_message="Input2",
+            expected_output="Output2",
+            metrics=["correctness"]
+        )
+    ]
+
+    # Mock judge responses
+    pass_response = {'correctness': {'score': 8.5, 'explanation': 'Good'}}
+    fail_response = {'correctness': {'score': 5.0, 'explanation': 'Poor'}}
+
+    mock_subject = AsyncMock()
+    mock_subject.initialize = AsyncMock()
+    # Return same response for both invocations
+    mock_subject.ainvoke.side_effect = [
+        {'content': [{'text': 'Response1'}]},
+        {'content': [{'text': 'Response2'}]}
+    ]
+
+    mock_judge = AsyncMock()
+    mock_judge.initialize = AsyncMock()
+    # Return different judge responses
+    mock_judge.ainvoke.side_effect = [
+        {'content': [{'text': json.dumps(pass_response)}]},
+        {'content': [{'text': json.dumps(fail_response)}]}
+    ]
+
+    # Side effect: judge, subject, judge (reused), subject (reused)
+    mock_agent_class.side_effect = [mock_judge, mock_subject]
+
+    # Manually call run_suite instead of full runner to avoid filesystem
+    evaluator = AgentEvaluator(
+        agent_class=mock_agent_class,
+        project_root="/tmp",
+        max_concurrency=2
+    )
+
+    results = await evaluator.run_suite(scenarios)
+
+    # Check results
+    assert len(results) == 2
+    assert results[0]['passed'] is True
+    assert results[1]['passed'] is False
+    assert results[0]['score'] == 8.5
+    assert results[1]['score'] == 5.0

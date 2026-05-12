@@ -60,6 +60,12 @@ class HtmlReporter:
         total_count = len(results)
         pass_rate = (passed_count / total_count * 100) if total_count > 0 else 0
 
+        # Calculate timing statistics
+        total_duration_ms = sum(r.get('duration_ms', 0) for r in results)
+        avg_duration_ms = total_duration_ms / total_count if total_count > 0 else 0
+        min_duration_ms = min((r.get('duration_ms', 0) for r in results), default=0)
+        max_duration_ms = max((r.get('duration_ms', 0) for r in results), default=0)
+
         html_content = f"""
         <!DOCTYPE html>
         <html lang="en">
@@ -99,6 +105,10 @@ class HtmlReporter:
                 .markdown-content pre {{ background-color: #f0f0f0; padding: 10px; border-radius: 4px; overflow-x: auto; }}
                 .markdown-content ul, .markdown-content ol {{ padding-left: 20px; margin-bottom: 10px; }}
                 .markdown-content blockquote {{ border-left: 4px solid #ddd; padding-left: 10px; color: #666; margin: 10px 0; }}
+                .timing-summary {{ display: flex; gap: 15px; margin-top: 20px; padding: 15px; background-color: #e8f4f8; border-radius: 6px; border-left: 4px solid #007bff; }}
+                .timing-item {{ flex: 1; }}
+                .timing-label {{ color: #555; font-size: 12px; font-weight: 600; text-transform: uppercase; }}
+                .timing-value {{ color: #007bff; font-size: 18px; font-weight: bold; margin-top: 5px; }}
             </style>
             <script>
                 function toggleDetails(id) {{
@@ -138,6 +148,25 @@ class HtmlReporter:
                     </div>
                 </div>
 
+                <div class="timing-summary">
+                    <div class="timing-item">
+                        <div class="timing-label">Total Duration</div>
+                        <div class="timing-value">{total_duration_ms/1000:.2f}s</div>
+                    </div>
+                    <div class="timing-item">
+                        <div class="timing-label">Average Duration</div>
+                        <div class="timing-value">{avg_duration_ms:.0f}ms</div>
+                    </div>
+                    <div class="timing-item">
+                        <div class="timing-label">Min Duration</div>
+                        <div class="timing-value">{min_duration_ms:.0f}ms</div>
+                    </div>
+                    <div class="timing-item">
+                        <div class="timing-label">Max Duration</div>
+                        <div class="timing-value">{max_duration_ms:.0f}ms</div>
+                    </div>
+                </div>
+
                 <table>
                     <thead>
                         <tr>
@@ -147,6 +176,7 @@ class HtmlReporter:
                             <th>Model</th>
                             <th>Status</th>
                             <th>Score</th>
+                            <th>Duration</th>
                             <th>Metrics</th>
                             <th>Actions</th>
                         </tr>
@@ -160,13 +190,15 @@ class HtmlReporter:
             score = f"{res.get('score', 0):.1f}"
             agent_name = res.get('agent_name', 'Unknown')
             model_id = res.get('model_id', 'Unknown')
-            
+            duration_ms = res.get('duration_ms', 0)
+            duration_text = f"{duration_ms:.0f}ms"
+
             # Format metrics for display
             metrics_html = ""
             if 'metrics' in res:
                 for m_name, m_data in res['metrics'].items():
                     metrics_html += f'<span class="metric-badge">{m_name}: <span class="metric-score">{m_data["score"]}</span></span>'
-            
+
             # Convert actual_output from markdown to HTML
             actual_output = res.get('actual_output', '')
             try:
@@ -183,6 +215,7 @@ class HtmlReporter:
                             <td><span class="model-id">{model_id}</span></td>
                             <td><span class="status-badge {status_class}">{status_text}</span></td>
                             <td>{score}/10</td>
+                            <td>{duration_text}</td>
                             <td>{metrics_html}</td>
                             <td><button class="toggle-btn" onclick="toggleDetails({i})">View Details</button></td>
                         </tr>
@@ -200,7 +233,12 @@ class HtmlReporter:
                                     
                                     <strong>Explanation:</strong>
                                     <pre>{res.get('explanation', '')}</pre>
-                                    
+
+                                    <strong>Timing Breakdown:</strong>
+                                    <pre>Total Duration: {res.get('duration_ms', 0):.0f}ms
+Agent Invocation: {res.get('agent_invocation_ms', 0):.0f}ms
+Judge Invocation: {res.get('judge_invocation_ms', 0):.0f}ms</pre>
+
                                     <strong>Token Usage:</strong>
                                     <pre>{json.dumps(res.get('token_usage') or {}, indent=2)}</pre>
 
