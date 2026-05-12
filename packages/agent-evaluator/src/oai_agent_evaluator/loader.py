@@ -1,8 +1,85 @@
 import yaml
 import os
+import re
 from typing import List, Dict, Any
 from pathlib import Path
 from .scenario import TestScenario
+
+
+def _validate_scenario_item(item: Dict[str, Any], file_path: str, line_number: int = 0) -> None:
+    """
+    Validate a scenario item before creating a TestScenario.
+
+    Args:
+        item: The scenario dict to validate.
+        file_path: Path to the YAML file (for error messages).
+        line_number: Line number in YAML (for error messages).
+
+    Raises:
+        ValueError: If validation fails.
+        TypeError: If field types are invalid.
+    """
+    location = f"{file_path}" + (f" (line ~{line_number})" if line_number else "")
+
+    # Validate required fields
+    if 'name' not in item:
+        raise ValueError(f"Scenario missing required field 'name' at {location}")
+    if not isinstance(item['name'], str) or not item['name'].strip():
+        raise ValueError(f"Scenario 'name' must be non-empty string at {location}")
+
+    if 'input_message' not in item:
+        raise ValueError(f"Scenario '{item.get('name', 'unknown')}' missing required field 'input_message' at {location}")
+    if not isinstance(item['input_message'], str) or not item['input_message'].strip():
+        raise ValueError(f"Scenario '{item.get('name', 'unknown')}' 'input_message' must be non-empty string at {location}")
+
+    # Validate evaluation fields (at least one is required - checked in TestScenario.__post_init__)
+    if 'expected_output' in item and item['expected_output'] is not None and not isinstance(item['expected_output'], str):
+        raise TypeError(f"Scenario '{item['name']}' 'expected_output' must be string or None at {location}")
+    if 'evaluation_criteria' in item and item['evaluation_criteria'] is not None and not isinstance(item['evaluation_criteria'], str):
+        raise TypeError(f"Scenario '{item['name']}' 'evaluation_criteria' must be string or None at {location}")
+
+    # Validate metrics if provided
+    if 'metrics' in item:
+        if not isinstance(item['metrics'], list):
+            raise TypeError(f"Scenario '{item['name']}' 'metrics' must be a list at {location}")
+        if not item['metrics']:
+            raise ValueError(f"Scenario '{item['name']}' 'metrics' cannot be empty list at {location}")
+        for metric in item['metrics']:
+            if not isinstance(metric, str) or not metric.strip():
+                raise ValueError(f"Scenario '{item['name']}' metrics must be non-empty strings at {location}")
+
+    # Validate optional fields
+    if 'agent_config' in item and item['agent_config'] is not None:
+        if not isinstance(item['agent_config'], (dict, str)):
+            raise TypeError(f"Scenario '{item['name']}' 'agent_config' must be dict or string path at {location}")
+
+    if 'config_overrides' in item and item['config_overrides'] is not None:
+        if not isinstance(item['config_overrides'], dict):
+            raise TypeError(f"Scenario '{item['name']}' 'config_overrides' must be dict or None at {location}")
+
+    if 'agent_class' in item and item['agent_class'] is not None:
+        if not isinstance(item['agent_class'], str):
+            raise TypeError(f"Scenario '{item['name']}' 'agent_class' must be string path at {location}")
+        # Validate Python path format (module.ClassName)
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_.]*$', item['agent_class']):
+            raise ValueError(f"Scenario '{item['name']}' 'agent_class' invalid Python path at {location}")
+
+    if 'agent_model_config' in item and item['agent_model_config'] is not None:
+        if not isinstance(item['agent_model_config'], (dict, list)):
+            raise TypeError(f"Scenario '{item['name']}' 'agent_model_config' must be dict, list, or None at {location}")
+        if isinstance(item['agent_model_config'], list) and not item['agent_model_config']:
+            raise ValueError(f"Scenario '{item['name']}' 'agent_model_config' list cannot be empty at {location}")
+
+    if 'judge_model_id' in item and item['judge_model_id'] is not None:
+        if not isinstance(item['judge_model_id'], str) or not item['judge_model_id'].strip():
+            raise ValueError(f"Scenario '{item['name']}' 'judge_model_id' must be non-empty string or None at {location}")
+
+    if 'pass_threshold' in item and item['pass_threshold'] is not None:
+        if not isinstance(item['pass_threshold'], (int, float)):
+            raise TypeError(f"Scenario '{item['name']}' 'pass_threshold' must be number or None at {location}")
+        if not 0 <= item['pass_threshold'] <= 10:
+            raise ValueError(f"Scenario '{item['name']}' 'pass_threshold' must be between 0 and 10 at {location}")
+
 
 class ScenarioLoader:
     """Loads test scenarios from YAML files."""
@@ -118,6 +195,9 @@ class ScenarioLoader:
             for item in items:
                 if not isinstance(item, dict):
                     continue
+
+                # Validate scenario structure and required fields
+                _validate_scenario_item(item, file_path)
 
                 # Determine agent config: item specific > global doc level > empty
                 agent_config = item.get('agent_config', global_agent_config)

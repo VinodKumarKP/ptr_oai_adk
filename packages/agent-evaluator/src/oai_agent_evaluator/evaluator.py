@@ -3,10 +3,33 @@ import logging
 import re
 import asyncio
 import time
-from typing import Dict, Any, List, Optional, Type, Callable
+from typing import Dict, Any, List, Optional, Type, Callable, Protocol, runtime_checkable
 
 from .scenario import TestScenario
 from .macros import MacroProcessor
+
+
+@runtime_checkable
+class Agent(Protocol):
+    """Protocol defining the interface expected from agent implementations."""
+
+    async def initialize(self) -> None:
+        """Initialize the agent for use."""
+        ...
+
+    async def ainvoke(
+        self, user_message: str, config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Invoke the agent with a user message.
+
+        Args:
+            user_message: The user's input message.
+            config: Optional configuration overrides.
+
+        Returns:
+            Response dict with structure: {'content': [...], 'model': {...}, ...}
+        """
+        ...
 
 
 class AgentEvaluator:
@@ -57,23 +80,29 @@ class AgentEvaluator:
         self.judge_agent = None
         self._judge_lock = asyncio.Lock()
 
-    async def _initialize_judge_agent(self, scenario: Optional[TestScenario] = None):
-        """Initializes the judge agent if not already initialized."""
+    async def _initialize_judge_agent(self, scenario: Optional[TestScenario] = None) -> Agent:
+        """Initializes the judge agent if not already initialized.
+
+        Ensures atomic initialization with proper locking to prevent race conditions
+        in concurrent scenarios. Caches default judge and creates scenario-specific
+        judges on-demand without caching.
+        """
         target_judge_model_id = self.judge_model_id
         if scenario and scenario.judge_model_id:
             target_judge_model_id = scenario.judge_model_id
-            
-        # If we already have a judge agent, check if it matches the requested model
-        # For now, let's just re-initialize if a scenario-specific ID is provided, or use the cached one if not.
-        
-        if self.judge_agent and (not scenario or not scenario.judge_model_id or scenario.judge_model_id == self.judge_model_id):
-            return
 
+        # Check if we can use cached default judge (atomic check with lock)
+        async with self._judge_lock:
+            if (self.judge_agent and
+                (not scenario or not scenario.judge_model_id or scenario.judge_model_id == self.judge_model_id)):
+                return self.judge_agent
+
+        # Need to create new judge (outside lock for initialization)
         # Check if the agent class is CrewAIAgent
         is_crewai = False
         class_name = getattr(self.agent_class, '__name__', '')
         module_name = getattr(self.agent_class, '__module__', '')
-        
+
         if 'CrewAIAgent' in class_name or 'crewai' in module_name.lower():
             is_crewai = True
 
@@ -138,17 +167,19 @@ class AgentEvaluator:
             agent_config=judge_config
         )
         await judge_agent.initialize()
-        
+
         # If this is the default judge (no scenario override), cache it
         if target_judge_model_id == self.judge_model_id:
             async with self._judge_lock:
-                self.judge_agent = judge_agent
-            return self.judge_agent
+                # Double-check in case another task initialized while we were creating
+                if self.judge_agent is None:
+                    self.judge_agent = judge_agent
+                return self.judge_agent
         else:
             # Return the specific judge for this scenario without caching it as the default
             return judge_agent
 
-    async def get_or_create_agent(self, scenario: TestScenario) -> Any:
+    async def get_or_create_agent(self, scenario: TestScenario) -> Agent:
         """Retrieves an existing agent or creates/initializes a new one based on config."""
         # Create a unique key for the agent configuration
         config_str = json.dumps(scenario.agent_config, sort_keys=True)
@@ -275,8 +306,9 @@ class AgentEvaluator:
             if isinstance(response, dict) and 'token_usage' in response:
                 token_usage = response.get('token_usage')
 
-            # Sanitize output for JSON safety in prompt
-            actual_output = actual_output.replace("\n", " ").replace('"', "'")
+            # Escape output for safe inclusion in judge prompt (preserves original for results)
+            # Use JSON encoding to safely escape special characters, then remove outer quotes
+            actual_output_escaped = json.dumps(actual_output)[1:-1]
 
             # 3. Evaluate all metrics in a single call with timing
             judge_start = time.time()
@@ -284,7 +316,7 @@ class AgentEvaluator:
                 judge_agent=judge_agent,
                 metrics=scenario.metrics,
                 input_message=processed_input,
-                actual_output=actual_output,
+                actual_output=actual_output_escaped,
                 expected_output=processed_expected_output,
                 criteria=scenario.evaluation_criteria
             )
@@ -349,7 +381,7 @@ class AgentEvaluator:
 
     async def _evaluate_all_metrics(
             self,
-            judge_agent: Any,
+            judge_agent: Agent,
             metrics: List[str],
             input_message: str,
             actual_output: str,
