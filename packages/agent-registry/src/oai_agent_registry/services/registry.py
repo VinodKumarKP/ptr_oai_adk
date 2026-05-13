@@ -537,6 +537,9 @@ class AgentRegistry:
 
         logger.info(f"Executing lifecycle action '{action}' for agent '{agent_name}' using deployer '{agent_config.deployment_mode}'")
 
+        # Capture the execute action into the database
+        await self.db_logger.log_agent_action(agent_name, action, version)
+
         if deployer:
             try:
                 if action in ["update", "upgrade", "downgrade"]:
@@ -794,7 +797,31 @@ class AgentRegistry:
 
         body = await request.body()
 
-        if "stream" in path:
+        # Detect streaming from path, query, headers, or JSON-RPC method
+        accept_header = request.headers.get("accept", "").lower()
+        is_streaming = (
+            "stream" in path.lower() or
+            "stream" in request.url.query.lower() or
+            "sendmessagestream" in path.lower() or
+            "event-stream" in accept_header or
+            "x-ndjson" in accept_header
+        )
+
+        # Check JSON-RPC method for streaming indicator
+        if not is_streaming and body and "application/json" in request.headers.get("content-type", "").lower():
+            try:
+                body_json = json.loads(body)
+                # Check if it's a JSON-RPC request with streaming method
+                if isinstance(body_json, dict) and "method" in body_json:
+                    method = body_json.get("method", "").lower()
+                    if "stream" in method:
+                        is_streaming = True
+                        logger.info(f"[STREAMING] Detected JSON-RPC streaming method: {method}")
+            except (json.JSONDecodeError, Exception):
+                pass
+
+        if is_streaming:
+            logger.info(f"[STREAMING] Detected streaming request: {request.method} {path} (Accept: {accept_header})")
             return await self._proxy_streaming_request(target_url, request.method, headers, body, agent_config.timeout)
 
         return await self._proxy_regular_request(agent_name, target_url, request.method, headers, body,
@@ -846,16 +873,31 @@ class AgentRegistry:
     @staticmethod
     async def _proxy_streaming_request(url: str, method: str, headers: dict, body: bytes,
                                        timeout: int) -> StreamingResponse:
+        logger.info(f"[STREAM PROXY] Starting stream to {url}")
+
         async def stream_generator():
+            chunk_count = 0
             try:
-                async with httpx.AsyncClient(timeout=timeout) as stream_client:
+                async with httpx.AsyncClient(timeout=timeout, limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)) as stream_client:
                     async with stream_client.stream(method, url, headers=headers, content=body) as response:
+                        logger.info(f"[STREAM PROXY] Got response: {response.status_code}, Content-Type: {response.headers.get('content-type')}")
+                        # Stream all chunks immediately without buffering
                         async for chunk in response.aiter_bytes():
-                            yield chunk
+                            if chunk:
+                                chunk_count += 1
+                                logger.debug(f"[STREAM PROXY] Yielding chunk {chunk_count} ({len(chunk)} bytes)")
+                                yield chunk
+                        logger.info(f"[STREAM PROXY] Stream completed with {chunk_count} chunks")
             except Exception as e:
+                logger.error(f"[STREAM PROXY] Streaming error after {chunk_count} chunks: {e}", exc_info=True)
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-        return StreamingResponse(stream_generator(), media_type="text/event-stream")
+        # Pass through original content-type if streaming, default to event-stream
+        return StreamingResponse(
+            stream_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
+        )
 
     @staticmethod
     def _clean_response_headers(headers: httpx.Headers) -> dict:

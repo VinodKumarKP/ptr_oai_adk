@@ -77,6 +77,8 @@ class PostgresBackend(DatabaseBackend):
     AGENT_REGISTRY_SELECT_ALL = "SELECT * FROM agent_registry"
     AGENT_REGISTRY_SELECT_ACTIVE_DYNAMIC = "SELECT * FROM agent_registry WHERE active = TRUE AND registered_via = 'dynamic'"
 
+    AGENT_ACTION_INSERT = "INSERT INTO agent_actions (agent_name, action, version, created_at) VALUES ($1, $2, $3, $4)"
+
     PLACEHOLDER = "$"
 
     def __init__(self) -> None:
@@ -173,8 +175,18 @@ class PostgresBackend(DatabaseBackend):
         migrate_ddl_current_version = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS current_version VARCHAR(255);"
         migrate_ddl_available_versions = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS available_versions TEXT;"
         migrate_ddl_deployment_mode = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS deployment_mode VARCHAR(50) DEFAULT 'docker';"
+        agent_actions_ddl = """
+            CREATE TABLE IF NOT EXISTS agent_actions (
+                id                 SERIAL PRIMARY KEY,
+                agent_name         VARCHAR(255),
+                action             VARCHAR(255),
+                version            VARCHAR(255),
+                created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """
         async with self._pool.acquire() as conn:
             await conn.execute(agent_registry_ddl)
+            await conn.execute(agent_actions_ddl)
             try:
                 await conn.execute(migrate_rename_source)
             except Exception:
@@ -215,6 +227,8 @@ class SQLiteBackend(DatabaseBackend):
     AGENT_REGISTRY_SELECT_ONE = "SELECT * FROM agent_registry WHERE agent_name = ?"
     AGENT_REGISTRY_SELECT_ALL = "SELECT * FROM agent_registry"
     AGENT_REGISTRY_SELECT_ACTIVE_DYNAMIC = "SELECT * FROM agent_registry WHERE active = 1 AND registered_via = 'dynamic'"
+
+    AGENT_ACTION_INSERT = "INSERT INTO agent_actions (agent_name, action, version, created_at) VALUES (?, ?, ?, ?)"
 
     PLACEHOLDER = "?"
 
@@ -307,9 +321,19 @@ class SQLiteBackend(DatabaseBackend):
         migrate_ddl_current_version = "ALTER TABLE agent_registry ADD COLUMN current_version TEXT"
         migrate_ddl_available_versions = "ALTER TABLE agent_registry ADD COLUMN available_versions TEXT"
         migrate_ddl_deployment_mode = "ALTER TABLE agent_registry ADD COLUMN deployment_mode TEXT DEFAULT 'docker'"
+        agent_actions_ddl = """
+            CREATE TABLE IF NOT EXISTS agent_actions (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_name         TEXT,
+                action             TEXT,
+                version            TEXT,
+                created_at         DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        """
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON;")
             await db.execute(agent_registry_ddl)
+            await db.execute(agent_actions_ddl)
             try:
                 await db.execute(migrate_rename_source)
                 await db.commit()
@@ -378,6 +402,17 @@ class RegistryDatabaseLogger:
                 return
         if self.logger: self.logger.warning("All registry database backends failed to initialise.")
         self.is_active = False
+
+    async def log_agent_action(self, agent_name: str, action: str, version: Optional[str] = None) -> None:
+        if not self._ready(): return
+        try:
+            now = datetime.now(timezone.utc)
+            params = (agent_name, action, version, now)
+            await self._backend.execute(self._backend.AGENT_ACTION_INSERT, params)
+            if self.logger: self.logger.debug(f"Logged agent action: {agent_name} -> {action}")
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to log agent action for {agent_name}: {exc}")
+            raise
 
     async def log_agent_registration(
             self,
