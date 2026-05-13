@@ -540,14 +540,33 @@ class BaseToolRegistry(ABC):
     def _load_function_tool(self, tool_name: str, tool_config: Dict[str, Any]) -> None:
         """Load a custom function-based tool.
 
+        This feature is not yet implemented. Use module-based tools instead.
+
         Args:
             tool_name: Name of the tool
             tool_config: Configuration containing function reference
+
+        Raises:
+            NotImplementedError: Function-based tools are not supported. Use module-based
+                tools with 'module' and 'function_list' config instead.
+
+        Example:
+            Instead of (not supported):
+                tools:
+                  my_tool:
+                    function: my_module.my_function
+
+            Use this (supported):
+                tools:
+                  my_tool:
+                    module: my_module
+                    function_list:
+                      - my_function
         """
-        func_name = tool_config['function']
-        self.logger.warning(
-            f"Custom function tools not yet implemented: {func_name}\n"
-            f"Consider using module-based tools instead."
+        func_name = tool_config.get('function', 'unknown')
+        raise NotImplementedError(
+            f"Function-based tools are not supported: '{func_name}'. "
+            f"Use module-based tools instead with 'module' and 'function_list' configuration."
         )
 
     def get_tools_for_agent(self, tool_names: Any) -> List[Any]:

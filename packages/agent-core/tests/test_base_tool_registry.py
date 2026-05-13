@@ -586,10 +586,9 @@ class TestLoadFunctionTool:
     
     def test_load_function_tool_not_implemented(self, registry):
         config = {"function": "test_function"}
-        
-        registry._load_function_tool("test_tool", config)
-        
-        assert "Custom function tools not yet implemented" in registry.logger.warning_calls[0]
+
+        with pytest.raises(NotImplementedError, match="Function-based tools are not supported"):
+            registry._load_function_tool("test_tool", config)
 
 
 class TestGetToolsForAgent:

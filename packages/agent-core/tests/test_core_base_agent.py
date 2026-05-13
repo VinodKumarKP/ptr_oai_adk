@@ -42,12 +42,13 @@ def mock_langfuse():
 def test_init(mock_config_manager, mock_model_manager, mock_langfuse):
     agent = ConcreteAgent(
         agent_name="test_agent",
+        agent_type="custom",
         model_manager=mock_model_manager
     )
-    
+
     assert agent.agent_name == "test_agent"
     assert agent.llm == "mock_llm"
-    assert agent.agent_type == "test_agent"
+    assert agent.agent_type == "custom"
     assert agent.is_initialized is False
     mock_config_manager.load_agent_config.assert_called_with("test_agent")
 
@@ -87,14 +88,14 @@ def test_update_config(mock_config_manager, mock_model_manager):
 
 def test_validate_config_valid(mock_config_manager, mock_model_manager):
     agent = ConcreteAgent("test", model_manager=mock_model_manager)
-    agent.agent_config = {'type': 'test'}
+    agent.agent_config = {'type': 'custom', 'model': {'name': 'gpt-4'}}
     agent.validate_config() # Should not raise
 
 def test_validate_config_invalid(mock_config_manager, mock_model_manager):
     agent = ConcreteAgent("test", model_manager=mock_model_manager)
     agent.agent_config = {} # Missing type
-    
-    with pytest.raises(ValueError, match="Missing required field"):
+
+    with pytest.raises(ValueError, match="Configuration validation failed"):
         agent.validate_config()
 
 @pytest.mark.asyncio
