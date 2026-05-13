@@ -3,11 +3,12 @@ import os
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
-from oai_mcp_registry.services.registry import MCPRegistry
 from oai_mcp_registry.dependencies import get_registry
 from oai_mcp_registry.models import ServerRegistration, ServerDeregistration, McpServerLifecycleAction
+from oai_mcp_registry.services.registry import MCPRegistry
 
 router = APIRouter()
+
 
 @router.get("/")
 async def root():
@@ -24,6 +25,7 @@ async def root():
     }
     return JSONResponse(info)
 
+
 @router.get("/health")
 async def health_check(registry: MCPRegistry = Depends(get_registry)):
     return {
@@ -31,6 +33,7 @@ async def health_check(registry: MCPRegistry = Depends(get_registry)):
         "configured_servers": len(registry.sub_apps),
         "host_ip": registry.public_ip
     }
+
 
 @router.get("/info")
 async def get_config(registry: MCPRegistry = Depends(get_registry)):
@@ -67,26 +70,32 @@ async def get_config(registry: MCPRegistry = Depends(get_registry)):
         "mcp_servers": servers_info
     }
 
+
 @router.post("/reload-config")
 async def reload_config(registry: MCPRegistry = Depends(get_registry)):
     return await registry.reload_config()
 
+
 @router.post("/register")
-async def register_server(request: Request, server_registration: ServerRegistration, registry: MCPRegistry = Depends(get_registry)):
+async def register_server(request: Request, server_registration: ServerRegistration,
+                          stream_output: bool = False,
+                          registry: MCPRegistry = Depends(get_registry)):
     """Registers a new MCP server."""
-    return await registry.register_server(request.app, server_registration)
+    return await registry.register_server(request.app, server_registration, stream_output=stream_output)
+
 
 @router.post("/deregister")
 async def deregister_server(server_deregistration: ServerDeregistration, registry: MCPRegistry = Depends(get_registry)):
     """Deregisters an MCP server."""
     return await registry.deregister_server(server_deregistration)
 
+
 @router.post("/lifecycle/{mcp_server_name}")
 async def execute_lifecycle_action(
-    mcp_server_name: str,
-    action_payload: McpServerLifecycleAction,
-    registry: MCPRegistry = Depends(get_registry)
+        mcp_server_name: str,
+        action_payload: McpServerLifecycleAction,
+        registry: MCPRegistry = Depends(get_registry)
 ):
     """Executes a lifecycle action on a mcp server."""
-    return await registry.execute_lifecycle_action(mcp_server_name, action_payload.action, action_payload.version, action_payload.stream_output)
-
+    return await registry.execute_lifecycle_action(mcp_server_name, action_payload.action, action_payload.version,
+                                                   action_payload.stream_output)

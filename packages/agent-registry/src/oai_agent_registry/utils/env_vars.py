@@ -34,6 +34,8 @@ def get_common_agent_env(
         "DB_POOL_MIN_SIZE": "1",
         "AGENT_BASE_URL": base_url,
         "AGENT_REGISTRY_URL": local_registry_url,
+        'FORCE_AUTH': 'false',
+        'TRUSTED_CIDRS': "127.0.0.0/8,::1/128,172.16.0.0/12"
     }
 
     # Apply overrides (user-supplied variables)
