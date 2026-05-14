@@ -1,10 +1,11 @@
 import os
+from typing import Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import JSONResponse
 
 from oai_mcp_registry.dependencies import get_registry
-from oai_mcp_registry.models import ServerRegistration, ServerDeregistration, McpServerLifecycleAction
+from oai_mcp_registry.models import ServerRegistration, ServerDeregistration, McpServerLifecycleAction, ServerAction, ServerActionHistory
 from oai_mcp_registry.services.registry import MCPRegistry
 
 router = APIRouter()
@@ -21,6 +22,8 @@ async def root():
             "POST /reload-config": "Reload configuration",
             "POST /register": "Register a new MCP server dynamically",
             "POST /deregister": "Deregister an MCP server",
+            "POST /lifecycle/{mcp_server_name}": "Execute a lifecycle action on an MCP server",
+            "GET /history/{mcp_server_name}": "Get action history for an MCP server",
         },
     }
     return JSONResponse(info)
@@ -99,3 +102,36 @@ async def execute_lifecycle_action(
     """Executes a lifecycle action on a mcp server."""
     return await registry.execute_lifecycle_action(mcp_server_name, action_payload.action, action_payload.version,
                                                    action_payload.stream_output)
+
+
+@router.get("/history/{mcp_server_name}", response_model=ServerActionHistory)
+async def get_server_history(
+    mcp_server_name: str,
+    action: Optional[str] = None,
+    limit: int = 100,
+    registry: MCPRegistry = Depends(get_registry)
+):
+    """
+    Retrieves action history for a specific MCP server.
+
+    Query Parameters:
+    - action: Optional action type to filter by (e.g., 'start', 'stop', 'restart')
+    - limit: Maximum number of actions to return (default: 100)
+
+    Returns:
+    - ServerActionHistory with server_name, total_count, and list of actions
+    """
+    try:
+        actions = await registry.db_logger.get_server_actions(mcp_server_name, action, limit)
+        count = await registry.db_logger.get_server_action_count(mcp_server_name)
+
+        # Convert raw action dicts to ServerAction models
+        action_objects = [ServerAction(**a) for a in actions]
+
+        return ServerActionHistory(
+            server_name=mcp_server_name,
+            total_count=count,
+            actions=action_objects
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve action history: {str(e)}")

@@ -76,6 +76,11 @@ class PostgresBackend(DatabaseBackend):
     MCP_REGISTRY_SELECT_ALL = "SELECT * FROM mcp_registry"
     MCP_REGISTRY_SELECT_ACTIVE_DYNAMIC = "SELECT * FROM mcp_registry WHERE active = TRUE AND registered_via = 'dynamic'"
 
+    SERVER_ACTION_INSERT = "INSERT INTO server_actions (server_name, action, version, created_at) VALUES ($1, $2, $3, $4)"
+    SERVER_ACTION_SELECT_ALL = "SELECT id, server_name, action, version, created_at FROM server_actions WHERE server_name = $1 ORDER BY created_at DESC"
+    SERVER_ACTION_SELECT_FILTERED = "SELECT id, server_name, action, version, created_at FROM server_actions WHERE server_name = $1 AND action = $2 ORDER BY created_at DESC"
+    SERVER_ACTION_COUNT = "SELECT COUNT(*) as count FROM server_actions WHERE server_name = $1"
+
     PLACEHOLDER = "$"
 
     def __init__(self) -> None:
@@ -161,6 +166,15 @@ class PostgresBackend(DatabaseBackend):
                 updated_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         """
+        server_actions_ddl = """
+            CREATE TABLE IF NOT EXISTS server_actions (
+                id                 SERIAL PRIMARY KEY,
+                server_name        VARCHAR(255),
+                action             VARCHAR(255),
+                version            VARCHAR(255),
+                created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """
         migrations = [
             "ALTER TABLE mcp_registry ADD COLUMN IF NOT EXISTS source VARCHAR(255);",
             "ALTER TABLE mcp_registry ADD COLUMN IF NOT EXISTS tags TEXT;",
@@ -170,6 +184,7 @@ class PostgresBackend(DatabaseBackend):
         ]
         async with self._pool.acquire() as conn:
             await conn.execute(mcp_registry_ddl)
+            await conn.execute(server_actions_ddl)
             for migration in migrations:
                 try:
                     await conn.execute(migration)
@@ -202,6 +217,11 @@ class SQLiteBackend(DatabaseBackend):
     MCP_REGISTRY_SELECT_ONE = "SELECT * FROM mcp_registry WHERE server_name = ?"
     MCP_REGISTRY_SELECT_ALL = "SELECT * FROM mcp_registry"
     MCP_REGISTRY_SELECT_ACTIVE_DYNAMIC = "SELECT * FROM mcp_registry WHERE active = 1 AND registered_via = 'dynamic'"
+
+    SERVER_ACTION_INSERT = "INSERT INTO server_actions (server_name, action, version, created_at) VALUES (?, ?, ?, ?)"
+    SERVER_ACTION_SELECT_ALL = "SELECT id, server_name, action, version, created_at FROM server_actions WHERE server_name = ? ORDER BY created_at DESC"
+    SERVER_ACTION_SELECT_FILTERED = "SELECT id, server_name, action, version, created_at FROM server_actions WHERE server_name = ? AND action = ? ORDER BY created_at DESC"
+    SERVER_ACTION_COUNT = "SELECT COUNT(*) as count FROM server_actions WHERE server_name = ?"
 
     PLACEHOLDER = "?"
 
@@ -283,6 +303,15 @@ class SQLiteBackend(DatabaseBackend):
                 updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """
+        server_actions_ddl = """
+            CREATE TABLE IF NOT EXISTS server_actions (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                server_name        TEXT,
+                action             TEXT,
+                version            TEXT,
+                created_at         DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        """
         migrations = [
             "ALTER TABLE mcp_registry ADD COLUMN source TEXT;",
             "ALTER TABLE mcp_registry ADD COLUMN tags TEXT;",
@@ -293,6 +322,7 @@ class SQLiteBackend(DatabaseBackend):
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON;")
             await db.execute(mcp_registry_ddl)
+            await db.execute(server_actions_ddl)
             for migration in migrations:
                 try:
                     await db.execute(migration)
@@ -398,6 +428,67 @@ class RegistryDatabaseLogger:
         except Exception as exc:
             if self.logger: self.logger.error(f"Failed to retrieve active dynamic MCP servers: {exc}")
             return []
+
+    async def log_server_action(self, server_name: str, action: str, version: Optional[str] = None) -> None:
+        if not self._ready(): return
+        try:
+            now = datetime.now(timezone.utc)
+            params = (server_name, action, version, now)
+            await self._backend.execute(self._backend.SERVER_ACTION_INSERT, params)
+            if self.logger: self.logger.debug(f"Logged server action: {server_name} -> {action}")
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to log server action for {server_name}: {exc}")
+            raise
+
+    async def get_server_actions(self, server_name: str, action_type: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Retrieve server actions from the database.
+
+        Args:
+            server_name: Name of the server to query
+            action_type: Optional action type to filter by (e.g., 'start', 'stop', 'restart')
+            limit: Maximum number of actions to return (default 100)
+
+        Returns:
+            List of action records with id, server_name, action, version, created_at
+        """
+        if not self._ready(): return []
+        try:
+            if action_type:
+                rows = await self._backend.fetch(self._backend.SERVER_ACTION_SELECT_FILTERED, (server_name, action_type))
+            else:
+                rows = await self._backend.fetch(self._backend.SERVER_ACTION_SELECT_ALL, (server_name,))
+
+            # Apply limit after fetching
+            result = rows[:limit] if limit else rows
+
+            # Convert timestamps to ISO format
+            for row in result:
+                if 'created_at' in row:
+                    row['created_at'] = self._isoformat(row['created_at'])
+
+            return result
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to retrieve server actions for {server_name}: {exc}")
+            return []
+
+    async def get_server_action_count(self, server_name: str) -> int:
+        """
+        Get total count of actions for a server.
+
+        Args:
+            server_name: Name of the server to query
+
+        Returns:
+            Total count of actions recorded for the server
+        """
+        if not self._ready(): return 0
+        try:
+            row = await self._backend.fetch_one(self._backend.SERVER_ACTION_COUNT, (server_name,))
+            return row['count'] if row and 'count' in row else 0
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to retrieve action count for {server_name}: {exc}")
+            return 0
 
     async def close(self) -> None:
         if self._backend is not None:

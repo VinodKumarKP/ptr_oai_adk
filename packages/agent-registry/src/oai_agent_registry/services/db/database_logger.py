@@ -78,6 +78,9 @@ class PostgresBackend(DatabaseBackend):
     AGENT_REGISTRY_SELECT_ACTIVE_DYNAMIC = "SELECT * FROM agent_registry WHERE active = TRUE AND registered_via = 'dynamic'"
 
     AGENT_ACTION_INSERT = "INSERT INTO agent_actions (agent_name, action, version, created_at) VALUES ($1, $2, $3, $4)"
+    AGENT_ACTION_SELECT_ALL = "SELECT id, agent_name, action, version, created_at FROM agent_actions WHERE agent_name = $1 ORDER BY created_at DESC"
+    AGENT_ACTION_SELECT_FILTERED = "SELECT id, agent_name, action, version, created_at FROM agent_actions WHERE agent_name = $1 AND action = $2 ORDER BY created_at DESC"
+    AGENT_ACTION_COUNT = "SELECT COUNT(*) as count FROM agent_actions WHERE agent_name = $1"
 
     PLACEHOLDER = "$"
 
@@ -229,6 +232,9 @@ class SQLiteBackend(DatabaseBackend):
     AGENT_REGISTRY_SELECT_ACTIVE_DYNAMIC = "SELECT * FROM agent_registry WHERE active = 1 AND registered_via = 'dynamic'"
 
     AGENT_ACTION_INSERT = "INSERT INTO agent_actions (agent_name, action, version, created_at) VALUES (?, ?, ?, ?)"
+    AGENT_ACTION_SELECT_ALL = "SELECT id, agent_name, action, version, created_at FROM agent_actions WHERE agent_name = ? ORDER BY created_at DESC"
+    AGENT_ACTION_SELECT_FILTERED = "SELECT id, agent_name, action, version, created_at FROM agent_actions WHERE agent_name = ? AND action = ? ORDER BY created_at DESC"
+    AGENT_ACTION_COUNT = "SELECT COUNT(*) as count FROM agent_actions WHERE agent_name = ?"
 
     PLACEHOLDER = "?"
 
@@ -492,6 +498,56 @@ class RegistryDatabaseLogger:
         except Exception as exc:
             if self.logger: self.logger.error(f"Failed to retrieve active dynamic agents: {exc}")
             return []
+
+    async def get_agent_actions(self, agent_name: str, action_type: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Retrieve agent actions from the database.
+
+        Args:
+            agent_name: Name of the agent to query
+            action_type: Optional action type to filter by (e.g., 'start', 'stop', 'rebuild')
+            limit: Maximum number of actions to return (default 100)
+
+        Returns:
+            List of action records with id, agent_name, action, version, created_at
+        """
+        if not self._ready(): return []
+        try:
+            if action_type:
+                rows = await self._backend.fetch(self._backend.AGENT_ACTION_SELECT_FILTERED, (agent_name, action_type))
+            else:
+                rows = await self._backend.fetch(self._backend.AGENT_ACTION_SELECT_ALL, (agent_name,))
+
+            # Apply limit after fetching
+            result = rows[:limit] if limit else rows
+
+            # Convert timestamps to ISO format
+            for row in result:
+                if 'created_at' in row:
+                    row['created_at'] = self._isoformat(row['created_at'])
+
+            return result
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to retrieve agent actions for {agent_name}: {exc}")
+            return []
+
+    async def get_agent_action_count(self, agent_name: str) -> int:
+        """
+        Get total count of actions for an agent.
+
+        Args:
+            agent_name: Name of the agent to query
+
+        Returns:
+            Total count of actions recorded for the agent
+        """
+        if not self._ready(): return 0
+        try:
+            row = await self._backend.fetch_one(self._backend.AGENT_ACTION_COUNT, (agent_name,))
+            return row['count'] if row and 'count' in row else 0
+        except Exception as exc:
+            if self.logger: self.logger.error(f"Failed to retrieve action count for {agent_name}: {exc}")
+            return 0
 
     async def close(self) -> None:
         if self._backend is not None:

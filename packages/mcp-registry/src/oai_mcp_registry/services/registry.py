@@ -520,6 +520,10 @@ class MCPRegistry:
                     if stream_output:
                         _no_build = image_already_exists
 
+                        # Log the action before streaming
+                        current_version = getattr(self.config.servers.get(server_name), 'current_version', None) if server_name in self.config.servers else None
+                        await self.db_logger.log_server_action(server_name, action, current_version)
+
                         async def stream_generator():
                             try:
                                 yield f"data: Server '{server_name}' switching to version {version}...\n\n"
@@ -556,14 +560,23 @@ class MCPRegistry:
                             refresh_repo=not image_already_exists,
                             no_build=image_already_exists,
                         )
+                        # Log the action after non-streaming deployment
+                        current_version = getattr(self.config.servers.get(server_name), 'current_version', None) if server_name in self.config.servers else None
+                        await self.db_logger.log_server_action(server_name, action, current_version)
 
                 elif action == "stop":
                     deployer.stop_server(server_name)
                     self.config.servers[server_name].enabled = False
+                    # Log the stop action
+                    current_version = getattr(self.config.servers.get(server_name), 'current_version', None) if server_name in self.config.servers else None
+                    await self.db_logger.log_server_action(server_name, action, current_version)
 
                 elif action == "start":
                     deployer.start_server(server_name)
                     self.config.servers[server_name].enabled = True
+                    # Log the start action
+                    current_version = getattr(self.config.servers.get(server_name), 'current_version', None) if server_name in self.config.servers else None
+                    await self.db_logger.log_server_action(server_name, action, current_version)
 
                 elif action == "restart":
                     deployer.remove_server(server_name)
@@ -572,6 +585,9 @@ class MCPRegistry:
                     await asyncio.sleep(1)
                     deployer.start_server(server_name)
                     self.config.servers[server_name].enabled = True
+                    # Log the restart action
+                    current_version = getattr(self.config.servers.get(server_name), 'current_version', None) if server_name in self.config.servers else None
+                    await self.db_logger.log_server_action(server_name, action, current_version)
 
                 elif action == "delete":
                     deployer.remove_server(server_name)
@@ -581,7 +597,10 @@ class MCPRegistry:
                         del self.config.servers[server_name]
                     logger.info(f"Server '{server_name}' stopped and container removed.")
                     await self.db_logger.delete_server(server_name)
-                    
+
+                    # Log the delete action
+                    await self.db_logger.log_server_action(server_name, action, None)
+
                     # Ensure enabled property can't be fetched later
                     return JSONResponse({
                         "message": f"Lifecycle action '{action}' executed for server '{server_name}'.",
@@ -592,6 +611,10 @@ class MCPRegistry:
 
                 elif action == "rebuild":
                     if stream_output:
+                        # Log the action before streaming rebuild
+                        current_version = getattr(self.config.servers.get(server_name), 'current_version', None) if server_name in self.config.servers else None
+                        await self.db_logger.log_server_action(server_name, action, current_version)
+
                         async def stream_generator():
                             try:
                                 deployer.remove_server(server_name)
@@ -632,9 +655,16 @@ class MCPRegistry:
                             refresh_repo=True,
                         )
                         self.config.servers[server_name].enabled = True
+                        # Log the rebuild action after non-streaming rebuild
+                        current_version = getattr(self.config.servers.get(server_name), 'current_version', None) if server_name in self.config.servers else None
+                        await self.db_logger.log_server_action(server_name, action, current_version)
 
                 elif action == "redeploy":
                     if stream_output:
+                        # Log the action before streaming redeploy
+                        current_version = getattr(self.config.servers.get(server_name), 'current_version', None) if server_name in self.config.servers else None
+                        await self.db_logger.log_server_action(server_name, action, current_version)
+
                         async def stream_generator():
                             try:
                                 yield f"data: Starting async redeploy for server '{server_name}'...\n\n"
@@ -671,6 +701,9 @@ class MCPRegistry:
                                 refresh_repo=True,
                             )
                         )
+                        # Log the redeploy action after task is created
+                        current_version = getattr(self.config.servers.get(server_name), 'current_version', None) if server_name in self.config.servers else None
+                        await self.db_logger.log_server_action(server_name, action, current_version)
                 else:
                     raise HTTPException(status_code=400, detail=f"Unknown action '{action}'")
 

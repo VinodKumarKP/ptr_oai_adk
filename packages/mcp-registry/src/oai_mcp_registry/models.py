@@ -51,3 +51,19 @@ class McpServerLifecycleAction(BaseModel):
     action: Literal["start", "stop", "redeploy", "refresh", "restart", "rebuild", "upgrade", "update", "downgrade", "delete"]
     version: Optional[str] = None
     stream_output: Optional[bool] = False
+
+
+class ServerAction(BaseModel):
+    """Record of a single server action/lifecycle event."""
+    id: int
+    server_name: str
+    action: str  # "start", "stop", "restart", "update", etc.
+    version: Optional[str] = None
+    created_at: str  # ISO 8601 timestamp
+
+
+class ServerActionHistory(BaseModel):
+    """Complete action history for an MCP server."""
+    server_name: str
+    total_count: int
+    actions: List[ServerAction]

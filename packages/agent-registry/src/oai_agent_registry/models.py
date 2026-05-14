@@ -65,6 +65,23 @@ class RegistryConfig(BaseModel):
     deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
     max_version: int = 10
 
+
+class AgentAction(BaseModel):
+    """Record of a single agent action/lifecycle event."""
+    id: int
+    agent_name: str
+    action: str  # "start", "stop", "rebuild", "update", etc.
+    version: Optional[str] = None
+    created_at: str  # ISO 8601 timestamp
+
+
+class AgentActionHistory(BaseModel):
+    """Complete action history for an agent."""
+    agent_name: str
+    total_count: int
+    actions: List[AgentAction]
+
+
 class Config(BaseModel):
     """Root configuration model."""
     agents: Dict[str, Any]
