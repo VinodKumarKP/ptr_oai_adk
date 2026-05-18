@@ -1,117 +1,98 @@
 """
-Skill Registry - Unified Local and Remote (Hybrid) Skill Management
+Corrected Hybrid Skill Registry Implementation
 
-This registry supports:
-1. Local skill discovery from filesystem
-2. Remote skill registry integration (metadata + GitHub)
-3. Git provider integration for pulling skills from GitHub
-4. Caching of remotely fetched skills locally
+This registry properly integrates with the Skills Registry Backend which stores
+METADATA (name, description, git_repository_url, versions) but NOT the actual skill code.
 
-Architecture:
-- Registry API: Provides skill metadata (name, description, git_repository_url, versions)
-- GitHub: Stores actual skill code (SKILL.md, skill_config.yaml, src/, etc.)
-- Local Cache: Fast access to previously fetched skills
+The actual skill code is stored in GitHub repositories, referenced by git_repository_url.
+
+Flow:
+1. Query Skills Registry API for skill metadata (includes git_repository_url)
+2. Clone/fetch actual skill code from GitHub
+3. Cache skill code locally
+4. Load and use locally cached skill
 """
 
 import asyncio
 import json
 import logging
-import re
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 import httpx
 
-from oai_agent_core.components.skills.errors import ParseError, ValidationError
+from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.components.skills.models import SkillProperties
-from oai_agent_core.components.skills.parser import load_metadata, find_skill_md
-from oai_agent_core.utils.path_utils import resolve_path, is_safe_path
 
 
-class SkillRegistry:
+class HybridSkillRegistry(SkillRegistry):
     """
-    Unified registry for discovering, loading, and managing agent skills.
+    Hybrid registry that integrates with:
 
-    Supports both local skills and remote skills from a Skills Registry backend.
+    1. Skills Registry Backend (HTTP API) - Stores metadata & git URLs
+    2. GitHub (or other Git hosts) - Stores actual skill code
+    3. Local Filesystem - Caches skill code for fast access
 
-    Local Discovery:
-    - Scans designated directory for skills
-    - Parses metadata from SKILL.md files
-    - Provides access to locally available skills
+    Does NOT assume skills registry stores code - it only stores metadata.
 
-    Hybrid/Remote Discovery:
-    - Queries Skills Registry API for skill metadata (includes git_repository_url)
-    - Uses git provider to clone skill code from GitHub
-    - Caches cloned skills locally for fast access
-    - Supports version management and usage tracking
-
-    Three-Tier Architecture:
-    - Tier 1: Skills Registry API (metadata only)
-    - Tier 2: GitHub Repositories (actual code)
-    - Tier 3: Local Cache (fast access)
+    Attributes:
+        registry_url: Skills Registry API base URL
+        auth_token: API authentication token
+        git_provider: GitProvider instance for fetching code from GitHub
+        skill_metadata_cache: In-memory cache of skill metadata
     """
 
     def __init__(
         self,
-        logger: Optional[logging.Logger] = None,
-        project_root: Optional[str] = None,
-        registry_url: Optional[str] = None,
+        registry_url: str = "http://localhost:8083/api/v1/skills-registry",
         auth_token: Optional[str] = None,
         git_provider: Optional[Any] = None,
+        logger: Optional[logging.Logger] = None,
+        project_root: Optional[str] = None,
         skills_cache_dir: Optional[str] = None,
     ):
         """
-        Initialize the skill registry.
+        Initialize hybrid skill registry.
 
         Args:
-            logger: Logger instance for debugging and info messages
-            project_root: Root directory for relative path resolution
-            registry_url: Skills Registry API base URL (optional, for hybrid mode)
-            auth_token: Bearer token for registry API authentication
-            git_provider: GitProvider instance for fetching code from GitHub
-            skills_cache_dir: Directory for caching fetched skills
+            registry_url: Skills Registry API base URL
+            auth_token: Bearer token for API authentication
+            git_provider: GitProvider instance (GitHubProvider, etc.)
+                         If None, will try to import and instantiate
+            logger: Optional logger instance
+            project_root: Project root for relative paths
+            skills_cache_dir: Where to cache fetched skills (default: {project_root}/skills)
         """
-        self.logger = logger or logging.getLogger(__name__)
-        self.project_root = project_root
-        self.skills: Dict[str, SkillProperties] = {}
+        super().__init__(logger=logger, project_root=project_root)
 
-        # Hybrid/Remote configuration
-        self.registry_url = registry_url.rstrip('/') if registry_url else None
+        self.registry_url = registry_url.rstrip('/')
         self.auth_token = auth_token
         self.git_provider = git_provider
+
+        # Initialize git provider if not provided
+        if self.git_provider is None:
+            self._initialize_git_provider()
+
         self.skill_metadata_cache: Dict[str, Dict[str, Any]] = {}
+        self.skills_cache_dir = Path(skills_cache_dir or (project_root or '.') / 'skills')
+        self.skills_cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize skills cache directory
-        if self.registry_url:
-            self.skills_cache_dir = Path(
-                skills_cache_dir or (project_root or '.') / 'skills_cache'
-            )
-            self.skills_cache_dir.mkdir(parents=True, exist_ok=True)
-
-            # Initialize git provider if not provided
-            if self.git_provider is None:
-                self._initialize_git_provider()
-
-            self.logger.info(f"SkillRegistry initialized in hybrid mode")
-            self.logger.info(f"  Registry API: {self.registry_url}")
-            self.logger.info(f"  Skills cache: {self.skills_cache_dir}")
-        else:
-            self.skills_cache_dir = None
-            self.logger.info("SkillRegistry initialized in local-only mode")
+        self.logger.info(f"HybridSkillRegistry initialized")
+        self.logger.info(f"  Registry API: {self.registry_url}")
+        self.logger.info(f"  Skills cache: {self.skills_cache_dir}")
 
     def _initialize_git_provider(self):
         """Initialize default git provider (GitHub)."""
         try:
             from oai_skills_registry.services.git_provider import GitHubProvider
-
             self.git_provider = GitHubProvider()
             self.logger.debug("Initialized GitHubProvider for skill code fetching")
         except ImportError:
             self.logger.warning(
                 "Could not import GitHubProvider. "
-                "Remote skill operations will fail. "
-                "Install oai_skills_registry package or provide git_provider."
+                "Skills requiring git operations will fail. "
+                "Install skills-registry package or provide git_provider."
             )
 
     def _get_auth_headers(self) -> Dict[str, str]:
@@ -131,10 +112,6 @@ class SkillRegistry:
         This loads metadata (not code) from Skills Registry API.
         Actual skill code is fetched on-demand from GitHub.
         """
-        if not self.registry_url:
-            self.logger.debug("Not in hybrid mode. Skipping remote initialization.")
-            return
-
         try:
             await self._load_remote_skill_metadata()
             self.logger.info(
@@ -209,10 +186,7 @@ class SkillRegistry:
         if skill_name in self.skill_metadata_cache:
             return self.skill_metadata_cache[skill_name]
 
-        # Try fetching from API if in hybrid mode
-        if not self.registry_url:
-            return None
-
+        # Try fetching from API
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 headers = self._get_auth_headers()
@@ -275,38 +249,19 @@ class SkillRegistry:
             )
 
             # Use git provider to fetch/clone from GitHub
+            # This could be: clone, fetch specific files, etc.
+            # The exact method depends on GitProvider implementation
+
             if hasattr(self.git_provider, 'fetch_skill_files'):
                 self.logger.debug(
                     f"Using GitProvider.fetch_skill_files() to fetch from {git_repo_url}"
                 )
-                # Parse repository from git_repo_url (format: owner/repo or https://github.com/owner/repo)
-                repo_match = re.search(r'github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$', git_repo_url)
-                if repo_match:
-                    repo = f"{repo_match.group(1)}/{repo_match.group(2)}"
-                else:
-                    # Assume it's already in owner/repo format
-                    repo = git_repo_url
-
-                self.logger.debug(f"Parsed repository: {repo} from URL: {git_repo_url}")
-
-                # Fetch skill files from GitHub
-                skill_files = await self.git_provider.fetch_skill_files(
-                    repo=repo,
-                    branch=None,
-                    tag=branch,  # Use branch/tag as git reference
+                await self.git_provider.fetch_skill_files(
+                    repo_url=git_repo_url,
                     skill_name=skill_name,
-                    auth_token=self.auth_token,
+                    branch=branch,
+                    target_dir=target_dir,
                 )
-
-                # Save files to target directory
-                target_dir.mkdir(parents=True, exist_ok=True)
-                for file_name, content in skill_files.items():
-                    file_path = target_dir / file_name
-                    file_path.parent.mkdir(parents=True, exist_ok=True)
-                    file_path.write_text(content)
-                    self.logger.debug(f"Saved {file_name} to {file_path}")
-
-                self.logger.debug(f"Successfully fetched skill files to {target_dir}")
             elif hasattr(self.git_provider, 'clone_repository'):
                 self.logger.debug(
                     f"Using GitProvider.clone_repository() to clone from {git_repo_url}"
@@ -335,6 +290,100 @@ class SkillRegistry:
             )
             return False
 
+    async def get_skill(self, name: str) -> Optional[SkillProperties]:
+        """
+        Get skill, fetching code from GitHub if needed.
+
+        Process:
+        1. Check local filesystem (fast)
+        2. If not found, get metadata from registry (includes git_repository_url)
+        3. If still not found locally, fetch code from GitHub
+        4. Parse and return skill
+
+        Args:
+            name: Skill name
+
+        Returns:
+            SkillProperties if found, None otherwise
+        """
+        # Check local filesystem first
+        skill = self.skills.get(name)
+        if skill:
+            self.logger.debug(f"Found skill '{name}' in local registry")
+            return skill
+
+        # Get metadata from registry (includes git URL)
+        metadata = await self.get_skill_metadata(name)
+        if not metadata:
+            self.logger.debug(f"Skill '{name}' not found in registry")
+            return None
+
+        # Check if code cached locally
+        skill_path = self.skills_cache_dir / name
+        if not skill_path.exists():
+            # Fetch from GitHub
+            git_url = metadata.get('git_repository_url')
+            if not git_url:
+                self.logger.warning(
+                    f"No git_repository_url in metadata for '{name}'"
+                )
+                return None
+
+            success = await self._fetch_skill_code_from_github(
+                git_repo_url=git_url,
+                skill_name=name,
+                branch=metadata.get('git_branch', 'main'),
+                target_dir=skill_path,
+            )
+
+            if not success:
+                return None
+
+        # Discover locally cached skill
+        try:
+            from oai_agent_core.components.skills.parser import load_metadata
+            skill_props = load_metadata(skill_path)
+            self.skills[name] = skill_props
+            return skill_props
+        except Exception as e:
+            self.logger.error(f"Failed to load skill '{name}' from cache: {e}")
+            return None
+
+    async def list_available_versions(
+        self,
+        skill_name: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Get list of available versions for a skill from registry.
+
+        Returns version info from registry API including:
+        - version number
+        - git_tag
+        - status (published/draft/deprecated)
+        - created_at, author, etc.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                headers = self._get_auth_headers()
+
+                response = await client.get(
+                    f"{self.registry_url}/skills/{skill_name}/versions",
+                    headers=headers
+                )
+                response.raise_for_status()
+
+                data = response.json()
+                versions = data.get('versions', []) if isinstance(data, dict) else data
+
+                self.logger.debug(
+                    f"Found {len(versions)} versions for skill '{skill_name}'"
+                )
+                return versions
+
+        except Exception as e:
+            self.logger.error(f"Failed to list versions for '{skill_name}': {e}")
+            return []
+
     async def pull_skill(
         self,
         skill_name: str,
@@ -361,10 +410,6 @@ class SkillRegistry:
         Returns:
             True if successfully cloned from GitHub, False otherwise
         """
-        if not self.registry_url:
-            self.logger.error("Cannot pull remote skill - not in hybrid mode")
-            return False
-
         try:
             # STEP 1: Get metadata from registry (metadata ONLY, not code)
             self.logger.debug(
@@ -384,7 +429,9 @@ class SkillRegistry:
                 )
                 return False
 
-            self.logger.debug(f"Found git_repository_url: {git_repository_url}")
+            self.logger.debug(
+                f"Found git_repository_url: {git_repository_url}"
+            )
 
             # STEP 3: Determine target directory
             if target_dir is None:
@@ -444,42 +491,22 @@ class SkillRegistry:
             )
             return False
 
-    async def list_available_versions(
-        self, skill_name: str
-    ) -> List[Dict[str, Any]]:
+    async def pull_skill_version(
+        self,
+        skill_name: str,
+        version: str = "latest",
+        target_dir: Optional[Path] = None,
+    ) -> bool:
         """
-        Get list of available versions for a skill from registry.
+        Deprecated: Use pull_skill() instead.
 
-        Returns version info from registry API including:
-        - version number
-        - git_tag
-        - status (published/draft/deprecated)
-        - created_at, author, etc.
+        This method is kept for backwards compatibility.
+        It delegates to pull_skill().
         """
-        if not self.registry_url:
-            return []
-
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                headers = self._get_auth_headers()
-
-                response = await client.get(
-                    f"{self.registry_url}/skills/{skill_name}/versions",
-                    headers=headers
-                )
-                response.raise_for_status()
-
-                data = response.json()
-                versions = data.get('versions', []) if isinstance(data, dict) else data
-
-                self.logger.debug(
-                    f"Found {len(versions)} versions for skill '{skill_name}'"
-                )
-                return versions
-
-        except Exception as e:
-            self.logger.error(f"Failed to list versions for '{skill_name}': {e}")
-            return []
+        self.logger.warning(
+            "pull_skill_version() is deprecated. Use pull_skill() instead."
+        )
+        return await self.pull_skill(skill_name, version, target_dir)
 
     async def report_skill_usage(
         self,
@@ -502,9 +529,6 @@ class SkillRegistry:
         Returns:
             True if reported successfully
         """
-        if not self.registry_url:
-            return False
-
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 headers = self._get_auth_headers()
@@ -538,7 +562,7 @@ class SkillRegistry:
 
     def get_registry_status(self) -> Dict[str, Any]:
         """
-        Get status of the skill registry.
+        Get status of the hybrid registry.
 
         Shows:
         - Number of skills discovered locally
@@ -547,101 +571,22 @@ class SkillRegistry:
         - Registry connection status
         """
         return {
-            'mode': 'hybrid' if self.registry_url else 'local-only',
             'local_skills_count': len(self.skills),
             'remote_metadata_cached': len(self.skill_metadata_cache),
             'total_skills': len(self.get_all_skills()),
             'registry_url': self.registry_url,
             'registry_authenticated': bool(self.auth_token),
-            'skills_cache_dir': str(self.skills_cache_dir) if self.skills_cache_dir else None,
+            'skills_cache_dir': str(self.skills_cache_dir),
             'git_provider_available': self.git_provider is not None,
-            'status': 'healthy' if (not self.registry_url or self.git_provider) else 'degraded',
+            'status': 'healthy' if self.git_provider else 'degraded',
         }
-
-    def discover_skills(self, skills_dir: str) -> None:
-        """
-        Discovers all skills in a directory and populates the registry.
-
-        Scans the specified directory for subdirectories, each representing a skill,
-        and loads metadata from each skill's SKILL.md file.
-
-        Args:
-            skills_dir: The path to the main skills directory.
-        """
-        if not skills_dir:
-            self.logger.info("No skills directory provided. Skipping skill discovery.")
-            return
-
-        resolved_skills_dir = resolve_path(skills_dir, self.project_root)
-
-        if not resolved_skills_dir.exists() or not resolved_skills_dir.is_dir():
-            self.logger.warning(f"Skills directory not found or not a directory: {resolved_skills_dir}")
-            return
-
-        self.logger.info(f"Discovering skills in: {resolved_skills_dir}")
-
-        for skill_dir in resolved_skills_dir.iterdir():
-            if not skill_dir.is_dir():
-                continue
-
-            if not is_safe_path(skill_dir, resolved_skills_dir):
-                self.logger.warning(f"Skipping potentially unsafe skill path: {skill_dir}")
-                continue
-
-            try:
-                skill_md_path = find_skill_md(skill_dir)
-                if not skill_md_path:
-                    self.logger.debug(f"No SKILL.md found in {skill_dir}, skipping.")
-                    continue
-
-                skill_properties = load_metadata(skill_dir)
-                self.skills[skill_properties.name] = skill_properties
-                self.logger.debug(f"Successfully discovered skill: {skill_properties.name}")
-
-            except (ParseError, ValidationError) as e:
-                self.logger.warning(f"Skipping invalid skill in {skill_dir}: {e}")
-            except Exception as e:
-                self.logger.error(f"An unexpected error occurred while parsing skill in {skill_dir}: {e}")
-
-        self.logger.info(f"Discovery complete. Found {len(self.skills)} skills.")
-
-    def get_skill(self, name: str) -> Optional[SkillProperties]:
-        """
-        Retrieves a skill by its name.
-
-        Returns only locally loaded skills. For remote skills, use get_skill_metadata()
-        instead, then pull_skill() to fetch the code.
-
-        Args:
-            name: The name of the skill to retrieve.
-
-        Returns:
-            A SkillProperties object if the skill is found locally, otherwise None.
-        """
-        # Only return locally loaded skills
-        return self.skills.get(name)
-
-    def get_skills(self, skill_names: List[str]) -> List[SkillProperties]:
-        """
-        Retrieves a list of skills from a list of names.
-
-        Args:
-            skill_names: A list of skill names to retrieve.
-
-        Returns:
-            A list of SkillProperties objects for the found skills.
-        """
-        return [skill for skill in (self.get_skill(name) for name in skill_names) if skill]
 
     def get_all_skills(self) -> List[SkillProperties]:
         """
-        Retrieves all discovered skills (local + remote metadata).
+        Get all available skills (local + remote metadata).
 
         Returns local skills first, then any remote-only skills
         (skills in registry but not cached locally yet).
-
-        Returns:
-            A list of all SkillProperties objects in the registry, sorted by name.
         """
         all_skills = {}
 
@@ -665,15 +610,3 @@ class SkillRegistry:
                 all_skills[skill_name] = skill
 
         return sorted(all_skills.values(), key=lambda s: s.name)
-
-    def generate_skills_prompt(self, skills: List[SkillProperties]) -> str:
-        """
-        Generates the <available_skills> XML block for the main system prompt.
-        This creates a concise list of available skills (Phase 1 of Progressive Disclosure) so the agent knows what it can do.
-        Params:
-        skills – A list of discovered SkillProperties objects.
-        Returns:
-        A string containing the formatted <available_skills> block or an empty string if no skills are provided.
-        """
-        from oai_agent_core.components.skills.prompt import generate_skills_prompt
-        return generate_skills_prompt(skills)

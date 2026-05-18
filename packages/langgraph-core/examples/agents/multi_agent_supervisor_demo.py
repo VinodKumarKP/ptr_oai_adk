@@ -32,8 +32,11 @@ async def run_supervisor_agent():
     # Test 1: Delegated task
     print("\n--- Test 1: Hotel Search (Delegated) ---")
     query = "Find a cheapest hotel in downtown Chicago for 2026-03-19 for user 1 without user confirmation."
-    result = await agent.ainvoke(query)
-    pprint(result['content']['text'])
+    # result = await agent.ainvoke(query)
+    # pprint(result['content']['text'])
+
+    async for chunk in agent.astream(query, {'verbose': True}):
+        pprint(chunk)
 
 if __name__ == "__main__":
     asyncio.run(run_supervisor_agent())

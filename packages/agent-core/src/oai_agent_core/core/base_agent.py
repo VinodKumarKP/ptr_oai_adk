@@ -142,10 +142,35 @@ class BaseAgent(ABC):
         self.global_kb_factory = None
         self.tool_registry = None
         self.guardrails_manager = None
-        self.skill_registry = SkillRegistry(logger=self.logger,
-                                            project_root=config_root)
-        self.output_model_registry =  OutputModelRegistry(logger=self.logger,
-                                                          project_root=config_root)
+
+        # Initialize skill registry only if agent uses skills
+        # (skill registry is optional - not all agents need it)
+        self.skill_registry = None
+        skills_config = agent_config.get('skills', {})
+        if skills_config:
+            # Extract skill directory (required if skills configured)
+            skill_dir = skills_config.get('skill_dir')
+
+            # Extract remote registry config (optional)
+            remote_registry_config = skills_config.get('registry', {})
+
+            # Use skill_dir as cache directory for pulled skills
+            skills_cache_dir = skill_dir
+
+            # Initialize skill registry
+            self.skill_registry = SkillRegistry(
+                logger=self.logger,
+                project_root=config_root,
+                registry_url=remote_registry_config.get('url'),
+                auth_token=remote_registry_config.get('token'),
+                skills_cache_dir=skills_cache_dir
+            )
+            self.logger.debug("Skill registry initialized for this agent")
+
+        self.output_model_registry = OutputModelRegistry(
+            logger=self.logger,
+            project_root=config_root
+        )
 
     def assign_llm(self, model_config: Dict):
         """
@@ -222,8 +247,12 @@ class BaseAgent(ABC):
                 # Import here to avoid circular dependencies or early import issues
                 from oai_agent_core.core.base_memory_store import BaseMemoryStore
 
+                # Create a concrete implementation of BaseMemoryStore
+                class ConfigurableMemoryStore(BaseMemoryStore):
+                    pass
+
                 try:
-                    self.memory_store = BaseMemoryStore(
+                    self.memory_store = ConfigurableMemoryStore(
                         memory_config=memory_config,
                         logger=self.logger,
                         project_root=self.config_root,
@@ -257,9 +286,80 @@ class BaseAgent(ABC):
                 os.environ[k] = v
 
         async def _init_agent_skills():
+            # Only initialize skills if registry exists (agent uses skills)
+            if not self.skill_registry:
+                return
+
+            # Get skills configuration
             agent_skills_props = self.agent_config.get("skills", {})
-            if agent_skills_props:
-                self.skill_registry.discover_skills(skills_dir=agent_skills_props.get('skill_dir'))
+            skill_dir = agent_skills_props.get('skill_dir') if agent_skills_props else None
+
+            if not skill_dir:
+                self.logger.debug("No skill_dir configured, skipping skill initialization")
+                return
+
+            # Initialize hybrid registry if configured (remote metadata)
+            if self.skill_registry.registry_url:
+                try:
+                    await self.skill_registry.initialize()
+                    self.logger.info("Initialized hybrid skill registry with remote metadata")
+                except Exception as e:
+                    self.logger.warning(f"Failed to initialize hybrid skill registry: {e}")
+
+            # ======= STEP 1: COLLECT ALL REQUIRED SKILLS FROM AGENT CONFIG =======
+            agent_list = self.agent_config.get('agent_list', [])
+            all_required_skills = set()
+
+            for agent_dict in agent_list:
+                if not isinstance(agent_dict, dict):
+                    continue
+
+                # Get agent config (agent_dict is {agent_name: agent_config})
+                for agent_name, agent_config in agent_dict.items():
+                    if not isinstance(agent_config, dict):
+                        continue
+
+                    # Get skills required by this agent
+                    configured_skills = agent_config.get('skills', [])
+                    if isinstance(configured_skills, list):
+                        all_required_skills.update(configured_skills)
+
+            self.logger.info(f"Agent requires skills: {all_required_skills if all_required_skills else 'none'}")
+
+            # ======= STEP 2: PULL ALL MISSING SKILLS FROM REGISTRY =======
+            if all_required_skills and self.skill_registry.registry_url:
+                self.logger.info(f"Pulling missing skills from registry into: {skill_dir}")
+
+                for skill_name in all_required_skills:
+                    try:
+                        self.logger.info(f"  • Pulling '{skill_name}'...")
+                        success = await self.skill_registry.pull_skill(skill_name)
+                        if success:
+                            self.logger.info(f"    ✓ Successfully pulled '{skill_name}'")
+                        else:
+                            self.logger.warning(f"    ⚠ Failed to pull skill '{skill_name}'")
+                    except Exception as e:
+                        self.logger.warning(f"    ⚠ Error pulling skill '{skill_name}': {e}")
+
+            # ======= STEP 3: DISCOVER ALL SKILLS (LOCAL + PULLED) FROM SAME DIRECTORY =======
+            # Both local and pulled skills are in skill_dir, discover them all together
+            self.logger.info(f"Discovering all skills from: {skill_dir}")
+            self.skill_registry.discover_skills(skills_dir=skill_dir)
+            self.logger.info(f"Discovered {len(self.skill_registry.skills)} skill(s)")
+
+            # Log summary
+            if all_required_skills:
+                available = set(self.skill_registry.skills.keys())
+                loaded = all_required_skills & available
+                missing = all_required_skills - available
+
+                self.logger.info(f"Skill loading summary:")
+                self.logger.info(f"  • Required: {all_required_skills}")
+                self.logger.info(f"  • Loaded: {loaded}")
+                if missing:
+                    self.logger.warning(f"  • Missing: {missing}")
+                else:
+                    self.logger.info(f"✓ All {len(loaded)} required skill(s) loaded successfully")
 
         async def _init_structured_output_models():
             structured_output_models_props = self.agent_config.get("structured_output", {})
@@ -587,15 +687,28 @@ class BaseAgent(ABC):
                 if not hasattr(self, 'guardrails_manager') or self.guardrails_manager is None:
                     warnings.append("Guardrails enabled but guardrails_manager not initialized")
 
-        # 7. Validate skills configuration
+        # 7. Validate skills configuration (optional)
+        # Skills can include skill_dir and optional remote registry
         skills_config = self.agent_config.get('skills', {})
         if skills_config:
             if not isinstance(skills_config, dict):
                 errors.append("'skills' configuration must be a dictionary")
-            elif 'skill_dir' in skills_config:
-                skill_dir = skills_config.get('skill_dir')
-                if not isinstance(skill_dir, str):
-                    errors.append("'skills.skill_dir' must be a string path")
+            else:
+                # Validate skill_dir if present
+                if 'skill_dir' in skills_config:
+                    skill_dir = skills_config.get('skill_dir')
+                    if not isinstance(skill_dir, str):
+                        errors.append("'skills.skill_dir' must be a string path")
+
+                # Validate registry configuration if present
+                if 'registry' in skills_config:
+                    registry_config = skills_config.get('registry', {})
+                    if not isinstance(registry_config, dict):
+                        errors.append("'skills.registry' configuration must be a dictionary")
+                    elif 'url' in registry_config:
+                        registry_url = registry_config.get('url')
+                        if not isinstance(registry_url, str):
+                            errors.append("'skills.registry.url' must be a string URL")
 
         # 8. Validate structured output configuration
         structured_output_config = self.agent_config.get('structured_output', {})

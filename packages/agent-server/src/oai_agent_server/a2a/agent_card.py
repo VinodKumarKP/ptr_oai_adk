@@ -34,7 +34,13 @@ def build_agent_card(
       AGENT_DESCRIPTION       One-line description
     """
     # Use a placeholder if no URL is provided; it will be updated in main.py
-    resolved_url = base_url or f"{os.environ.get("AGENT_BASE_URL", "http://placeholder.url")}/{agent_name.lower()}"
+    default_url = os.environ.get('AGENT_BASE_URL')
+    if default_url is not None:
+        if ':' not in default_url:
+            default_url = f"{os.environ.get('AGENT_BASE_URL', 'localhost')}:{os.environ.get('AGENT_BASE_URL_PORT', 8081)}"
+    else:
+        default_url = "http://placeholder.url"
+    resolved_url = base_url or f"{default_url}/{agent_name.lower()}"
 
     if not resolved_url.startswith('http'):
         resolved_url = f"http://{resolved_url}"

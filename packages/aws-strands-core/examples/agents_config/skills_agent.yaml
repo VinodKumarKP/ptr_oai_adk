@@ -4,6 +4,9 @@ model:
 
 skills:
   skill_dir: "./skills"
+  registry:
+    url: "http://localhost:8083/api/v1/skills-registry"
+    token: ""
 
 agent_list:
   - simple_assistant:
@@ -11,6 +14,7 @@ agent_list:
         You are a helpful assistant with access to pdf processing skills
       skills:
         - pdf
+        - data-validator
 
 crew_config:
   pattern: supervisor

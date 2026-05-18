@@ -34,11 +34,13 @@ async def run_mcp_agent():
     query = "What is the value of PATH environment variable?"
     query = 'get input parameter schema of tools in environment_lookup'
     query = 'Fetch all the environment variables'
-    query = 'Fetch all the environment variables and Search for flight from Boston to JFK for 2026-03-09 and display the available flights'
+    query = 'Fetch all the environment variables'
 
-    result = await agent.ainvoke(query)
-    pprint(result)
+    # result = await agent.ainvoke(query)
+    # pprint(result)
     # pprint(result['content']['text'])
+    async for chunk in agent.astream(query, {'verbose': True, 'include_raw': True}):
+        pprint(chunk)
 
 if __name__ == "__main__":
     asyncio.run(run_mcp_agent())

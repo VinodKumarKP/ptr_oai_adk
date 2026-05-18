@@ -10,7 +10,7 @@ tools:
 agent_list:
   - flight_assistant:
       system_prompt: |
-        You are a flight booking assistant.
+        You are a flight booking assistant - {{ DATE %Y-%m-%d 1 }}
         You can search for flights and book them.
       tools:
         - search_flights
@@ -19,7 +19,7 @@ agent_list:
 
   - hotel_assistant:
       system_prompt: |
-        You are a hotel booking assistant.
+        You are a hotel booking assistant - {{ DATE %Y-%m-%d 1 }}
         You can search for hotels and book them.
       tools:
         - search_hotels
@@ -28,7 +28,7 @@ agent_list:
 #      structured_output_model: CompleteItinerary
 
 system_prompt: |
-  You are a travel concierge supervisor.
+  You are a travel concierge supervisor - {{ DATE %Y-%m-%d 1 }}
   You have access to the following specialized agents:
   - flight_assistant: For flight searches and bookings.
   - hotel_assistant: For hotel searches and bookings.
@@ -39,7 +39,7 @@ system_prompt: |
   Parse the structured output and present the summary
 
 crew_config:
-  pattern: agent-as-tool
+  pattern: swarm
   structured_output_model: CompleteItinerary
 
 structured_output:

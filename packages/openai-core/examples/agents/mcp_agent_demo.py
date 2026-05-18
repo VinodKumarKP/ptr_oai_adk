@@ -34,15 +34,17 @@ async def run_mcp_agent():
     # Note: This query depends on the specific MCP server capabilities
     # query = 'list all the available tools and input schema'
     # query = 'hi'
-    # query = "What is the value of PATH environment variable?"
-    query = '''
-    Search for flight from Boston to JFK for 2026-03-09 and display the available flights
-    and book McKittrick Hotel hotel in New York. After booking again search for flight from Boston to JFK for 2026-03-09 and display the available flights
-    and book McKittrick Hotel hotel in New York. Also retrieve all the environment variables.
-    '''
-    result = await agent.ainvoke(query)
-    # pprint(result['content']['text'])
-    pprint(result)
+    query = "What is the value of PATH and GITHUB_TOKEN environment variable?"
+    # query = '''
+    # Search for flight from Boston to JFK for 2026-03-09 and display the available flights
+    # and book McKittrick Hotel hotel in New York. After booking again search for flight from Boston to JFK for 2026-03-09 and display the available flights
+    # and book McKittrick Hotel hotel in New York. Also retrieve all the environment variables.
+    # '''
+    # result = await agent.ainvoke(query)
+    # # pprint(result['content']['text'])
+    # pprint(result)
+    async for chunk in agent.astream(query, {'verbose': True}):
+        pprint(chunk)
 
 if __name__ == "__main__":
     asyncio.run(run_mcp_agent())

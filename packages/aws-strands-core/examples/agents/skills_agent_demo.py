@@ -35,7 +35,7 @@ async def run_simple_agent():
     # result = await agent.ainvoke('Read the csv file /Users/vinodkumarkp/PycharmProjects/strands_demo/data.csv and analyze the data? ')
     # result = await agent.ainvoke(
         # 'Get the transcript for this video https://www.youtube.com/watch?v=0QzopZ78w9M')
-    result = await agent.ainvoke('hi, what are the available tools and create a pdf with the list of the available tools')
+    result = await agent.ainvoke('hi, what are the available tools and what skills are available in data-validator')
     pprint(result['content']['text'])
     pprint(result)
 

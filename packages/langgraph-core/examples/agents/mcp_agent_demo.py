@@ -10,7 +10,7 @@ from oai_agent_server.main import AgentHTTPServer as BaseAgentHTTPServer, main a
 EXAMPLES_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_DIR = os.path.join(EXAMPLES_DIR, 'agents_config')
 
-def run_mcp_agent():
+async def run_mcp_agent():
     """Run an MCP agent example."""
     print("\n" + "=" * 60)
     print("Example: MCP Agent")
@@ -33,23 +33,23 @@ def run_mcp_agent():
 
     # # Test 1: MCP Tool Usage
     # print("\n--- Test 1: Environment Lookup (MCP) ---")
-    # query = "What is the value of PATH environment variable?"
-    # # result = await agent.ainvoke(query)
-    # # pprint(result['content']['text'])
-    # async for chunk in agent.astream(query, {'verbose': True}):
-    #     pprint(chunk)
-    file_root = os.path.dirname(os.path.abspath(__file__))
-    agent_name = 'env_lookup_agent'
-    server = BaseAgentHTTPServer(
-        agent_name=agent_name,
-        config_root=os.path.dirname(os.path.dirname(file_root)),
-        agent=agent
-    )
-
-    # Start the HTTP server
-    http_main(server)
-    return server
+    query = "What is the value of PATH and GITHUB_TOKEN environment variable?"
+    # result = await agent.ainvoke(query)
+    # pprint(result['content']['text'])
+    async for chunk in agent.astream(query, {'verbose': True}):
+        pprint(chunk)
+    # file_root = os.path.dirname(os.path.abspath(__file__))
+    # agent_name = 'env_lookup_agent'
+    # server = BaseAgentHTTPServer(
+    #     agent_name=agent_name,
+    #     config_root=os.path.dirname(os.path.dirname(file_root)),
+    #     agent=agent
+    # )
+    #
+    # # Start the HTTP server
+    # http_main(server)
+    # return server
 
 if __name__ == "__main__":
-    # asyncio.run(run_mcp_agent())
-    run_mcp_agent()
+    asyncio.run(run_mcp_agent())
+    # run_mcp_agent()

@@ -33,19 +33,19 @@ async def run_supervisor_demo():
     # Test 1: Delegated task
     print("\n--- Test 1: Hotel Search (Delegated) ---")
     query = """
-    Search for flight from Boston to JFK for 2026-03-20 and book the cheapest one without user confirmation using userid 1
+    Search for flight from Boston to JFK for 2026-03-30 and book the cheapest one without user confirmation using userid 1
     Provide the summary of the itinerary
     """
-    result = await agent.ainvoke(query, config= {
-        'session_id': 123,
-        'user_id': 'test_user'
-    })
-    pprint(result)
-    text = result['content']['text']
-    text = text.replace('\n', '').replace('`', '').replace('json', '')
-    response = json.loads(text)
-
-    print(response['departure_airport'])
+    # result = await agent.ainvoke(query, config= {
+    #     'session_id': 123,
+    #     'user_id': 'test_user'
+    # })
+    # pprint(result)
+    # text = result['content']['text']
+    # text = text.replace('\n', '').replace('`', '').replace('json', '')
+    # response = json.loads(text)
+    #
+    # print(response['departure_airport'])
 
     # query = 'Provide the summary of the itinerary'
     # result = await agent.ainvoke(query, config={
@@ -54,6 +54,8 @@ async def run_supervisor_demo():
     # })
     # pprint(result)
     # pprint(result['content']['text'])
+    async for chunk in agent.astream(query, {'verbose': True}):
+        pprint(chunk)
 
 if __name__ == "__main__":
     asyncio.run(run_supervisor_demo())
