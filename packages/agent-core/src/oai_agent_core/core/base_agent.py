@@ -328,7 +328,9 @@ class BaseAgent(ABC):
 
             # ======= STEP 2: PULL ALL MISSING SKILLS FROM REGISTRY =======
             if all_required_skills and self.skill_registry.registry_url:
-                self.logger.info(f"Pulling missing skills from registry into: {skill_dir}")
+                # skills_cache_dir is resolved against project_root (same as discover_skills)
+                pull_target = self.skill_registry.skills_cache_dir
+                self.logger.info(f"Pulling missing skills from registry into: {pull_target}")
 
                 for skill_name in all_required_skills:
                     try:

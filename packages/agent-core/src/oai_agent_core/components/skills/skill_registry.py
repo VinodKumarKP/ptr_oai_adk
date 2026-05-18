@@ -83,10 +83,12 @@ class SkillRegistry:
         self.skill_metadata_cache: Dict[str, Dict[str, Any]] = {}
 
         # Initialize skills cache directory
+        # IMPORTANT: resolve_path is used here (same function as discover_skills uses)
+        # so that relative paths like "./skills" are resolved against project_root,
+        # ensuring pull_skill() and discover_skills() point to the same directory.
         if self.registry_url:
-            self.skills_cache_dir = Path(
-                skills_cache_dir or (project_root or '.') / 'skills_cache'
-            )
+            cache_dir_str = skills_cache_dir or 'skills_cache'
+            self.skills_cache_dir = resolve_path(cache_dir_str, project_root)
             self.skills_cache_dir.mkdir(parents=True, exist_ok=True)
 
             # Initialize git provider if not provided
