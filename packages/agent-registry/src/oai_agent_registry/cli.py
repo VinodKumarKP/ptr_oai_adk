@@ -16,6 +16,21 @@ def main():
     parser.add_argument("--enable-auto-discovery", action="store_true", default=False, help="Enable auto-discovery of agents")
     parser.add_argument("--start-port", type=int, help="Start of port range for auto-discovery")
     parser.add_argument("--end-port", type=int, help="End of port range for auto-discovery")
+    parser.add_argument(
+        "--auto-start-infra",
+        action="store_true",
+        default=False,
+        help="Run docker compose up on the infra compose file (postgres, valkey) before initialising the database",
+    )
+    parser.add_argument(
+        "--infra-compose-file",
+        help="Path to the infra docker-compose file (default: bundled docker-compose.yaml)",
+    )
+    parser.add_argument(
+        "--infra-startup-timeout",
+        type=int,
+        help="Seconds to wait for Postgres to become ready after docker compose up (default: 60)",
+    )
 
     args = parser.parse_args()
 
@@ -29,6 +44,12 @@ def main():
         registry_instance.registry_config.start_port = args.start_port
     if args.end_port:
         registry_instance.registry_config.end_port = args.end_port
+    if args.auto_start_infra:
+        registry_instance.registry_config.auto_start_infra = True
+    if args.infra_compose_file:
+        registry_instance.registry_config.infra_compose_file = args.infra_compose_file
+    if args.infra_startup_timeout:
+        registry_instance.registry_config.infra_startup_timeout = args.infra_startup_timeout
 
     if os.environ.get('AGENT_REGISTRY_URL', None):
         parsed = urlparse(os.environ.get('AGENT_REGISTRY_URL'))

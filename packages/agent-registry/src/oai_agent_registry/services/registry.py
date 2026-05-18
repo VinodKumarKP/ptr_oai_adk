@@ -66,6 +66,32 @@ class AgentRegistry:
     async def initialize(self):
         """Initializes the AgentRegistry, including the database logger and HTTP client."""
         self.client = httpx.AsyncClient()
+
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        build_dir = os.path.abspath(os.path.join(current_dir, '..', 'resources', 'docker'))
+
+        # --- Optional: auto-start infra Docker services before DB init ---
+        if self.registry_config.auto_start_infra:
+            from oai_agent_registry.services.infra_manager import InfraManager
+            from pathlib import Path
+
+            # Resolve the infra compose file: explicit config → bundled default
+            infra_compose = (
+                Path(self.registry_config.infra_compose_file)
+                if self.registry_config.infra_compose_file
+                else Path(build_dir) / "docker-compose.yaml"
+            )
+            try:
+                manager = InfraManager(
+                    compose_file=infra_compose,
+                    startup_timeout=self.registry_config.infra_startup_timeout,
+                )
+                await manager.start()
+            except Exception as exc:
+                # Log but don't abort — db_logger.initialize() will report the
+                # connection failure clearly if Postgres is still not ready.
+                logger.error("auto_start_infra failed: %s", exc)
+
         await self.db_logger.initialize()
 
         if self.db_logger.is_active:
@@ -74,9 +100,6 @@ class AgentRegistry:
             await self._sync_agents_to_db()
         else:
             logger.warning("RegistryDatabaseLogger could not be initialized.")
-
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        build_dir = os.path.abspath(os.path.join(current_dir, '..', 'resources', 'docker'))
 
         # Initialize deployers for available modes
         seed_configs = self._build_seed_configs_from_agents()

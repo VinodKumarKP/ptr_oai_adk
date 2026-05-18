@@ -64,6 +64,11 @@ class RegistryConfig(BaseModel):
     api_key: Optional[str] = None
     deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
     max_version: int = 10
+    # Infra auto-start: when True, runs docker compose up on the infra compose
+    # file before the database is initialized so Postgres/Valkey are ready.
+    auto_start_infra: bool = False
+    infra_compose_file: Optional[str] = None   # absolute or project-relative path; None → bundled docker-compose.yaml
+    infra_startup_timeout: int = 60            # seconds to wait for Postgres to accept connections
 
 
 class AgentAction(BaseModel):
