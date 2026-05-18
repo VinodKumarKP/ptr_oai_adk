@@ -1,0 +1,82 @@
+# Skills Registry — infrastructure services
+# Provides PostgreSQL (skill database) and Valkey (token/session store).
+#
+# Usage:
+#   docker compose -f docker-compose.yaml up -d --wait postgres valkey
+#
+# Environment variables (set on host before running):
+#   POSTGRES_PASSWORD   — Postgres superuser password  (default: postgres)
+#   POSTGRES_DB         — Database name                (default: skills_registry)
+#
+# The application reads connection details from:
+#   LOGGING_DB_HOST / LOGGING_DB_PORT / LOGGING_DB_NAME / LOGGING_DB_USER / LOGGING_DB_PASSWORD
+
+name: skills-registry
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: skills_registry_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-skills_registry}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command:
+      - postgres
+      - -c
+      - max_connections=300
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_io_concurrency=200
+    ports:
+      - "5434:5432"
+    volumes:
+      - skills_postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      skills-network:
+        ipv4_address: "172.27.0.10"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+  valkey:
+    image: valkey/valkey:latest
+    container_name: skills_valkey
+    command: valkey-server --appendonly yes
+    environment:
+      REDIS_PASSWORD: admin
+    ports:
+      - "6379:6379"
+    volumes:
+      - skills_valkey_data:/data
+    restart: unless-stopped
+    networks:
+      skills-network:
+        ipv4_address: "172.27.0.11"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "admin", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+networks:
+  skills-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: "172.27.0.0/16"
+
+volumes:
+  skills_postgres_data: {}
+  skills_valkey_data: {}

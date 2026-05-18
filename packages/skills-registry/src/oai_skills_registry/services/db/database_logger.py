@@ -118,6 +118,9 @@ class PostgresBackend(DatabaseBackend):
         user = os.environ.get("LOGGING_DB_USER", "postgres")
         password = os.environ.get("LOGGING_DB_PASSWORD", "postgres")
 
+        # Ensure the target database exists before creating the connection pool.
+        await self._ensure_database(host, int(port), name, user, password, logger)
+
         try:
             self._pool = await asyncpg.create_pool(
                 host=host,
@@ -136,6 +139,53 @@ class PostgresBackend(DatabaseBackend):
             if logger:
                 logger.error(f"Failed to initialize PostgreSQL: {e}")
             return False
+
+    @staticmethod
+    async def _ensure_database(
+        host: str,
+        port: int,
+        name: str,
+        user: str,
+        password: str,
+        logger: Optional[logging.Logger],
+    ) -> None:
+        """Create *name* database if it does not already exist.
+
+        Connects to the always-present ``postgres`` maintenance database,
+        checks ``pg_database``, and issues ``CREATE DATABASE`` when the target
+        is absent.  ``CREATE DATABASE`` cannot run inside a transaction block;
+        asyncpg auto-commits statements executed outside an explicit
+        ``async with conn.transaction():`` context, so this is safe.
+
+        Any error (e.g. insufficient privileges) is logged as a warning and
+        swallowed — the subsequent ``create_pool`` call will surface a clear
+        connection error if the database is still missing.
+        """
+        try:
+            conn = await asyncpg.connect(
+                host=host, port=port, database="postgres",
+                user=user, password=password,
+            )
+            try:
+                exists = await conn.fetchval(
+                    "SELECT 1 FROM pg_database WHERE datname = $1", name
+                )
+                if not exists:
+                    # Identifiers must be quoted to handle names with special chars.
+                    await conn.execute(f'CREATE DATABASE "{name}"')
+                    if logger:
+                        logger.info("Created PostgreSQL database: %s", name)
+                else:
+                    if logger:
+                        logger.debug("PostgreSQL database already exists: %s", name)
+            finally:
+                await conn.close()
+        except Exception as exc:
+            if logger:
+                logger.warning(
+                    "Could not ensure database '%s' exists (will attempt connection anyway): %s",
+                    name, exc,
+                )
 
     async def _initialize_schema(self, logger: Optional[logging.Logger]) -> None:
         """Create tables if they don't exist."""

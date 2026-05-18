@@ -183,37 +183,58 @@ class SkillsRegistry:
         versions = []
 
         for tag in tags:
+            tag_name = tag.get("name", "")
             try:
-                # Try to fetch SKILL.md from this tag
-                files = await provider.fetch_skill_files(
-                    repo=repository,
-                    branch=None,
-                    tag=tag.get("name"),
-                    skill_name=skill_name,
-                    auth_token=auth_token
-                )
+                # Use the GitHub Contents API — avoids a full git clone per tag.
+                # fetch_skill_md_from_api() is only available on GitHubProvider;
+                # fall back to the generic fetch_skill_files() for other providers.
+                if hasattr(provider, "fetch_skill_md_from_api"):
+                    files = await provider.fetch_skill_md_from_api(
+                        repo=repository,
+                        tag=tag_name,
+                        skill_name=skill_name,
+                        auth_token=auth_token,
+                    )
+                else:
+                    files = await provider.fetch_skill_files(
+                        repo=repository,
+                        branch=None,
+                        tag=tag_name,
+                        skill_name=skill_name,
+                        auth_token=auth_token,
+                    )
+
                 skill_data = parse_skill_md(files["SKILL.md"])
                 if skill_data.get("name") == skill_name:
                     version_info = {
                         "version": skill_data.get("version"),
-                        "git_tag": tag.get("name"),
+                        "git_tag": tag_name,
                         "commit_sha": tag.get("commit", {}).get("sha", ""),
                         "created_at": tag.get("created_at"),
                         "message": tag.get("message", ""),
-                        "tagger": tag.get("tagger", {}).get("name", ""),
+                        "author": tag.get("tagger", {}).get("name", "") or skill_data.get("author", ""),
                         # Include metadata from SKILL.md frontmatter
                         "description": skill_data.get("description", ""),
                         "category": skill_data.get("category", ""),
-                        "author": skill_data.get("author", ""),
-                        "tags": skill_data.get("tags", [])
+                        "tags": skill_data.get("tags", []),
                     }
-                    self.logger.info(f"Found {skill_name} version {version_info.get('version')}: description={version_info.get('description')}, category={version_info.get('category')}")
+                    self.logger.info(
+                        "Found %s version %s (tag: %s, date: %s)",
+                        skill_name,
+                        version_info.get("version"),
+                        tag_name,
+                        version_info.get("created_at", "unknown"),
+                    )
                     versions.append(version_info)
+            except FileNotFoundError:
+                # skill not present in this tag — skip silently
+                self.logger.debug("Skill %s not found at tag %s, skipping", skill_name, tag_name)
+                continue
             except Exception as e:
-                self.logger.error(f"Failed to parse version from tag {tag.get('name')}: {e}")
+                self.logger.warning("Failed to parse version from tag %s: %s", tag_name, e)
                 continue
 
-        return sorted(versions, key=lambda x: x.get("created_at", ""), reverse=True)
+        return sorted(versions, key=lambda x: x.get("created_at") or "", reverse=True)
 
     # ========== Skill Discovery Operations ==========
 

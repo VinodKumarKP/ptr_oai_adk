@@ -102,6 +102,10 @@ class PostgresBackend(DatabaseBackend):
         min_size = int(os.environ.get("DB_POOL_MIN_SIZE", "2"))
         max_size = int(os.environ.get("DB_POOL_MAX_SIZE", "4"))
         timeout = int(os.environ.get("DB_POOL_TIMEOUT", "120"))
+
+        # Ensure the target database exists before creating the connection pool.
+        await self._ensure_database(host, int(port), name, user, password, logger)
+
         dsn = f"postgresql://{user}:{password}@{host}:{port}/{name}"
         try:
             self._pool = await asyncpg.create_pool(dsn, min_size=min_size, max_size=max_size, command_timeout=timeout,
@@ -116,6 +120,50 @@ class PostgresBackend(DatabaseBackend):
             if logger: logger.warning(f"PostgreSQL backend unavailable: {exc}")
             await self._cleanup()
             return False
+
+    @staticmethod
+    async def _ensure_database(
+        host: str,
+        port: int,
+        name: str,
+        user: str,
+        password: str,
+        logger: Optional[logging.Logger],
+    ) -> None:
+        """Create *name* database if it does not already exist.
+
+        Connects to the always-present ``postgres`` maintenance database,
+        checks ``pg_database``, and issues ``CREATE DATABASE`` when the target
+        is absent.  ``CREATE DATABASE`` cannot run inside a transaction block;
+        asyncpg auto-commits statements executed outside an explicit
+        ``async with conn.transaction():`` context, so this is safe.
+
+        Any error (e.g. insufficient privileges) is logged as a warning and
+        swallowed — the subsequent ``create_pool`` call will surface a clear
+        connection error if the database is still missing.
+        """
+        try:
+            conn = await asyncpg.connect(
+                host=host, port=port, database="postgres",
+                user=user, password=password,
+            )
+            try:
+                exists = await conn.fetchval(
+                    "SELECT 1 FROM pg_database WHERE datname = $1", name
+                )
+                if not exists:
+                    await conn.execute(f'CREATE DATABASE "{name}"')
+                    if logger: logger.info("Created PostgreSQL database: %s", name)
+                else:
+                    if logger: logger.debug("PostgreSQL database already exists: %s", name)
+            finally:
+                await conn.close()
+        except Exception as exc:
+            if logger:
+                logger.warning(
+                    "Could not ensure database '%s' exists (will attempt connection anyway): %s",
+                    name, exc,
+                )
 
     async def execute(self, query: str, params: tuple) -> None:
         if self._pool is None: raise RuntimeError("PostgresBackend not initialized")

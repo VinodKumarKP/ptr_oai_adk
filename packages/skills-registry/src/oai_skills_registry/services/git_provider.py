@@ -3,6 +3,7 @@ Git Provider Interface and Implementations
 Handles Git integration for skill repository operations.
 """
 
+import asyncio
 import logging
 import tempfile
 import shutil
@@ -138,17 +139,127 @@ class GitHubProvider(GitProvider):
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    async def get_tags(self, repo: str, auth_token: Optional[str]) -> List[Dict]:
-        """Get tags from GitHub using REST API."""
+    async def fetch_skill_md_from_api(
+        self,
+        repo: str,
+        tag: str,
+        skill_name: str,
+        auth_token: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """Fetch SKILL.md (and optional skill_config.yaml) via the GitHub Contents API.
+
+        Much faster than ``fetch_skill_files`` for listing/previewing versions because
+        it avoids a full git clone.  Use this for version discovery; use
+        ``fetch_skill_files`` for actual imports where the full tree is needed.
+
+        Args:
+            repo:       ``owner/repo`` string
+            tag:        Git tag or branch ref
+            skill_name: Skill directory name inside ``skills/``
+            auth_token: Optional GitHub personal-access token
+
+        Returns:
+            Dict with keys ``"SKILL.md"`` (always present) and optionally
+            ``"skill_config.yaml"``.
+
+        Raises:
+            FileNotFoundError: when ``skills/{skill_name}/SKILL.md`` is absent at *tag*
+            Exception: on any other HTTP error
+        """
+        headers = {"Accept": "application/vnd.github.v3.raw"}
+        if auth_token:
+            headers["Authorization"] = f"token {auth_token}"
+
+        params = {"ref": tag}
+        files: Dict[str, str] = {}
+
         async with aiohttp.ClientSession() as session:
-            headers = {}
-            if auth_token:
-                headers["Authorization"] = f"token {auth_token}"
-
-            url = f"https://api.github.com/repos/{repo}/tags?per_page=100"
-
-            async with session.get(url, headers=headers) as resp:
+            # Fetch SKILL.md (required)
+            skill_md_url = (
+                f"https://api.github.com/repos/{repo}/contents"
+                f"/skills/{skill_name}/SKILL.md"
+            )
+            async with session.get(skill_md_url, headers=headers, params=params) as resp:
                 if resp.status == 200:
-                    return await resp.json()
+                    files["SKILL.md"] = await resp.text()
+                elif resp.status == 404:
+                    raise FileNotFoundError(
+                        f"skills/{skill_name}/SKILL.md not found at ref '{tag}'"
+                    )
                 else:
+                    raise Exception(
+                        f"GitHub API error {resp.status} fetching SKILL.md "
+                        f"for {skill_name}@{tag}"
+                    )
+
+            # Fetch skill_config.yaml (optional — 404 is fine)
+            config_url = (
+                f"https://api.github.com/repos/{repo}/contents"
+                f"/skills/{skill_name}/skill_config.yaml"
+            )
+            async with session.get(config_url, headers=headers, params=params) as resp:
+                if resp.status == 200:
+                    files["skill_config.yaml"] = await resp.text()
+
+        return files
+
+    async def get_tags(self, repo: str, auth_token: Optional[str]) -> List[Dict]:
+        """Get all tags from GitHub REST API, enriched with commit dates.
+
+        Fetches ``/repos/{repo}/tags`` then concurrently retrieves the
+        committer/author date for each tag so that callers can sort and display
+        version timelines without extra round-trips.
+
+        Each returned dict has at minimum:
+            ``name``       – tag name (e.g. "v1.2.0")
+            ``commit.sha`` – commit SHA the tag points to
+            ``created_at`` – ISO-8601 date string (from GitHub commit API)
+            ``message``    – commit message (first line)
+            ``tagger``     – ``{"name": "<author name>"}``
+        """
+        headers: Dict[str, str] = {}
+        if auth_token:
+            headers["Authorization"] = f"token {auth_token}"
+
+        async with aiohttp.ClientSession() as session:
+            url = f"https://api.github.com/repos/{repo}/tags?per_page=100"
+            async with session.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    self.logger.warning(
+                        "GitHub tags API returned %s for %s", resp.status, repo
+                    )
                     return []
+                tags = await resp.json()
+
+            # Enrich each tag with commit date / message / author concurrently
+            async def _enrich(tag: Dict) -> Dict:
+                sha = tag.get("commit", {}).get("sha", "")
+                if not sha:
+                    return tag
+                try:
+                    commit_url = (
+                        f"https://api.github.com/repos/{repo}/commits/{sha}"
+                    )
+                    async with session.get(commit_url, headers=headers) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            commit = data.get("commit", {})
+                            # Prefer committer date; fall back to author date
+                            tag["created_at"] = (
+                                commit.get("committer", {}).get("date")
+                                or commit.get("author", {}).get("date")
+                            )
+                            tag["message"] = commit.get("message", "").split("\n")[0]
+                            tag["tagger"] = {
+                                "name": commit.get("author", {}).get("name", "")
+                            }
+                except Exception as exc:
+                    self.logger.debug(
+                        "Could not fetch commit info for tag %s (%s): %s",
+                        tag.get("name"), sha, exc,
+                    )
+                return tag
+
+            enriched = await asyncio.gather(*[_enrich(t) for t in tags])
+
+        return list(enriched)

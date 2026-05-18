@@ -75,6 +75,9 @@ Repository = "https://github.com/Capgemini-Innersource/ptr_agent_server.git"
 Issues = "https://github.com/Capgemini-Innersource/ptr_agent_server/issues"
 Documentation = "https://github.com/Capgemini-Innersource/ptr_agent_server/tree/main/packages/skills-registry"
 
+[project.scripts]
+oai-skills-registry = "oai_skills_registry.cli:main"
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
