@@ -113,7 +113,7 @@ class PostgresBackend(DatabaseBackend):
                 logger.info("PostgreSQL backend available.")
 
         host = os.environ.get("LOGGING_DB_HOST", "localhost")
-        port = os.environ.get("LOGGING_DB_PORT", "5432")
+        port = os.environ.get("LOGGING_DB_PORT", "5434")
         name = os.environ.get("LOGGING_DB_NAME", "skills_logs")
         user = os.environ.get("LOGGING_DB_USER", "postgres")
         password = os.environ.get("LOGGING_DB_PASSWORD", "postgres")
@@ -542,9 +542,12 @@ class SkillsDatabaseLogger:
 
         try:
             now = datetime.now(timezone.utc)
-            # Convert tags list to JSON string for database storage
-            tags_json = json.dumps(tags) if tags else None
-            params = (name, description, category, tags_json, None, "active", author, git_repository_url, now, now)
+            # PostgreSQL TEXT[] needs a Python list; SQLite TEXT needs a JSON string.
+            if self._backend.name == "postgres":
+                tags_param = list(tags) if tags else []
+            else:
+                tags_param = json.dumps(tags) if tags else None
+            params = (name, description, category, tags_param, None, "active", author, git_repository_url, now, now)
             await self._backend.execute(self._backend.SKILL_UPSERT, params)
             self.logger.debug(f"Created skill: {name}")
 
@@ -625,13 +628,17 @@ class SkillsDatabaseLogger:
 
         try:
             now = datetime.now(timezone.utc)
-            config_json = json.dumps(config) if config else None
-            deps_json = json.dumps(dependencies) if dependencies else None
-            breaking_json = json.dumps(breaking_changes) if breaking_changes else None
+            # asyncpg uses the TEXT codec for JSONB parameters (type inference
+            # returns TEXT/unknown, not JSONB, for undecorated $N params).
+            # Passing a pre-serialized JSON string works for both backends:
+            # PostgreSQL silently casts TEXT → JSONB; SQLite stores it as TEXT.
+            config_param = json.dumps(config) if config else None
+            deps_param = json.dumps(dependencies) if dependencies else None
+            breaking_param = json.dumps(breaking_changes) if breaking_changes else None
 
             params = (
                 skill_id, version, git_source_id, git_branch, git_commit_sha, git_tag,
-                content, config_json, deps_json, breaking_json, status, published_by,
+                content, config_param, deps_param, breaking_param, status, published_by,
                 None, now
             )
             await self._backend.execute(self._backend.SKILL_VERSION_INSERT, params)

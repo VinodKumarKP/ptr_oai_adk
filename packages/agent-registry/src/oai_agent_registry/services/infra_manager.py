@@ -150,39 +150,68 @@ class InfraManager:
             )
 
     async def _wait_for_tcp(self, host: str, port: int) -> None:
-        """Poll TCP until Postgres accepts connections or startup_timeout elapses.
+        """Poll until Postgres accepts authenticated connections.
 
-        This is a safety net for the case where --wait is not available or the
-        healthcheck hasn't fully propagated.
+        Prefers an asyncpg round-trip over raw TCP so that Docker Desktop's
+        port-proxy race condition is avoided: the Docker proxy can complete a
+        TCP handshake before Postgres is ready to serve clients, which would
+        cause asyncpg to fail immediately after this check returns.
+
+        Falls back to a TCP-only check when asyncpg is not installed.
         """
+        try:
+            import asyncpg as _asyncpg  # local import — may not be installed
+        except ImportError:
+            _asyncpg = None
+
+        pg_user = os.environ.get("LOGGING_DB_USER", "postgres")
+        pg_password = os.environ.get("LOGGING_DB_PASSWORD", "postgres")
+
         deadline = asyncio.get_event_loop().time() + self.startup_timeout
         attempt = 0
 
         while True:
             attempt += 1
             try:
-                _, writer = await asyncio.wait_for(
-                    asyncio.open_connection(host, port), timeout=2.0
-                )
-                writer.close()
-                await writer.wait_closed()
+                if _asyncpg is not None:
+                    # Full authentication test — only succeeds when Postgres is
+                    # ready to serve clients, not just when the port is open.
+                    conn = await asyncio.wait_for(
+                        _asyncpg.connect(
+                            host=host,
+                            port=port,
+                            database="postgres",
+                            user=pg_user,
+                            password=pg_password,
+                        ),
+                        timeout=3.0,
+                    )
+                    await conn.close()
+                else:
+                    # Fallback: plain TCP handshake
+                    _, writer = await asyncio.wait_for(
+                        asyncio.open_connection(host, port), timeout=2.0
+                    )
+                    writer.close()
+                    await writer.wait_closed()
+
                 logger.debug(
-                    "Postgres TCP reachable at %s:%s after %d attempt(s)",
+                    "Postgres ready at %s:%s after %d attempt(s)",
                     host, port, attempt,
                 )
                 return
-            except (OSError, asyncio.TimeoutError):
+
+            except Exception:
                 remaining = deadline - asyncio.get_event_loop().time()
                 if remaining <= 0:
                     raise TimeoutError(
-                        f"Postgres at {host}:{port} did not become reachable "
+                        f"Postgres at {host}:{port} did not become ready "
                         f"within {self.startup_timeout}s"
                     )
-                # Exponential backoff capped at 10 s
                 wait = min(2 ** min(attempt - 1, 3), 10)
                 wait = min(wait, remaining)
                 logger.debug(
-                    "Postgres not ready yet (attempt %d), retrying in %.0fs …",
+                    "Postgres not ready yet (attempt %d), retrying in %.0fs ...",
                     attempt, wait,
                 )
                 await asyncio.sleep(wait)

@@ -94,7 +94,7 @@ class PostgresBackend(DatabaseBackend):
             if logger: logger.info("PostgreSQL backend available.")
 
         host = os.environ.get("LOGGING_DB_HOST", "localhost")
-        port = os.environ.get("LOGGING_DB_PORT", "5432")
+        port = os.environ.get("LOGGING_DB_PORT", "5433")
         name = os.environ.get("LOGGING_DB_NAME", "mcp_logs")
         user = os.environ.get("LOGGING_DB_USER", "postgres")
         password = os.environ.get("LOGGING_DB_PASSWORD", "postgres")
