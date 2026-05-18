@@ -19,6 +19,9 @@ class PythonPackageDeployer(BaseDeployer):
     installs dependencies, and runs the agent locally as a python subprocess.
     """
 
+    def start_infra_services(self) -> None:
+        pass
+
     def __init__(
         self,
         seed_config: Dict[str, Any],

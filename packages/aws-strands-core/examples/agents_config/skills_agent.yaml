@@ -15,6 +15,7 @@ agent_list:
       skills:
         - pdf
         - data-validator
+        - web-scraper
 
 crew_config:
   pattern: supervisor

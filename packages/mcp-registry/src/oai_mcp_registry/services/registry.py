@@ -79,6 +79,55 @@ class MCPRegistry:
 
     async def initialize(self):
         """Initializes the MCPRegistry, including the database logger and deployers."""
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        build_dir = os.path.abspath(os.path.join(current_dir, '..', 'resources', 'docker'))
+
+        # --- Optional: auto-start infra Docker services before DB init ---
+        #
+        # Sequence:
+        #  1. Create a DockerComposeManager for the "docker" deployer early.
+        #  2. Call start_infra_services() — regenerates docker-compose.yaml
+        #     (always authoritative) then runs
+        #     `docker compose up -d --wait postgres valkey`.
+        #  3. TCP-poll Postgres as a safety net for older Docker Compose versions
+        #     that do not support --wait.
+        #  4. Only then initialise the DB logger so asyncpg finds Postgres ready.
+        #
+        if self.registry_config.auto_start_infra:
+            from oai_mcp_registry.services.infra_manager import InfraManager
+
+            _seed = self._build_seed_configs_from_servers()
+            try:
+                _early_deployer = DeployerFactory.get_deployer(
+                    mode="docker",
+                    seed_config=_seed.get("docker", {}),
+                    compose_output_path=os.path.join(build_dir, "docker-compose.generated.yaml"),
+                    base_compose_path=os.path.join(build_dir, "docker-compose.yaml"),
+                    agent_base_url=(
+                        f"{os.environ.get('MCP_BASE_URL', 'localhost')}"
+                        f":{os.environ.get('MCP_BASE_URL_PORT', self.registry_config.port)}"
+                    ),
+                    agent_local_registry_url=(
+                        f"http://host.docker.internal"
+                        f":{os.environ.get('MCP_BASE_URL_PORT', self.registry_config.port)}"
+                    ),
+                )
+                # Generates docker-compose.yaml then starts only postgres + valkey.
+                _early_deployer.start_infra_services()
+            except Exception as exc:
+                logger.error("auto_start_infra: docker compose startup failed: %s", exc)
+
+            # TCP safety-net poll — essential when docker compose --wait is not
+            # available (Compose < v2.4).
+            try:
+                await InfraManager.wait_for_postgres(
+                    timeout=self.registry_config.infra_startup_timeout,
+                )
+            except TimeoutError as exc:
+                logger.error("auto_start_infra: Postgres did not become ready: %s", exc)
+            except Exception as exc:
+                logger.warning("auto_start_infra: Postgres readiness check failed: %s", exc)
+
         await self.db_logger.initialize()
 
         if self.db_logger.is_active:
@@ -87,9 +136,6 @@ class MCPRegistry:
             await self._load_dynamic_servers_from_db()
         else:
             logger.warning("RegistryDatabaseLogger could not be initialized.")
-
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        build_dir = os.path.abspath(os.path.join(current_dir, '..', 'resources', 'docker'))
 
         # Initialize deployers for available modes
         seed_configs = self._build_seed_configs_from_servers()

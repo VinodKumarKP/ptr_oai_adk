@@ -40,6 +40,11 @@ class RegistryConfig(BaseModel):
     start_port: int = 8000
     end_port: int = 8100
     enable_cors: bool = True
+    # Infra auto-start: when True, runs docker compose up on the infra compose
+    # file before the database is initialized so Postgres/Valkey are ready.
+    auto_start_infra: bool = False
+    infra_compose_file: Optional[str] = None   # absolute path; None → bundled docker-compose.yaml
+    infra_startup_timeout: int = 60            # seconds to wait for Postgres to accept connections
 
 class AppConfig(BaseModel):
     """Represents the JSON configuration file."""

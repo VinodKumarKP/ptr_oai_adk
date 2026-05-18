@@ -170,8 +170,58 @@ class DockerComposeManager(BaseDeployer):
         self.used_ports = []
 
     async def initialize(self) -> None:
+        """Generate compose files and start all services.
+
+        Infra services (postgres, valkey) are expected to already be running by
+        the time this is called.  If auto_start_infra is enabled, call
+        start_infra_services() before initialising the database instead.
+        """
         self.write_compose_file()
         self._run_compose_up()
+
+    def start_infra_services(self, services: Optional[List[str]] = None) -> None:
+        """Generate compose files and start only infra services (postgres, valkey).
+
+        Must be called *before* the database logger is initialised so that
+        Postgres is accepting connections when asyncpg tries to connect.
+
+        Uses ``docker compose up --wait`` which blocks until the healthchecks
+        defined in the compose file pass (pg_isready / redis ping).  Falls back
+        to starting without --wait for older Docker Compose versions.
+
+        Args:
+            services: service names to start; defaults to ["postgres", "valkey"].
+        """
+        self.write_compose_file()   # ensure docker-compose.yaml is up to date
+
+        target = services or ["postgres", "valkey"]
+
+        for use_wait in (True, False):
+            cmd = [
+                "docker", "compose",
+                "-f", str(self._base_path),
+                "up", "-d",
+            ]
+            if use_wait:
+                cmd.append("--wait")
+            cmd.extend(target)
+
+            logger.info("Starting infra services %s: %s", target, " ".join(cmd))
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode == 0:
+                logger.info("Infra services started successfully.")
+                return
+
+            output = (result.stdout + result.stderr).lower()
+            if use_wait and ("unknown flag" in output or "unknown shorthand" in output):
+                logger.debug("--wait not supported; retrying without it")
+                continue
+
+            raise RuntimeError(
+                f"docker compose up failed for infra services "
+                f"(exit {result.returncode}):\n{result.stderr}"
+            )
 
     async def shutdown(self) -> None:
         await self._run_compose_down()

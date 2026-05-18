@@ -74,3 +74,9 @@ class BaseDeployer(ABC):
     def image_exists(self, agent_name: str, version: str) -> bool:
         """Check if the deployment artifact for the given version already exists locally."""
         pass
+
+
+    @abstractmethod
+    def start_infra_services(self) -> None:
+        """Start any necessary infrastructure services (e.g., databases, message queues)."""
+        pass

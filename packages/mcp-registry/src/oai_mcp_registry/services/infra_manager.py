@@ -1,21 +1,18 @@
 """
 InfraManager — starts infrastructure Docker Compose services (postgres, valkey)
-before the registry backend initialises its database connection.
+before the MCP registry backend initialises its database connection.
 
-Usage (called automatically from AgentRegistry.initialize when
+Usage (called automatically from MCPRegistry.initialize when
 registry_config.auto_start_infra is True):
 
-    manager = InfraManager(
-        compose_file=Path("/path/to/docker-compose.yaml"),
-        startup_timeout=60,
-    )
-    await manager.start()
+    # Step 1: generate compose file + start infra via the deployer (sync)
+    deployer.start_infra_services()
 
-The manager:
-  1. Runs  docker compose up -d --wait postgres valkey
-     --wait blocks until both services' healthchecks pass (pg_isready / redis ping).
-  2. Falls back to a TCP poll on the Postgres port for Docker Compose installs
-     that pre-date --wait support (< v2.4).
+    # Step 2: async TCP safety-net poll (class method, no compose interaction)
+    await InfraManager.wait_for_postgres(timeout=60)
+
+The TCP poll is a safety net for Docker Compose versions that pre-date --wait
+support (< v2.4) where the command returns before pg_isready passes.
 """
 
 from __future__ import annotations
@@ -29,7 +26,6 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 # Services we always start for the registry backend.
-# Clients can override via the constructor if needed.
 _DEFAULT_INFRA_SERVICES: List[str] = ["postgres", "valkey"]
 
 
@@ -39,7 +35,7 @@ class InfraManager:
     def __init__(
         self,
         compose_file: Path,
-        project_name: str = "agent-registry",
+        project_name: str = "mcp-registry",
         services: Optional[List[str]] = None,
         startup_timeout: int = 60,
     ) -> None:
@@ -56,6 +52,8 @@ class InfraManager:
         """Start infra services and wait until Postgres is reachable.
 
         Idempotent — safe to call when services are already running.
+        Prefer calling deployer.start_infra_services() + InfraManager.wait_for_postgres()
+        instead so the compose file is always regenerated first.
         """
         if not self.compose_file.exists():
             raise FileNotFoundError(
@@ -106,10 +104,8 @@ class InfraManager:
     async def _compose_up(self) -> None:
         """Run docker compose up -d --wait <services>.
 
-        --wait (Compose v2.4+) blocks until healthchecks pass, which means
-        postgres is accepting connections before the command returns.
-        If the flag is unrecognised we retry without it and rely on the
-        TCP poll in start() instead.
+        --wait (Compose v2.4+) blocks until healthchecks pass.
+        Falls back to starting without --wait for older versions.
         """
         cmd_base = [
             "docker", "compose",
@@ -118,7 +114,6 @@ class InfraManager:
             "up", "-d",
         ]
 
-        # Preferred: --wait honours the healthchecks defined in the compose file.
         for use_wait in (True, False):
             cmd = cmd_base + (["--wait"] if use_wait else []) + self.services
             logger.debug("Running: %s", " ".join(cmd))
@@ -135,7 +130,6 @@ class InfraManager:
                     logger.debug("docker compose output:\n%s", output)
                 return
 
-            # If --wait is not supported the error mentions "unknown flag"
             if use_wait and (
                 "unknown flag" in output.lower()
                 or "unknown shorthand flag" in output.lower()
@@ -143,18 +137,14 @@ class InfraManager:
                 logger.debug(
                     "--wait flag not supported by this Docker Compose version; retrying without it"
                 )
-                continue  # retry without --wait
+                continue
 
             raise RuntimeError(
                 f"docker compose up failed (exit {proc.returncode}):\n{output}"
             )
 
     async def _wait_for_tcp(self, host: str, port: int) -> None:
-        """Poll TCP until Postgres accepts connections or startup_timeout elapses.
-
-        This is a safety net for the case where --wait is not available or the
-        healthcheck hasn't fully propagated.
-        """
+        """Poll TCP until Postgres accepts connections or startup_timeout elapses."""
         deadline = asyncio.get_event_loop().time() + self.startup_timeout
         attempt = 0
 
@@ -178,11 +168,10 @@ class InfraManager:
                         f"Postgres at {host}:{port} did not become reachable "
                         f"within {self.startup_timeout}s"
                     )
-                # Exponential backoff capped at 10 s
                 wait = min(2 ** min(attempt - 1, 3), 10)
                 wait = min(wait, remaining)
                 logger.debug(
-                    "Postgres not ready yet (attempt %d), retrying in %.0fs …",
+                    "Postgres not ready yet (attempt %d), retrying in %.0fs ...",
                     attempt, wait,
                 )
                 await asyncio.sleep(wait)
