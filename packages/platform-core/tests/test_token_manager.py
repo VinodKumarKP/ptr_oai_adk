@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from oai_agent_server.utils.token_manager import TokenManager
+from oai_platform_core.security import TokenManager
 import time
 
 @pytest.fixture

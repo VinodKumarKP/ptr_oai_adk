@@ -109,8 +109,8 @@ async def test_verify_jwt_token_valid_secret():
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     
     with patch('oai_agent_server.security.dependencies.get_original_environ', return_value={'AGENT_AUTH_ENABLED': 'true'}), \
-         patch.dict(os.environ, {"JWT_SECRET_KEY": secret}, clear=True):
-        
+         patch.dict(os.environ, {"JWT_SECRET_KEY": secret, "JWT_PUBLIC_KEY_PATH": ""}, clear=True):
+
         result = await verify_jwt_token(request, credentials)
         assert result["sub"] == "user123"
 
@@ -125,8 +125,8 @@ async def test_verify_jwt_token_expired():
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     
     with patch('oai_agent_server.security.dependencies.get_original_environ', return_value={'AGENT_AUTH_ENABLED': 'true'}), \
-         patch.dict(os.environ, {"JWT_SECRET_KEY": secret}, clear=True):
-        
+         patch.dict(os.environ, {"JWT_SECRET_KEY": secret, "JWT_PUBLIC_KEY_PATH": ""}, clear=True):
+
         with pytest.raises(AuthenticationException) as excinfo:
             await verify_jwt_token(request, credentials)
         assert "Token has expired" in str(excinfo.value.detail)

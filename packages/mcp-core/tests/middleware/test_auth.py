@@ -47,7 +47,7 @@ class TestAuthenticationMiddleware:
             
             # Mock TokenManager import
             mock_tm_cls = MagicMock()
-            m.setattr("sys.modules", {**sys.modules, "oai_mcp_server_core.utils.token_manager": MagicMock(TokenManager=mock_tm_cls)})
+            m.setattr("sys.modules", {**sys.modules, "oai_platform_core.security.token_manager": MagicMock(TokenManager=mock_tm_cls)})
             
             middleware = AuthenticationMiddleware("test_server")
             
@@ -70,9 +70,9 @@ class TestAuthenticationMiddleware:
             # We need to mock the import inside __init__
             mock_module = MagicMock()
             mock_module.TokenManager.return_value = mock_tm
-            m.setattr("oai_mcp_server_core.utils.token_manager", mock_module)
+            m.setattr("oai_platform_core.security.token_manager", mock_module)
             # Also need to ensure it's in sys.modules for the import to work
-            m.setattr(sys, "modules", {**sys.modules, "oai_mcp_server_core.utils.token_manager": mock_module})
+            m.setattr(sys, "modules", {**sys.modules, "oai_platform_core.security.token_manager": mock_module})
 
             middleware = AuthenticationMiddleware("test_server")
             # Force set token manager in case import mock failed

@@ -3,7 +3,7 @@ import time
 import json
 import base64
 from unittest.mock import MagicMock, call
-from oai_mcp_server_core.utils.token_manager import TokenManager
+from oai_platform_core.security import TokenManager
 
 class TestTokenManager:
     @pytest.fixture

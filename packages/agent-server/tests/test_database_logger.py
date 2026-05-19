@@ -11,12 +11,14 @@ import logging
 import os
 import sys
 import types
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+import oai_platform_core.db.base as _DB_BASE
 
 # Locate the module under test
 _MODULE_PATH = './src/oai_agent_server/utils/database_logger.py'
@@ -109,6 +111,65 @@ def load_module(fake_aiosqlite: Optional[_FakeAiosqlite] = None, fake_asyncpg: O
     with patch.dict(sys.modules, stubs):
         spec.loader.exec_module(mod)
     return mod
+
+
+@contextmanager
+def _patching_db_base(fake_aiosqlite: Optional[_FakeAiosqlite] = None,
+                      fake_asyncpg: Optional[_FakeAsyncpg] = None):
+    """Patch *oai_platform_core.db.base* with fake drivers for the block duration.
+
+    SQLiteBackend and PostgresBackend resolve their driver module at call time
+    from the platform-core module's global namespace.  Patching sys.modules
+    during load_module() only affects *new* imports; we must also patch the
+    already-bound names in the platform-core module so that backend method
+    calls during a test use the fakes.
+    """
+    patches: list = []
+    if fake_aiosqlite is not None:
+        patches.append(patch.object(_DB_BASE, 'aiosqlite', fake_aiosqlite))
+        patches.append(patch.object(_DB_BASE, '_AIOSQLITE_AVAILABLE', True))
+    else:
+        patches.append(patch.object(_DB_BASE, '_AIOSQLITE_AVAILABLE', False))
+    if fake_asyncpg is not None:
+        patches.append(patch.object(_DB_BASE, 'asyncpg', fake_asyncpg))
+    for p in patches:
+        p.start()
+    try:
+        yield
+    finally:
+        for p in patches:
+            p.stop()
+
+
+@contextmanager
+def _make_pg_module(conn=None, create_pool_raises=None):
+    """Context manager: load the module with a fake asyncpg pool.
+
+    Patches *oai_platform_core.db.base.asyncpg* for the duration so that
+    ``BasePostgresBackend.initialize()`` uses the fake pool instead of trying
+    to connect to a real PostgreSQL server.
+
+    Usage::
+
+        with _make_pg_module() as (mod, conn, pool):
+            backend = mod.PostgresBackend()
+            assert run(backend.initialize(silent_logger())) is True
+    """
+    fake = _FakeAsyncpg()
+    if conn is None:
+        conn = _FakePostgresConn(executions=[])
+    pool = _FakePool(conn)
+    if create_pool_raises is not None:
+        async def _bad_pool(*a, **kw):
+            raise create_pool_raises
+        fake.create_pool = _bad_pool
+    else:
+        async def _make(*a, **kw):
+            return pool
+        fake.create_pool = _make
+    mod = load_module(fake_aiosqlite=_FakeAiosqlite(), fake_asyncpg=fake)
+    with _patching_db_base(fake_aiosqlite=_FakeAiosqlite(), fake_asyncpg=fake):
+        yield mod, conn, pool
 
 def make_mock_backend(succeeds: bool = True, name: str = "mock", fetch_result: Optional[List] = None, fetch_one_result: Optional[Dict] = None) -> MagicMock:
     b = MagicMock()
@@ -442,7 +503,9 @@ class TestSQLiteBackendIntegration:
     @pytest.fixture(autouse=True)
     def setup(self):
         self.fake_aiosqlite = _FakeAiosqlite()
-        self.mod = load_module(fake_aiosqlite=self.fake_aiosqlite, fake_asyncpg=_FakeAsyncpg())
+        with _patching_db_base(fake_aiosqlite=self.fake_aiosqlite):
+            self.mod = load_module(fake_aiosqlite=self.fake_aiosqlite, fake_asyncpg=_FakeAsyncpg())
+            yield
     def test_initialize_succeeds(self):
         backend = self.mod.SQLiteBackend()
         with patch.dict(os.environ, {"SQLITE_DB_PATH": "/tmp/test.db"}):
@@ -495,7 +558,10 @@ class TestPostgresBackendFallsBack:
 
 class TestSQLiteBackendFallsBack:
     def test_unavailable_when_aiosqlite_missing(self):
-        with patch.dict(sys.modules, {"aiosqlite": None}):
+        # _AIOSQLITE_AVAILABLE is set at platform-core import time; we must
+        # patch it directly to simulate the "aiosqlite not installed" path.
+        with patch.dict(sys.modules, {"aiosqlite": None}), \
+             _patching_db_base(fake_aiosqlite=None, fake_asyncpg=_FakeAsyncpg()):
             mod = load_module(fake_asyncpg=_FakeAsyncpg())
             backend = mod.SQLiteBackend()
             with patch.dict(os.environ, {"SQLITE_DB_PATH": "/tmp/x.db"}):
@@ -615,7 +681,9 @@ class TestExecuteMany:
     @pytest.fixture(autouse=True)
     def setup(self):
         self.fake_aiosqlite = _FakeAiosqlite()
-        self.mod = load_module(fake_aiosqlite=self.fake_aiosqlite, fake_asyncpg=_FakeAsyncpg())
+        with _patching_db_base(fake_aiosqlite=self.fake_aiosqlite):
+            self.mod = load_module(fake_aiosqlite=self.fake_aiosqlite, fake_asyncpg=_FakeAsyncpg())
+            yield
     def test_execute_many_empty_is_noop(self):
         backend = self.mod.SQLiteBackend()
         with patch.dict(os.environ, {"SQLITE_DB_PATH": "/tmp/em_test.db"}):
@@ -953,79 +1021,62 @@ class _FakePool:
         self.closed += 1
 
 
-def _make_pg_module(conn=None, create_pool_raises=None):
-    """Load the module with asyncpg.create_pool patched to return a fake pool."""
-    fake = _FakeAsyncpg()
-    if conn is None:
-        conn = _FakePostgresConn(executions=[])
-    pool = _FakePool(conn)
-    if create_pool_raises is not None:
-        async def _bad_pool(*a, **kw):
-            raise create_pool_raises
-        fake.create_pool = _bad_pool
-    else:
-        async def _make(*a, **kw):
-            return pool
-        fake.create_pool = _make
-    mod = load_module(fake_aiosqlite=_FakeAiosqlite(), fake_asyncpg=fake)
-    return mod, conn, pool
-
-
 class TestPostgresBackend:
     """Tests for PostgresBackend with mocked asyncpg."""
 
     def test_initialize_success_returns_true(self):
-        mod, conn, pool = _make_pg_module()
-        backend = mod.PostgresBackend()
-        assert run(backend.initialize(silent_logger())) is True
-        assert backend._pool is pool
+        with _make_pg_module() as (mod, conn, pool):
+            backend = mod.PostgresBackend()
+            assert run(backend.initialize(silent_logger())) is True
+            assert backend._pool is pool
 
     def test_initialize_runs_select_1(self):
-        mod, conn, _ = _make_pg_module()
-        backend = mod.PostgresBackend()
-        run(backend.initialize(silent_logger()))
-        sqls = [c["sql"] for c in conn.executions]
-        assert "SELECT 1" in sqls
+        with _make_pg_module() as (mod, conn, _):
+            backend = mod.PostgresBackend()
+            run(backend.initialize(silent_logger()))
+            sqls = [c["sql"] for c in conn.executions]
+            assert "SELECT 1" in sqls
 
     def test_initialize_creates_schema(self):
-        mod, conn, _ = _make_pg_module()
-        backend = mod.PostgresBackend()
-        run(backend.initialize(silent_logger()))
-        sqls = " ".join(c["sql"] for c in conn.executions)
-        assert "chat_logs" in sqls
-        assert "agent_activity_log" in sqls
-        assert "scheduled_jobs" in sqls
-        assert "scheduled_job_runs" in sqls
+        with _make_pg_module() as (mod, conn, _):
+            backend = mod.PostgresBackend()
+            run(backend.initialize(silent_logger()))
+            sqls = " ".join(c["sql"] for c in conn.executions)
+            assert "chat_logs" in sqls
+            assert "agent_activity_log" in sqls
+            assert "scheduled_jobs" in sqls
+            assert "scheduled_job_runs" in sqls
 
     def test_initialize_failure_returns_false(self):
-        mod, _, _ = _make_pg_module(create_pool_raises=OSError("boom"))
-        backend = mod.PostgresBackend()
-        assert run(backend.initialize(silent_logger())) is False
-        assert backend._pool is None
+        with _make_pg_module(create_pool_raises=OSError("boom")) as (mod, _, __):
+            backend = mod.PostgresBackend()
+            assert run(backend.initialize(silent_logger())) is False
+            assert backend._pool is None
 
     def test_initialize_failure_no_logger(self):
-        mod, _, _ = _make_pg_module(create_pool_raises=OSError("boom"))
-        backend = mod.PostgresBackend()
-        assert run(backend.initialize(None)) is False
+        with _make_pg_module(create_pool_raises=OSError("boom")) as (mod, _, __):
+            backend = mod.PostgresBackend()
+            assert run(backend.initialize(None)) is False
 
     def test_env_vars_used_in_dsn(self, monkeypatch):
         captured = {}
-        mod, conn, _ = _make_pg_module()
-        async def _capture(dsn, **kwargs):
-            captured["dsn"] = dsn
-            captured["kwargs"] = kwargs
-            return _FakePool(conn)
-        monkeypatch.setattr(mod.asyncpg, "create_pool", _capture)
-        monkeypatch.setenv("LOGGING_DB_HOST", "h.example.com")
-        monkeypatch.setenv("LOGGING_DB_PORT", "6543")
-        monkeypatch.setenv("LOGGING_DB_NAME", "mydb")
-        monkeypatch.setenv("LOGGING_DB_USER", "alice")
-        monkeypatch.setenv("LOGGING_DB_PASSWORD", "secret")
-        monkeypatch.setenv("DB_POOL_MIN_SIZE", "5")
-        monkeypatch.setenv("DB_POOL_MAX_SIZE", "9")
-        monkeypatch.setenv("DB_POOL_TIMEOUT", "60")
-        backend = mod.PostgresBackend()
-        run(backend.initialize(silent_logger()))
+        with _make_pg_module() as (mod, conn, _):
+            async def _capture(dsn, **kwargs):
+                captured["dsn"] = dsn
+                captured["kwargs"] = kwargs
+                return _FakePool(conn)
+            # _DB_BASE.asyncpg is the fake inside this context; patch create_pool on it
+            monkeypatch.setattr(_DB_BASE.asyncpg, "create_pool", _capture)
+            monkeypatch.setenv("LOGGING_DB_HOST", "h.example.com")
+            monkeypatch.setenv("LOGGING_DB_PORT", "6543")
+            monkeypatch.setenv("LOGGING_DB_NAME", "mydb")
+            monkeypatch.setenv("LOGGING_DB_USER", "alice")
+            monkeypatch.setenv("LOGGING_DB_PASSWORD", "secret")
+            monkeypatch.setenv("DB_POOL_MIN_SIZE", "5")
+            monkeypatch.setenv("DB_POOL_MAX_SIZE", "9")
+            monkeypatch.setenv("DB_POOL_TIMEOUT", "60")
+            backend = mod.PostgresBackend()
+            run(backend.initialize(silent_logger()))
         assert "alice" in captured["dsn"]
         assert "h.example.com" in captured["dsn"]
         assert "6543" in captured["dsn"]
@@ -1036,18 +1087,19 @@ class TestPostgresBackend:
 
     def test_env_var_defaults_applied(self, monkeypatch):
         captured = {}
-        mod, conn, _ = _make_pg_module()
-        async def _capture(dsn, **kwargs):
-            captured["dsn"] = dsn
-            captured["kwargs"] = kwargs
-            return _FakePool(conn)
-        monkeypatch.setattr(mod.asyncpg, "create_pool", _capture)
-        for k in ["LOGGING_DB_HOST", "LOGGING_DB_PORT", "LOGGING_DB_NAME",
-                  "LOGGING_DB_USER", "LOGGING_DB_PASSWORD",
-                  "DB_POOL_MIN_SIZE", "DB_POOL_MAX_SIZE", "DB_POOL_TIMEOUT"]:
-            monkeypatch.delenv(k, raising=False)
-        backend = mod.PostgresBackend()
-        run(backend.initialize(silent_logger()))
+        with _make_pg_module() as (mod, conn, _):
+            async def _capture(dsn, **kwargs):
+                captured["dsn"] = dsn
+                captured["kwargs"] = kwargs
+                return _FakePool(conn)
+            # _DB_BASE.asyncpg is the fake inside this context; patch create_pool on it
+            monkeypatch.setattr(_DB_BASE.asyncpg, "create_pool", _capture)
+            for k in ["LOGGING_DB_HOST", "LOGGING_DB_PORT", "LOGGING_DB_NAME",
+                      "LOGGING_DB_USER", "LOGGING_DB_PASSWORD",
+                      "DB_POOL_MIN_SIZE", "DB_POOL_MAX_SIZE", "DB_POOL_TIMEOUT"]:
+                monkeypatch.delenv(k, raising=False)
+            backend = mod.PostgresBackend()
+            run(backend.initialize(silent_logger()))
         assert "localhost" in captured["dsn"]
         assert "5432" in captured["dsn"]
         assert "agent_logs" in captured["dsn"]
@@ -1055,100 +1107,100 @@ class TestPostgresBackend:
         assert captured["kwargs"]["max_size"] == 4
 
     def test_execute_raises_when_not_initialised(self):
-        mod, _, _ = _make_pg_module()
-        backend = mod.PostgresBackend()
-        with pytest.raises(RuntimeError):
-            run(backend.execute("SELECT 1", ()))
+        with _make_pg_module() as (mod, _, __):
+            backend = mod.PostgresBackend()
+            with pytest.raises(RuntimeError):
+                run(backend.execute("SELECT 1", ()))
 
     def test_execute_many_raises_when_not_initialised(self):
-        mod, _, _ = _make_pg_module()
-        backend = mod.PostgresBackend()
-        with pytest.raises(RuntimeError):
-            run(backend.execute_many("SELECT 1", [(1,)]))
+        with _make_pg_module() as (mod, _, __):
+            backend = mod.PostgresBackend()
+            with pytest.raises(RuntimeError):
+                run(backend.execute_many("SELECT 1", [(1,)]))
 
     def test_fetch_raises_when_not_initialised(self):
-        mod, _, _ = _make_pg_module()
-        backend = mod.PostgresBackend()
-        with pytest.raises(RuntimeError):
-            run(backend.fetch("SELECT 1", ()))
+        with _make_pg_module() as (mod, _, __):
+            backend = mod.PostgresBackend()
+            with pytest.raises(RuntimeError):
+                run(backend.fetch("SELECT 1", ()))
 
     def test_fetch_one_raises_when_not_initialised(self):
-        mod, _, _ = _make_pg_module()
-        backend = mod.PostgresBackend()
-        with pytest.raises(RuntimeError):
-            run(backend.fetch_one("SELECT 1", ()))
+        with _make_pg_module() as (mod, _, __):
+            backend = mod.PostgresBackend()
+            with pytest.raises(RuntimeError):
+                run(backend.fetch_one("SELECT 1", ()))
 
     def test_execute_calls_conn_execute(self):
-        mod, conn, _ = _make_pg_module()
-        backend = mod.PostgresBackend()
-        run(backend.initialize(silent_logger()))
-        conn.executions.clear()
-        run(backend.execute("INSERT INTO foo VALUES ($1)", ("bar",)))
-        assert any(c["sql"] == "INSERT INTO foo VALUES ($1)" and c["params"] == ("bar",)
-                   for c in conn.executions)
+        with _make_pg_module() as (mod, conn, _):
+            backend = mod.PostgresBackend()
+            run(backend.initialize(silent_logger()))
+            conn.executions.clear()
+            run(backend.execute("INSERT INTO foo VALUES ($1)", ("bar",)))
+            assert any(c["sql"] == "INSERT INTO foo VALUES ($1)" and c["params"] == ("bar",)
+                       for c in conn.executions)
 
     def test_execute_many_empty_is_noop(self):
-        mod, conn, _ = _make_pg_module()
-        backend = mod.PostgresBackend()
-        run(backend.initialize(silent_logger()))
-        before = len(conn.executions)
-        run(backend.execute_many("INSERT INTO foo VALUES ($1)", []))
-        assert len(conn.executions) == before
+        with _make_pg_module() as (mod, conn, _):
+            backend = mod.PostgresBackend()
+            run(backend.initialize(silent_logger()))
+            before = len(conn.executions)
+            run(backend.execute_many("INSERT INTO foo VALUES ($1)", []))
+            assert len(conn.executions) == before
 
     def test_execute_many_records_each_row(self):
-        mod, conn, _ = _make_pg_module()
-        backend = mod.PostgresBackend()
-        run(backend.initialize(silent_logger()))
-        conn.executions.clear()
-        run(backend.execute_many("INSERT INTO foo VALUES ($1)", [("a",), ("b",)]))
-        execm = [c for c in conn.executions if c.get("via") == "executemany"]
-        assert len(execm) == 2
+        with _make_pg_module() as (mod, conn, _):
+            backend = mod.PostgresBackend()
+            run(backend.initialize(silent_logger()))
+            conn.executions.clear()
+            run(backend.execute_many("INSERT INTO foo VALUES ($1)", [("a",), ("b",)]))
+            execm = [c for c in conn.executions if c.get("via") == "executemany"]
+            assert len(execm) == 2
 
     def test_fetch_returns_list_of_dicts(self):
         rows = [{"a": 1}, {"a": 2}]
         conn = _FakePostgresConn(executions=[], fetch_rows=rows)
-        mod, _, _ = _make_pg_module(conn=conn)
-        backend = mod.PostgresBackend()
-        run(backend.initialize(silent_logger()))
-        result = run(backend.fetch("SELECT a FROM t", ()))
+        with _make_pg_module(conn=conn) as (mod, _, __):
+            backend = mod.PostgresBackend()
+            run(backend.initialize(silent_logger()))
+            result = run(backend.fetch("SELECT a FROM t", ()))
         assert result == rows
 
     def test_fetch_empty_returns_empty_list(self):
         conn = _FakePostgresConn(executions=[], fetch_rows=[])
-        mod, _, _ = _make_pg_module(conn=conn)
-        backend = mod.PostgresBackend()
-        run(backend.initialize(silent_logger()))
-        assert run(backend.fetch("SELECT a FROM t", ())) == []
+        with _make_pg_module(conn=conn) as (mod, _, __):
+            backend = mod.PostgresBackend()
+            run(backend.initialize(silent_logger()))
+            assert run(backend.fetch("SELECT a FROM t", ())) == []
 
     def test_fetch_one_returns_dict(self):
         conn = _FakePostgresConn(executions=[], fetchrow_row={"x": 1})
-        mod, _, _ = _make_pg_module(conn=conn)
-        backend = mod.PostgresBackend()
-        run(backend.initialize(silent_logger()))
-        assert run(backend.fetch_one("SELECT x FROM t", ())) == {"x": 1}
+        with _make_pg_module(conn=conn) as (mod, _, __):
+            backend = mod.PostgresBackend()
+            run(backend.initialize(silent_logger()))
+            assert run(backend.fetch_one("SELECT x FROM t", ())) == {"x": 1}
 
     def test_fetch_one_returns_none_when_no_row(self):
         conn = _FakePostgresConn(executions=[], fetchrow_row=None)
-        mod, _, _ = _make_pg_module(conn=conn)
-        backend = mod.PostgresBackend()
-        run(backend.initialize(silent_logger()))
-        assert run(backend.fetch_one("SELECT x FROM t", ())) is None
+        with _make_pg_module(conn=conn) as (mod, _, __):
+            backend = mod.PostgresBackend()
+            run(backend.initialize(silent_logger()))
+            assert run(backend.fetch_one("SELECT x FROM t", ())) is None
 
     def test_close_closes_pool_and_idempotent(self):
-        mod, conn, pool = _make_pg_module()
-        backend = mod.PostgresBackend()
-        run(backend.initialize(silent_logger()))
-        run(backend.close())
-        assert pool.closed == 1
-        assert backend._pool is None
-        # Second close is a no-op
-        run(backend.close())
-        assert pool.closed == 1
+        with _make_pg_module() as (mod, conn, pool):
+            backend = mod.PostgresBackend()
+            run(backend.initialize(silent_logger()))
+            run(backend.close())
+            assert pool.closed == 1
+            assert backend._pool is None
+            # Second close is a no-op
+            run(backend.close())
+            assert pool.closed == 1
 
     def test_close_before_initialize_safe(self):
-        mod, _, _ = _make_pg_module()
-        backend = mod.PostgresBackend()
-        run(backend.close())  # should not raise
+        with _make_pg_module() as (mod, _, __):
+            backend = mod.PostgresBackend()
+            run(backend.close())  # should not raise
 
     def test_create_schema_handles_alter_failure(self):
         """If ALTER TABLE raises, _create_schema swallows it and logs."""
@@ -1158,10 +1210,10 @@ class TestPostgresBackend:
                 if "ALTER TABLE" in query:
                     raise RuntimeError("alter failed")
         conn = _FlakyConn(executions=[])
-        mod, _, _ = _make_pg_module(conn=conn)
-        backend = mod.PostgresBackend()
-        # Should still return True; ALTER failure is caught inside _create_schema
-        assert run(backend.initialize(silent_logger())) is True
+        with _make_pg_module(conn=conn) as (mod, _, __):
+            backend = mod.PostgresBackend()
+            # Should still return True; ALTER failure is caught inside _create_schema
+            assert run(backend.initialize(silent_logger())) is True
 
 
 # ---------------------------------------------------------------------------

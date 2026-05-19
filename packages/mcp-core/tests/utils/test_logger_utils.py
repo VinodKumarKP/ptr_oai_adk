@@ -10,7 +10,7 @@ def test_get_logger_initialization():
     logger.handlers = []
     
     # Patch the class where it is imported in the module under test
-    with patch("oai_mcp_server_core.utils.logger_utils.RotatingFileHandler") as mock_file_handler:
+    with patch("oai_platform_core.logging_utils.RotatingFileHandler") as mock_file_handler:
         with patch("logging.StreamHandler") as mock_stream_handler:
             logger = get_logger()
             
@@ -28,7 +28,7 @@ def test_get_logger_idempotency():
     logger = logging.getLogger('root')
     logger.handlers = []
     
-    with patch("oai_mcp_server_core.utils.logger_utils.RotatingFileHandler"), patch("logging.StreamHandler"):
+    with patch("oai_platform_core.logging_utils.RotatingFileHandler"), patch("logging.StreamHandler"):
         # First call adds handlers
         logger1 = get_logger()
         assert len(logger1.handlers) == 2
@@ -43,6 +43,6 @@ def test_logger_formatting():
     logger = logging.getLogger('root')
     logger.handlers = []
     
-    with patch("oai_mcp_server_core.utils.logger_utils.RotatingFileHandler"), patch("logging.StreamHandler"), patch("logging.Formatter") as mock_formatter:
+    with patch("oai_platform_core.logging_utils.RotatingFileHandler"), patch("logging.StreamHandler"), patch("logging.Formatter") as mock_formatter:
         get_logger()
         mock_formatter.assert_called_with('%(asctime)s - %(levelname)s - %(message)s')
