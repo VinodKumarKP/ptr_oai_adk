@@ -9,7 +9,12 @@ dependencies = []
 members = ["packages/*"]
 
 [tool.uv.sources]
-oai-agent-core = { workspace = true }
-oai-langgraph-core = { workspace = true }
-oai-openai-core = { workspace = true }
-oai-platform-core = { workspace = true }
+# Shared libraries — referenced as deps by other workspace members.
+# Add a new entry here whenever a package becomes a dep of a sibling.
+oai-agent-core      = { workspace = true }
+oai-platform-core   = { workspace = true }
+oai-mcp-server-core = { workspace = true }   # not yet consumed, but a likely future dep
+
+# Legacy / preemptive entries (harmless)
+oai-langgraph-core  = { workspace = true }
+oai-openai-core     = { workspace = true }
