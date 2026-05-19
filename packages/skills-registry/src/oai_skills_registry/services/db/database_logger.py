@@ -6,51 +6,21 @@ Handles PostgreSQL and SQLite backends.
 import logging
 import os
 import json
-from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-try:
-    import asyncpg
-    from asyncpg.pool import Pool as AsyncpgPool
-    _ASYNCPG_AVAILABLE = True
-except ImportError:
-    _ASYNCPG_AVAILABLE = False
-    AsyncpgPool = None
+from oai_platform_core.db.base import DatabaseBackend, BasePostgresBackend, PersistentSQLiteBackend
 
 try:
     import aiosqlite
-    _AIOSQLITE_AVAILABLE = True
 except ImportError:
-    _AIOSQLITE_AVAILABLE = False
+    aiosqlite = None  # type: ignore[assignment]
 
 
-class DatabaseBackend(ABC):
-    """Abstract base class for database backends."""
-    name: str = "unnamed"
-
-    @abstractmethod
-    async def initialize(self, logger: Optional[logging.Logger]) -> bool: ...
-
-    @abstractmethod
-    async def execute(self, query: str, params: tuple) -> None: ...
-
-    @abstractmethod
-    async def execute_many(self, query: str, params_seq: List[tuple]) -> None: ...
-
-    @abstractmethod
-    async def fetch(self, query: str, params: tuple) -> List[Dict[str, Any]]: ...
-
-    @abstractmethod
-    async def fetch_one(self, query: str, params: tuple) -> Optional[Dict[str, Any]]: ...
-
-    @abstractmethod
-    async def close(self) -> None: ...
-
-
-class PostgresBackend(DatabaseBackend):
-    """PostgreSQL backend."""
-    name = "postgres"
+class PostgresBackend(BasePostgresBackend):
+    """PostgreSQL backend for skills registry."""
+    DEFAULT_PORT    = "5434"
+    DEFAULT_DB_NAME = "skills_logs"
 
     # SQL Queries
     SKILL_UPSERT = """
@@ -98,97 +68,7 @@ class PostgresBackend(DatabaseBackend):
     AGENT_SKILL_MAPPINGS_SELECT = "SELECT id, agent_id, skill_id, version_constraint, current_resolved_version, installed_at, auto_upgrade FROM agent_skill_versions WHERE agent_id = $1"
     AGENT_SKILL_MAPPING_UPDATE = "UPDATE agent_skill_versions SET current_resolved_version = $1 WHERE id = $2"
 
-    PLACEHOLDER = "$"
-
-    def __init__(self) -> None:
-        self._pool: Optional[AsyncpgPool] = None
-
-    async def initialize(self, logger: Optional[logging.Logger]) -> bool:
-        if not _ASYNCPG_AVAILABLE:
-            if logger:
-                logger.debug("asyncpg not installed — PostgreSQL backend unavailable.")
-            return False
-        else:
-            if logger:
-                logger.info("PostgreSQL backend available.")
-
-        host = os.environ.get("LOGGING_DB_HOST", "localhost")
-        port = os.environ.get("LOGGING_DB_PORT", "5434")
-        name = os.environ.get("LOGGING_DB_NAME", "skills_logs")
-        user = os.environ.get("LOGGING_DB_USER", "postgres")
-        password = os.environ.get("LOGGING_DB_PASSWORD", "postgres")
-
-        # Ensure the target database exists before creating the connection pool.
-        await self._ensure_database(host, int(port), name, user, password, logger)
-
-        try:
-            self._pool = await asyncpg.create_pool(
-                host=host,
-                port=int(port),
-                database=name,
-                user=user,
-                password=password,
-                min_size=5,
-                max_size=20,
-            )
-            if logger:
-                logger.info(f"Connected to PostgreSQL at {host}:{port}/{name}")
-            await self._initialize_schema(logger)
-            return True
-        except Exception as e:
-            if logger:
-                logger.error(f"Failed to initialize PostgreSQL: {e}")
-            return False
-
-    @staticmethod
-    async def _ensure_database(
-        host: str,
-        port: int,
-        name: str,
-        user: str,
-        password: str,
-        logger: Optional[logging.Logger],
-    ) -> None:
-        """Create *name* database if it does not already exist.
-
-        Connects to the always-present ``postgres`` maintenance database,
-        checks ``pg_database``, and issues ``CREATE DATABASE`` when the target
-        is absent.  ``CREATE DATABASE`` cannot run inside a transaction block;
-        asyncpg auto-commits statements executed outside an explicit
-        ``async with conn.transaction():`` context, so this is safe.
-
-        Any error (e.g. insufficient privileges) is logged as a warning and
-        swallowed — the subsequent ``create_pool`` call will surface a clear
-        connection error if the database is still missing.
-        """
-        try:
-            conn = await asyncpg.connect(
-                host=host, port=port, database="postgres",
-                user=user, password=password,
-            )
-            try:
-                exists = await conn.fetchval(
-                    "SELECT 1 FROM pg_database WHERE datname = $1", name
-                )
-                if not exists:
-                    # Identifiers must be quoted to handle names with special chars.
-                    await conn.execute(f'CREATE DATABASE "{name}"')
-                    if logger:
-                        logger.info("Created PostgreSQL database: %s", name)
-                else:
-                    if logger:
-                        logger.debug("PostgreSQL database already exists: %s", name)
-            finally:
-                await conn.close()
-        except Exception as exc:
-            if logger:
-                logger.warning(
-                    "Could not ensure database '%s' exists (will attempt connection anyway): %s",
-                    name, exc,
-                )
-
-    async def _initialize_schema(self, logger: Optional[logging.Logger]) -> None:
-        """Create tables if they don't exist."""
+    async def _create_schema(self, logger: Optional[logging.Logger] = None) -> None:
         schema = """
         CREATE TABLE IF NOT EXISTS skills (
             id SERIAL PRIMARY KEY,
@@ -264,7 +144,6 @@ class PostgresBackend(DatabaseBackend):
         CREATE INDEX IF NOT EXISTS idx_skill_actions_skill_id ON skill_actions(skill_id);
         CREATE INDEX IF NOT EXISTS idx_agent_skill_agent_id ON agent_skill_versions(agent_id);
         """
-
         try:
             async with self._pool.acquire() as conn:
                 await conn.execute(schema)
@@ -274,32 +153,11 @@ class PostgresBackend(DatabaseBackend):
             if logger:
                 logger.error(f"Failed to initialize schema: {e}")
 
-    async def execute(self, query: str, params: tuple) -> None:
-        async with self._pool.acquire() as conn:
-            await conn.execute(query, *params)
 
-    async def execute_many(self, query: str, params_seq: List[tuple]) -> None:
-        async with self._pool.acquire() as conn:
-            await conn.executemany(query, params_seq)
-
-    async def fetch(self, query: str, params: tuple) -> List[Dict[str, Any]]:
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(query, *params)
-            return [dict(row) for row in rows]
-
-    async def fetch_one(self, query: str, params: tuple) -> Optional[Dict[str, Any]]:
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(query, *params)
-            return dict(row) if row else None
-
-    async def close(self) -> None:
-        if self._pool:
-            await self._pool.close()
-
-
-class SQLiteBackend(DatabaseBackend):
-    """SQLite backend."""
-    name = "sqlite"
+class SQLiteBackend(PersistentSQLiteBackend):
+    """SQLite backend for skills registry (persistent connection)."""
+    DEFAULT_DB_NAME = "skills_registry.db"
+    USE_WAL_MODE    = False
 
     # SQL Queries (using ? for SQLite parameter binding)
     SKILL_UPSERT = """
@@ -346,32 +204,7 @@ class SQLiteBackend(DatabaseBackend):
     AGENT_SKILL_MAPPINGS_SELECT = "SELECT id, agent_id, skill_id, version_constraint, current_resolved_version, installed_at, auto_upgrade FROM agent_skill_versions WHERE agent_id = ?"
     AGENT_SKILL_MAPPING_UPDATE = "UPDATE agent_skill_versions SET current_resolved_version = ? WHERE id = ?"
 
-    PLACEHOLDER = "?"
-
-    def __init__(self, db_path: str = "skills_registry.db") -> None:
-        self.db_path = db_path
-        self._connection = None
-
-    async def initialize(self, logger: Optional[logging.Logger]) -> bool:
-        if not _AIOSQLITE_AVAILABLE:
-            if logger:
-                logger.debug("aiosqlite not installed — SQLite backend unavailable.")
-            return False
-
-        try:
-            self._connection = await aiosqlite.connect(self.db_path)
-            self._connection.row_factory = aiosqlite.Row
-            if logger:
-                logger.info(f"Connected to SQLite at {self.db_path}")
-            await self._initialize_schema(logger)
-            return True
-        except Exception as e:
-            if logger:
-                logger.error(f"Failed to initialize SQLite: {e}")
-            return False
-
-    async def _initialize_schema(self, logger: Optional[logging.Logger]) -> None:
-        """Create tables if they don't exist."""
+    async def _create_schema(self) -> None:
         schema = """
         CREATE TABLE IF NOT EXISTS skills (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -447,38 +280,9 @@ class SQLiteBackend(DatabaseBackend):
         CREATE INDEX IF NOT EXISTS idx_skill_actions_skill_id ON skill_actions(skill_id);
         CREATE INDEX IF NOT EXISTS idx_agent_skill_agent_id ON agent_skill_versions(agent_id);
         """
-
-        try:
-            await self._connection.executescript(schema)
-            await self._connection.commit()
-            if logger:
-                logger.info("Skills registry schema initialized")
-        except Exception as e:
-            if logger:
-                logger.error(f"Failed to initialize schema: {e}")
-
-    async def execute(self, query: str, params: tuple) -> None:
-        await self._connection.execute(query, params)
-        await self._connection.commit()
-
-    async def execute_many(self, query: str, params_seq: List[tuple]) -> None:
-        for params in params_seq:
-            await self._connection.execute(query, params)
-        await self._connection.commit()
-
-    async def fetch(self, query: str, params: tuple) -> List[Dict[str, Any]]:
-        cursor = await self._connection.execute(query, params)
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows] if rows else []
-
-    async def fetch_one(self, query: str, params: tuple) -> Optional[Dict[str, Any]]:
-        cursor = await self._connection.execute(query, params)
-        row = await cursor.fetchone()
-        return dict(row) if row else None
-
-    async def close(self) -> None:
-        if self._connection:
-            await self._connection.close()
+        db = await self._get_conn()
+        await db.executescript(schema)
+        await db.commit()
 
 
 class SkillsDatabaseLogger:
@@ -490,7 +294,6 @@ class SkillsDatabaseLogger:
         self._enabled = os.environ.get("REGISTRY_DB_LOGGING_ENABLED", "true").lower() == "true"
 
     async def initialize(self) -> bool:
-        """Initialize database backend."""
         if not self._enabled:
             self.logger.info("Skills registry database logging disabled")
             return False
@@ -510,39 +313,30 @@ class SkillsDatabaseLogger:
         return False
 
     def _ready(self) -> bool:
-        """Check if database is ready."""
         return self._enabled and self._backend is not None
 
     async def close(self) -> None:
-        """Close database connection."""
         if self._backend:
             await self._backend.close()
 
     # ==================== SKILL OPERATIONS ====================
 
     def _process_skill(self, skill: Dict[str, Any]) -> Dict[str, Any]:
-        """Process raw skill data from database, deserializing JSON fields."""
         if not skill:
             return skill
-
-        # Deserialize tags from JSON string to list
         if "tags" in skill and isinstance(skill["tags"], str):
             try:
                 skill["tags"] = json.loads(skill["tags"]) if skill["tags"] else []
             except (json.JSONDecodeError, TypeError):
                 skill["tags"] = []
-
         return skill
 
     async def create_skill(self, name: str, description: str, category: str,
                            tags: List[str], author: str, git_repository_url: Optional[str] = None) -> Dict[str, Any]:
-        """Create a new skill."""
         if not self._ready():
             return {"id": None, "name": name}
-
         try:
             now = datetime.now(timezone.utc)
-            # PostgreSQL TEXT[] needs a Python list; SQLite TEXT needs a JSON string.
             if self._backend.name == "postgres":
                 tags_param = list(tags) if tags else []
             else:
@@ -550,65 +344,50 @@ class SkillsDatabaseLogger:
             params = (name, description, category, tags_param, None, "active", author, git_repository_url, now, now)
             await self._backend.execute(self._backend.SKILL_UPSERT, params)
             self.logger.debug(f"Created skill: {name}")
-
-            # Fetch the created skill
-            skill = await self._backend.fetch_one(
-                self._backend.SKILL_SELECT_ONE,
-                (name,)
-            )
+            skill = await self._backend.fetch_one(self._backend.SKILL_SELECT_ONE, (name,))
             return self._process_skill(skill) if skill else {"id": None, "name": name}
         except Exception as e:
             self.logger.error(f"Failed to create skill {name}: {e}")
             return {"id": None, "name": name}
 
     async def get_skill(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get skill by name."""
         if not self._ready():
             return None
-
         try:
-            skill = await self._backend.fetch_one(
-                self._backend.SKILL_SELECT_ONE,
-                (name,)
-            )
+            skill = await self._backend.fetch_one(self._backend.SKILL_SELECT_ONE, (name,))
             return self._process_skill(skill) if skill else None
         except Exception as e:
             self.logger.error(f"Failed to get skill {name}: {e}")
             return None
 
     async def get_all_skills(self) -> List[Dict[str, Any]]:
-        """Get all skills."""
         if not self._ready():
             return []
-
         try:
-            skills = await self._backend.fetch(
-                self._backend.SKILL_SELECT_ALL,
-                ()
-            )
+            skills = await self._backend.fetch(self._backend.SKILL_SELECT_ALL, ())
             return [self._process_skill(skill) for skill in skills]
         except Exception as e:
             self.logger.error(f"Failed to get all skills: {e}")
             return []
 
     async def update_skill_current_version(self, skill_name: str, version: str) -> None:
-        """Update current version of a skill."""
         if not self._ready():
             return
-
         try:
             now = datetime.now(timezone.utc)
-            query = "UPDATE skills SET current_version = $1, updated_at = $2 WHERE name = $3"
+            ph = self._backend.PLACEHOLDER
+            if ph == "$":
+                query = "UPDATE skills SET current_version = $1, updated_at = $2 WHERE name = $3"
+            else:
+                query = "UPDATE skills SET current_version = ?, updated_at = ? WHERE name = ?"
             await self._backend.execute(query, (version, now, skill_name))
             self.logger.debug(f"Updated {skill_name} current version to {version}")
         except Exception as e:
             self.logger.error(f"Failed to update skill version: {e}")
 
     async def delete_skill(self, name: str) -> None:
-        """Delete a skill and all its versions."""
         if not self._ready():
             return
-
         try:
             await self._backend.execute(self._backend.SKILL_DELETE, (name,))
             self.logger.info(f"Deleted skill: {name}")
@@ -622,61 +401,40 @@ class SkillsDatabaseLogger:
                                    git_tag: Optional[str], content: str, config: Optional[Dict],
                                    dependencies: Optional[Dict], breaking_changes: Optional[List[str]],
                                    status: str, published_by: str) -> Dict[str, Any]:
-        """Create a new skill version."""
         if not self._ready():
             return {"id": None, "version": version}
-
         try:
             now = datetime.now(timezone.utc)
-            # asyncpg uses the TEXT codec for JSONB parameters (type inference
-            # returns TEXT/unknown, not JSONB, for undecorated $N params).
-            # Passing a pre-serialized JSON string works for both backends:
-            # PostgreSQL silently casts TEXT → JSONB; SQLite stores it as TEXT.
             config_param = json.dumps(config) if config else None
             deps_param = json.dumps(dependencies) if dependencies else None
             breaking_param = json.dumps(breaking_changes) if breaking_changes else None
-
             params = (
                 skill_id, version, git_source_id, git_branch, git_commit_sha, git_tag,
-                content, config_param, deps_param, breaking_param, status, published_by,
-                None, now
+                content, config_param, deps_param, breaking_param, status, published_by, None, now
             )
             await self._backend.execute(self._backend.SKILL_VERSION_INSERT, params)
             self.logger.debug(f"Created skill version: {version}")
-
-            # Fetch the created version
             return await self._backend.fetch_one(
-                self._backend.SKILL_VERSION_SELECT,
-                (skill_id, version)
+                self._backend.SKILL_VERSION_SELECT, (skill_id, version)
             ) or {"id": None, "version": version}
         except Exception as e:
             self.logger.error(f"Failed to create skill version {version}: {e}")
             return {"id": None, "version": version}
 
     async def get_skill_version(self, skill_id: int, version: str) -> Optional[Dict[str, Any]]:
-        """Get specific skill version."""
         if not self._ready():
             return None
-
         try:
-            return await self._backend.fetch_one(
-                self._backend.SKILL_VERSION_SELECT,
-                (skill_id, version)
-            )
+            return await self._backend.fetch_one(self._backend.SKILL_VERSION_SELECT, (skill_id, version))
         except Exception as e:
             self.logger.error(f"Failed to get skill version: {e}")
             return None
 
     async def get_skill_versions(self, skill_id: int) -> List[Dict[str, Any]]:
-        """Get all versions of a skill."""
         if not self._ready():
             return []
-
         try:
-            return await self._backend.fetch(
-                self._backend.SKILL_VERSIONS_SELECT_ALL,
-                (skill_id,)
-            )
+            return await self._backend.fetch(self._backend.SKILL_VERSIONS_SELECT_ALL, (skill_id,))
         except Exception as e:
             self.logger.error(f"Failed to get skill versions: {e}")
             return []
@@ -685,12 +443,9 @@ class SkillsDatabaseLogger:
                                           published_by: Optional[str] = None,
                                           published_at: Optional[datetime] = None,
                                           deprecated_at: Optional[datetime] = None) -> None:
-        """Update status of a skill version."""
         if not self._ready():
             return
-
         try:
-            # Note: status appears twice in the query (once for SET, once for CASE condition)
             params = (status, published_by, published_at, status, deprecated_at, version_id)
             await self._backend.execute(self._backend.SKILL_VERSION_UPDATE_STATUS, params)
             self.logger.debug(f"Updated skill version status to {status}")
@@ -702,37 +457,24 @@ class SkillsDatabaseLogger:
     async def log_skill_action(self, skill_id: int, action: str, from_version: Optional[str],
                                to_version: Optional[str], performed_by: str,
                                message: Optional[str] = None) -> Dict[str, Any]:
-        """Log a skill lifecycle action."""
         if not self._ready():
             return {"id": None}
-
         try:
             now = datetime.now(timezone.utc)
             params = (skill_id, action, from_version, to_version, performed_by, message, now)
             await self._backend.execute(self._backend.SKILL_ACTION_INSERT, params)
             self.logger.debug(f"Logged skill action: {action}")
-
-            # For SQLite, fetch the last inserted row
-            actions = await self._backend.fetch(
-                self._backend.SKILL_ACTIONS_SELECT_ALL,
-                (skill_id,)
-            )
+            actions = await self._backend.fetch(self._backend.SKILL_ACTIONS_SELECT_ALL, (skill_id,))
             return actions[0] if actions else {"id": None}
         except Exception as e:
             self.logger.error(f"Failed to log skill action: {e}")
             return {"id": None}
 
     async def get_skill_actions(self, skill_id: int, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get action history for a skill."""
         if not self._ready():
             return []
-
         try:
-            actions = await self._backend.fetch(
-                self._backend.SKILL_ACTIONS_SELECT_ALL,
-                (skill_id,)
-            )
-            # Convert timestamps to ISO format
+            actions = await self._backend.fetch(self._backend.SKILL_ACTIONS_SELECT_ALL, (skill_id,))
             for action in actions[:limit]:
                 if isinstance(action.get("created_at"), str):
                     continue
@@ -744,15 +486,10 @@ class SkillsDatabaseLogger:
             return []
 
     async def get_skill_action_count(self, skill_id: int) -> int:
-        """Get total count of actions for a skill."""
         if not self._ready():
             return 0
-
         try:
-            result = await self._backend.fetch_one(
-                self._backend.SKILL_ACTION_COUNT,
-                (skill_id,)
-            )
+            result = await self._backend.fetch_one(self._backend.SKILL_ACTION_COUNT, (skill_id,))
             return result["count"] if result else 0
         except Exception as e:
             self.logger.error(f"Failed to get skill action count: {e}")
@@ -761,60 +498,38 @@ class SkillsDatabaseLogger:
     # ==================== GIT SOURCE OPERATIONS ====================
 
     async def register_git_source(self, config: Dict) -> int:
-        """Register a new Git source."""
         if not self._ready():
             return None
-
         try:
             now = datetime.now(timezone.utc)
             params = (
-                config["name"],
-                config["git_provider"],
-                config["repository"],
-                config["git_url"],
-                config.get("branch", "main"),
-                config.get("auth_type", "token"),
-                config.get("auth_token_encrypted"),
-                now,
-                now
+                config["name"], config["git_provider"], config["repository"],
+                config["git_url"], config.get("branch", "main"),
+                config.get("auth_type", "token"), config.get("auth_token_encrypted"),
+                now, now
             )
             await self._backend.execute(self._backend.GIT_SOURCE_INSERT, params)
             self.logger.debug(f"Registered Git source: {config['name']}")
-
-            # Fetch the created source
-            source = await self._backend.fetch_one(
-                self._backend.GIT_SOURCE_SELECT_BY_NAME,
-                (config["name"],)
-            )
+            source = await self._backend.fetch_one(self._backend.GIT_SOURCE_SELECT_BY_NAME, (config["name"],))
             return source["id"] if source else None
         except Exception as e:
             self.logger.error(f"Failed to register Git source: {e}")
             return None
 
     async def get_git_source(self, source_id: int) -> Optional[Dict[str, Any]]:
-        """Get Git source by ID."""
         if not self._ready():
             return None
-
         try:
-            return await self._backend.fetch_one(
-                self._backend.GIT_SOURCE_SELECT_ONE,
-                (source_id,)
-            )
+            return await self._backend.fetch_one(self._backend.GIT_SOURCE_SELECT_ONE, (source_id,))
         except Exception as e:
             self.logger.error(f"Failed to get Git source: {e}")
             return None
 
     async def get_all_git_sources(self) -> List[Dict[str, Any]]:
-        """Get all Git sources."""
         if not self._ready():
             return []
-
         try:
-            return await self._backend.fetch(
-                self._backend.GIT_SOURCE_SELECT_ALL,
-                ()
-            )
+            return await self._backend.fetch(self._backend.GIT_SOURCE_SELECT_ALL, ())
         except Exception as e:
             self.logger.error(f"Failed to get Git sources: {e}")
             return []
@@ -823,45 +538,30 @@ class SkillsDatabaseLogger:
 
     async def install_skill_on_agent(self, agent_id: str, skill_id: int,
                                      version_constraint: str, resolved_version: Optional[str]) -> None:
-        """Install skill on an agent."""
         if not self._ready():
             return
-
         try:
             now = datetime.now(timezone.utc)
             params = (agent_id, skill_id, version_constraint, resolved_version, now, False)
-            await self._backend.execute(
-                self._backend.AGENT_SKILL_MAPPING_INSERT,
-                params
-            )
+            await self._backend.execute(self._backend.AGENT_SKILL_MAPPING_INSERT, params)
             self.logger.debug(f"Installed skill {skill_id} on agent {agent_id}")
         except Exception as e:
             self.logger.error(f"Failed to install skill on agent: {e}")
 
     async def get_agent_skills(self, agent_id: str) -> List[Dict[str, Any]]:
-        """Get all skills installed on an agent."""
         if not self._ready():
             return []
-
         try:
-            return await self._backend.fetch(
-                self._backend.AGENT_SKILL_MAPPINGS_SELECT,
-                (agent_id,)
-            )
+            return await self._backend.fetch(self._backend.AGENT_SKILL_MAPPINGS_SELECT, (agent_id,))
         except Exception as e:
             self.logger.error(f"Failed to get agent skills: {e}")
             return []
 
     async def update_agent_skill_version(self, mapping_id: int, resolved_version: str) -> None:
-        """Update resolved version for agent-skill mapping."""
         if not self._ready():
             return
-
         try:
-            await self._backend.execute(
-                self._backend.AGENT_SKILL_MAPPING_UPDATE,
-                (resolved_version, mapping_id)
-            )
+            await self._backend.execute(self._backend.AGENT_SKILL_MAPPING_UPDATE, (resolved_version, mapping_id))
             self.logger.debug(f"Updated agent skill version to {resolved_version}")
         except Exception as e:
             self.logger.error(f"Failed to update agent skill version: {e}")

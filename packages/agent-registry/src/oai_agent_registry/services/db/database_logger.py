@@ -7,52 +7,20 @@ from __future__ import annotations
 import logging
 import os
 import json
-from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-# Optional dependency flags
-try:
-    import asyncpg
-    from asyncpg.pool import Pool as AsyncpgPool
-
-    _ASYNCPG_AVAILABLE = True
-except ImportError:
-    _ASYNCPG_AVAILABLE = False
-    AsyncpgPool = None
+from oai_platform_core.db.base import DatabaseBackend, BasePostgresBackend, BaseSQLiteBackend
 
 try:
     import aiosqlite
-
-    _AIOSQLITE_AVAILABLE = True
 except ImportError:
-    _AIOSQLITE_AVAILABLE = False
+    aiosqlite = None  # type: ignore[assignment]
 
 
-class DatabaseBackend(ABC):
-    name: str = "unnamed"
-
-    @abstractmethod
-    async def initialize(self, logger: Optional[logging.Logger]) -> bool: ...
-
-    @abstractmethod
-    async def execute(self, query: str, params: tuple) -> None: ...
-
-    @abstractmethod
-    async def execute_many(self, query: str, params_seq: List[tuple]) -> None: ...
-
-    @abstractmethod
-    async def fetch(self, query: str, params: tuple) -> List[Dict[str, Any]]: ...
-
-    @abstractmethod
-    async def fetch_one(self, query: str, params: tuple) -> Optional[Dict[str, Any]]: ...
-
-    @abstractmethod
-    async def close(self) -> None: ...
-
-
-class PostgresBackend(DatabaseBackend):
-    name = "postgres"
+class PostgresBackend(BasePostgresBackend):
+    DEFAULT_PORT    = "5432"
+    DEFAULT_DB_NAME = "agent_logs"
 
     AGENT_REGISTRY_UPSERT = """
         INSERT INTO agent_registry
@@ -82,121 +50,7 @@ class PostgresBackend(DatabaseBackend):
     AGENT_ACTION_SELECT_FILTERED = "SELECT id, agent_name, action, version, created_at FROM agent_actions WHERE agent_name = $1 AND action = $2 ORDER BY created_at DESC"
     AGENT_ACTION_COUNT = "SELECT COUNT(*) as count FROM agent_actions WHERE agent_name = $1"
 
-    PLACEHOLDER = "$"
-
-    def __init__(self) -> None:
-        self._pool: Optional[AsyncpgPool] = None
-
-    async def initialize(self, logger: Optional[logging.Logger]) -> bool:
-        if not _ASYNCPG_AVAILABLE:
-            if logger: logger.debug("asyncpg not installed — PostgreSQL backend unavailable.")
-            return False
-        else:
-            if logger: logger.info("PostgreSQL backend available.")
-
-        host = os.environ.get("LOGGING_DB_HOST", "localhost")
-        port = os.environ.get("LOGGING_DB_PORT", "5432")
-        name = os.environ.get("LOGGING_DB_NAME", "agent_logs")
-        user = os.environ.get("LOGGING_DB_USER", "postgres")
-        password = os.environ.get("LOGGING_DB_PASSWORD", "postgres")
-        min_size = int(os.environ.get("DB_POOL_MIN_SIZE", "2"))
-        max_size = int(os.environ.get("DB_POOL_MAX_SIZE", "4"))
-        timeout = int(os.environ.get("DB_POOL_TIMEOUT", "120"))
-
-        # Ensure the target database exists before creating the connection pool.
-        await self._ensure_database(host, int(port), name, user, password, logger)
-
-        dsn = f"postgresql://{user}:{password}@{host}:{port}/{name}"
-        try:
-            self._pool = await asyncpg.create_pool(dsn, min_size=min_size, max_size=max_size, command_timeout=timeout,
-                                                   timeout=5)
-            async with self._pool.acquire() as conn:
-                await conn.execute("SELECT 1")
-            if logger: logger.info(f"PostgreSQL backend available: {host}:{port}/{name}")
-            await self._create_schema(logger)
-            if logger: logger.info(f"PostgreSQL backend ready: {host}:{port}/{name}")
-            return True
-        except Exception as exc:
-            if logger: logger.warning(f"PostgreSQL backend unavailable: {exc}")
-            await self._cleanup()
-            return False
-
-    @staticmethod
-    async def _ensure_database(
-        host: str,
-        port: int,
-        name: str,
-        user: str,
-        password: str,
-        logger: Optional[logging.Logger],
-    ) -> None:
-        """Create *name* database if it does not already exist.
-
-        Connects to the always-present ``postgres`` maintenance database,
-        checks ``pg_database``, and issues ``CREATE DATABASE`` when the target
-        is absent.  ``CREATE DATABASE`` cannot run inside a transaction block;
-        asyncpg auto-commits statements executed outside an explicit
-        ``async with conn.transaction():`` context, so this is safe.
-
-        Any error (e.g. insufficient privileges) is logged as a warning and
-        swallowed — the subsequent ``create_pool`` call will surface a clear
-        connection error if the database is still missing.
-        """
-        try:
-            conn = await asyncpg.connect(
-                host=host, port=port, database="postgres",
-                user=user, password=password,
-            )
-            try:
-                exists = await conn.fetchval(
-                    "SELECT 1 FROM pg_database WHERE datname = $1", name
-                )
-                if not exists:
-                    await conn.execute(f'CREATE DATABASE "{name}"')
-                    if logger: logger.info("Created PostgreSQL database: %s", name)
-                else:
-                    if logger: logger.debug("PostgreSQL database already exists: %s", name)
-            finally:
-                await conn.close()
-        except Exception as exc:
-            if logger:
-                logger.warning(
-                    "Could not ensure database '%s' exists (will attempt connection anyway): %s",
-                    name, exc,
-                )
-
-    async def execute(self, query: str, params: tuple) -> None:
-        if self._pool is None: raise RuntimeError("PostgresBackend not initialized")
-        async with self._pool.acquire() as conn:
-            await conn.execute(query, *params)
-
-    async def execute_many(self, query: str, params_seq: List[tuple]) -> None:
-        if self._pool is None: raise RuntimeError("PostgresBackend not initialized")
-        if not params_seq: return
-        async with self._pool.acquire() as conn:
-            await conn.executemany(query, params_seq)
-
-    async def fetch(self, query: str, params: tuple) -> List[Dict[str, Any]]:
-        if self._pool is None: raise RuntimeError("PostgresBackend not initialized")
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(query, *params)
-        return [dict(row) for row in rows]
-
-    async def fetch_one(self, query: str, params: tuple) -> Optional[Dict[str, Any]]:
-        if self._pool is None: raise RuntimeError("PostgresBackend not initialized")
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(query, *params)
-        return dict(row) if row else None
-
-    async def close(self) -> None:
-        await self._cleanup()
-
-    async def _cleanup(self) -> None:
-        if self._pool is not None:
-            await self._pool.close()
-            self._pool = None
-
-    async def _create_schema(self, logger: Optional[logging.Logger]) -> None:
+    async def _create_schema(self, logger: Optional[logging.Logger] = None) -> None:
         if logger: logger.info("Creating agent registry database schema...")
         agent_registry_ddl = """
             CREATE TABLE IF NOT EXISTS agent_registry (
@@ -217,15 +71,6 @@ class PostgresBackend(DatabaseBackend):
                 updated_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         """
-        migrate_rename_source = "ALTER TABLE agent_registry RENAME COLUMN source_url TO source;"
-        migrate_ddl_registered_via = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS registered_via VARCHAR(50) NOT NULL DEFAULT 'dynamic';"
-        migrate_ddl_framework = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS framework VARCHAR(255);"
-        migrate_ddl_prompts = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS prompts TEXT;"
-        migrate_ddl_tags = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS tags TEXT;"
-        migrate_ddl_description = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS description TEXT;"
-        migrate_ddl_current_version = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS current_version VARCHAR(255);"
-        migrate_ddl_available_versions = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS available_versions TEXT;"
-        migrate_ddl_deployment_mode = "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS deployment_mode VARCHAR(50) DEFAULT 'docker';"
         agent_actions_ddl = """
             CREATE TABLE IF NOT EXISTS agent_actions (
                 id                 SERIAL PRIMARY KEY,
@@ -235,26 +80,30 @@ class PostgresBackend(DatabaseBackend):
                 created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         """
+        migrations = [
+            "ALTER TABLE agent_registry RENAME COLUMN source_url TO source;",
+            "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS registered_via VARCHAR(50) NOT NULL DEFAULT 'dynamic';",
+            "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS framework VARCHAR(255);",
+            "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS prompts TEXT;",
+            "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS tags TEXT;",
+            "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS description TEXT;",
+            "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS current_version VARCHAR(255);",
+            "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS available_versions TEXT;",
+            "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS deployment_mode VARCHAR(50) DEFAULT 'docker';",
+        ]
         async with self._pool.acquire() as conn:
             await conn.execute(agent_registry_ddl)
             await conn.execute(agent_actions_ddl)
-            try:
-                await conn.execute(migrate_rename_source)
-            except Exception:
-                pass
-            await conn.execute(migrate_ddl_registered_via)
-            await conn.execute(migrate_ddl_framework)
-            await conn.execute(migrate_ddl_prompts)
-            await conn.execute(migrate_ddl_tags)
-            await conn.execute(migrate_ddl_description)
-            await conn.execute(migrate_ddl_current_version)
-            await conn.execute(migrate_ddl_available_versions)
-            await conn.execute(migrate_ddl_deployment_mode)
+            for migration in migrations:
+                try:
+                    await conn.execute(migration)
+                except Exception:
+                    pass
             if logger: logger.info("Agent registry database schema created/updated.")
 
 
-class SQLiteBackend(DatabaseBackend):
-    name = "sqlite"
+class SQLiteBackend(BaseSQLiteBackend):
+    DEFAULT_DB_NAME = "agent_registry.db"
 
     AGENT_REGISTRY_UPSERT = """
         INSERT INTO agent_registry
@@ -284,68 +133,6 @@ class SQLiteBackend(DatabaseBackend):
     AGENT_ACTION_SELECT_FILTERED = "SELECT id, agent_name, action, version, created_at FROM agent_actions WHERE agent_name = ? AND action = ? ORDER BY created_at DESC"
     AGENT_ACTION_COUNT = "SELECT COUNT(*) as count FROM agent_actions WHERE agent_name = ?"
 
-    PLACEHOLDER = "?"
-
-    def __init__(self) -> None:
-        self._db_path: Optional[str] = None
-
-    async def initialize(self, logger: Optional[logging.Logger]) -> bool:
-        if not _AIOSQLITE_AVAILABLE:
-            if logger: logger.warning("aiosqlite not installed — SQLite backend unavailable.")
-            return False
-        self._db_path = self._resolve_db_path()
-        db_dir = os.path.dirname(self._db_path)
-        if db_dir: os.makedirs(db_dir, exist_ok=True)
-        try:
-            await self._create_schema()
-            if logger: logger.info(f"SQLite backend ready: {self._db_path}")
-            return True
-        except Exception as exc:
-            if logger: logger.error(f"SQLite backend failed to initialise: {exc}")
-            self._db_path = None
-            return False
-
-    async def execute(self, query: str, params: tuple) -> None:
-        if self._db_path is None: raise RuntimeError("SQLiteBackend not initialized")
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute("PRAGMA foreign_keys = ON;")
-            await db.execute(query, params)
-            await db.commit()
-
-    async def execute_many(self, query: str, params_seq: List[tuple]) -> None:
-        if self._db_path is None: raise RuntimeError("SQLiteBackend not initialized")
-        if not params_seq: return
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.executemany(query, params_seq)
-            await db.commit()
-
-    async def fetch(self, query: str, params: tuple) -> List[Dict[str, Any]]:
-        if self._db_path is None: raise RuntimeError("SQLiteBackend not initialized")
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(query, params) as cursor:
-                rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
-
-    async def fetch_one(self, query: str, params: tuple) -> Optional[Dict[str, Any]]:
-        if self._db_path is None: raise RuntimeError("SQLiteBackend not initialized")
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(query, params) as cursor:
-                row = await cursor.fetchone()
-        return dict(row) if row else None
-
-    async def close(self) -> None:
-        self._db_path = None
-
-    @staticmethod
-    def _resolve_db_path() -> str:
-        full_path = os.environ.get("SQLITE_DB_PATH")
-        if full_path: return full_path
-        db_dir = os.environ.get("SQLITE_DB_DIR")
-        if db_dir: return os.path.join(db_dir, "agent_registry.db")
-        return "agent_registry.db"
-
     async def _create_schema(self) -> None:
         agent_registry_ddl = """
             CREATE TABLE IF NOT EXISTS agent_registry (
@@ -366,15 +153,6 @@ class SQLiteBackend(DatabaseBackend):
                 updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """
-        migrate_rename_source = "ALTER TABLE agent_registry RENAME COLUMN source_url TO source"
-        migrate_ddl_registered_via = "ALTER TABLE agent_registry ADD COLUMN registered_via TEXT NOT NULL DEFAULT 'dynamic'"
-        migrate_ddl_framework = "ALTER TABLE agent_registry ADD COLUMN framework TEXT"
-        migrate_ddl_prompts = "ALTER TABLE agent_registry ADD COLUMN prompts TEXT"
-        migrate_ddl_tags = "ALTER TABLE agent_registry ADD COLUMN tags TEXT"
-        migrate_ddl_description = "ALTER TABLE agent_registry ADD COLUMN description TEXT"
-        migrate_ddl_current_version = "ALTER TABLE agent_registry ADD COLUMN current_version TEXT"
-        migrate_ddl_available_versions = "ALTER TABLE agent_registry ADD COLUMN available_versions TEXT"
-        migrate_ddl_deployment_mode = "ALTER TABLE agent_registry ADD COLUMN deployment_mode TEXT DEFAULT 'docker'"
         agent_actions_ddl = """
             CREATE TABLE IF NOT EXISTS agent_actions (
                 id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -384,55 +162,27 @@ class SQLiteBackend(DatabaseBackend):
                 created_at         DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """
+        migrations = [
+            "ALTER TABLE agent_registry RENAME COLUMN source_url TO source",
+            "ALTER TABLE agent_registry ADD COLUMN registered_via TEXT NOT NULL DEFAULT 'dynamic'",
+            "ALTER TABLE agent_registry ADD COLUMN framework TEXT",
+            "ALTER TABLE agent_registry ADD COLUMN prompts TEXT",
+            "ALTER TABLE agent_registry ADD COLUMN tags TEXT",
+            "ALTER TABLE agent_registry ADD COLUMN description TEXT",
+            "ALTER TABLE agent_registry ADD COLUMN current_version TEXT",
+            "ALTER TABLE agent_registry ADD COLUMN available_versions TEXT",
+            "ALTER TABLE agent_registry ADD COLUMN deployment_mode TEXT DEFAULT 'docker'",
+        ]
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON;")
             await db.execute(agent_registry_ddl)
             await db.execute(agent_actions_ddl)
-            try:
-                await db.execute(migrate_rename_source)
-                await db.commit()
-            except Exception:
-                pass
-            try:
-                await db.execute(migrate_ddl_registered_via)
-                await db.commit()
-            except Exception:
-                pass
-            try:
-                await db.execute(migrate_ddl_framework)
-                await db.commit()
-            except Exception:
-                pass
-            try:
-                await db.execute(migrate_ddl_prompts)
-                await db.commit()
-            except Exception:
-                pass
-            try:
-                await db.execute(migrate_ddl_tags)
-                await db.commit()
-            except Exception:
-                pass
-            try:
-                await db.execute(migrate_ddl_description)
-                await db.commit()
-            except Exception:
-                pass
-            try:
-                await db.execute(migrate_ddl_current_version)
-                await db.commit()
-            except Exception:
-                pass
-            try:
-                await db.execute(migrate_ddl_available_versions)
-                await db.commit()
-            except Exception:
-                pass
-            try:
-                await db.execute(migrate_ddl_deployment_mode)
-                await db.commit()
-            except Exception:
-                pass
+            for migration in migrations:
+                try:
+                    await db.execute(migration)
+                    await db.commit()
+                except Exception:
+                    pass
 
 
 class RegistryDatabaseLogger:
@@ -548,47 +298,22 @@ class RegistryDatabaseLogger:
             return []
 
     async def get_agent_actions(self, agent_name: str, action_type: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
-        """
-        Retrieve agent actions from the database.
-
-        Args:
-            agent_name: Name of the agent to query
-            action_type: Optional action type to filter by (e.g., 'start', 'stop', 'rebuild')
-            limit: Maximum number of actions to return (default 100)
-
-        Returns:
-            List of action records with id, agent_name, action, version, created_at
-        """
         if not self._ready(): return []
         try:
             if action_type:
                 rows = await self._backend.fetch(self._backend.AGENT_ACTION_SELECT_FILTERED, (agent_name, action_type))
             else:
                 rows = await self._backend.fetch(self._backend.AGENT_ACTION_SELECT_ALL, (agent_name,))
-
-            # Apply limit after fetching
             result = rows[:limit] if limit else rows
-
-            # Convert timestamps to ISO format
             for row in result:
                 if 'created_at' in row:
                     row['created_at'] = self._isoformat(row['created_at'])
-
             return result
         except Exception as exc:
             if self.logger: self.logger.error(f"Failed to retrieve agent actions for {agent_name}: {exc}")
             return []
 
     async def get_agent_action_count(self, agent_name: str) -> int:
-        """
-        Get total count of actions for an agent.
-
-        Args:
-            agent_name: Name of the agent to query
-
-        Returns:
-            Total count of actions recorded for the agent
-        """
         if not self._ready(): return 0
         try:
             row = await self._backend.fetch_one(self._backend.AGENT_ACTION_COUNT, (agent_name,))

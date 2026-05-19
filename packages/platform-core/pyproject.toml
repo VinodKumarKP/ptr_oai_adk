@@ -29,8 +29,11 @@ dependencies = [
 [project.optional-dependencies]
 # Install when Redis/Valkey is not available (dev / demo mode)
 redislite = ["redislite"]
+# Async database drivers — used by the db.base backend classes
+postgres = ["asyncpg>=0.29"]
+sqlite   = ["aiosqlite>=0.19"]
 # All optional extras bundled
-all = ["oai-platform-core[redislite]"]
+all = ["oai-platform-core[redislite,postgres,sqlite]"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

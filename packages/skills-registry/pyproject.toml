@@ -46,6 +46,7 @@ dependencies = [
     "PyYAML>=6.0.1",
     "aiohttp>=3.9.1",
     "httpx>=0.25.0",
+    "oai-platform-core",
 ]
 
 # Optional dependencies
