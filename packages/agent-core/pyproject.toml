@@ -56,7 +56,7 @@ s3 = [
 ]
 
 guardrails = [
-    "guardrails-ai==0.9.3"
+    "guardrails-ai @ git+https://github.com/guardrails-ai/guardrails.git@v0.10.0"
 ]
 
 # All optional dependencies
