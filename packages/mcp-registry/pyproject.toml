@@ -28,7 +28,10 @@ dependencies = [
     "httpx",
     "fastmcp",
     "public-ip",
-    "requests"
+    "requests",
+    "redis",
+    "redislite",
+    "asyncpg"
 ]
 
 [project.scripts]

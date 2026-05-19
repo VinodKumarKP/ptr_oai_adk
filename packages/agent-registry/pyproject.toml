@@ -27,6 +27,7 @@ dependencies = [
     "pydantic",
     "httpx",
     "redis",
+    "redislite",
     "cryptography",
     "requests",
     "uvloop; sys_platform != 'win32'",

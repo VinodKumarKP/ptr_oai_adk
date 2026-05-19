@@ -210,44 +210,63 @@ async def verify_jwt_token(
 
     token = credentials.credentials
 
-    try:
-        import jwt
+    if is_saml_token(str(token)):
+        try:
+            validator = TokenValidator(os.environ.get("SAML_PUBLIC_KEY_PATH", None))
+            validation_result = validator.validate_token_and_get_role(str(token))
+            if validation_result.is_valid:
+                request.state.user_role = validation_result.role
+                request.state.user_email = validation_result.email
+                return True
+            raise AuthenticationException(reason=validation_result.error_message or "Invalid SAML token")
+        except TokenValidationError as e:
+            raise AuthenticationException(reason=str(e))
+        except Exception:
+            raise HTTPException(status_code=500, detail="SAML token validation service unavailable")
+    else:
+        try:
+            import jwt
 
-        # Check for Public Key (RSA)
-        public_key_path = os.environ.get("JWT_PUBLIC_KEY_PATH")
-        public_key_content = os.environ.get("JWT_PUBLIC_KEY")
+            default_path = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)),
+                'resources',
+                'keys',
+                'public-key.pem'
+            )
+            public_key_path = os.environ.get("JWT_PUBLIC_KEY_PATH", default_path)
+            public_key_content = os.environ.get("JWT_PUBLIC_KEY")
 
-        key = None
-        algorithms = []
+            key = None
+            algorithms = []
 
-        if public_key_path and os.path.exists(public_key_path):
-            with open(public_key_path, "r") as f:
-                key = f.read()
-            algorithms = ["RS256"]
-        elif public_key_content:
-            key = public_key_content
-            algorithms = ["RS256"]
-        else:
-            # Fallback to Secret Key (HMAC)
-            key = os.environ.get("JWT_SECRET_KEY")
-            algorithms = ["HS256"]
+            if public_key_path and os.path.exists(public_key_path):
+                with open(public_key_path, "r") as f:
+                    key = f.read()
+                algorithms = ["RS256"]
+            elif public_key_content:
+                key = public_key_content
+                algorithms = ["RS256"]
+            else:
+                # Fallback to Secret Key (HMAC)
+                key = os.environ.get("JWT_SECRET_KEY")
+                algorithms = ["HS256"]
 
-        if not key:
-            raise AuthenticationException(reason="JWT configuration missing (Public Key or Secret Key required)")
+            if not key:
+                raise AuthenticationException(reason="JWT configuration missing (Public Key or Secret Key required)")
 
-        payload = jwt.decode(token, key, algorithms=algorithms)
+            payload = jwt.decode(token, key, algorithms=algorithms)
 
-        if payload:
-            role_id = payload.get('role', 'unknown')
-            if role_id == 'admin':
-                return payload
-        raise AuthenticationException(reason="Invalid role")
-    except ImportError:
-        raise HTTPException(status_code=500, detail="JWT library not installed")
-    except jwt.ExpiredSignatureError:
-        raise AuthenticationException(reason="Token has expired")
-    except jwt.InvalidTokenError:
-        raise AuthenticationException(reason="Invalid token")
+            if payload:
+                role_id = payload.get('role', 'unknown')
+                if role_id == 'admin':
+                    return payload
+            raise AuthenticationException(reason="Invalid role")
+        except ImportError:
+            raise HTTPException(status_code=500, detail="JWT library not installed")
+        except jwt.ExpiredSignatureError:
+            raise AuthenticationException(reason="Token has expired")
+        except jwt.InvalidTokenError:
+            raise AuthenticationException(reason="Invalid token")
 
 
 async def verify_api_key_strict(
