@@ -1,0 +1,52 @@
+# pyproject.toml
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "oai-platform-core"
+description = "Shared infrastructure utilities for the OAI Agent Development Kit (token management, auth, deployers, etc.)."
+authors = [{ name = "Vinod Kumar KP", email = "vinod.kunnum-purath@capgemini.com" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["oai-platform", "token-manager", "auth", "redis"]
+dynamic = ["version"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "redis>=4.0",
+]
+
+[project.optional-dependencies]
+# Install when Redis/Valkey is not available (dev / demo mode)
+redislite = ["redislite"]
+# All optional extras bundled
+all = ["oai-platform-core[redislite]"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[project.urls]
+Homepage = "https://github.com/Capgemini-Innersource/ptr_agent_server"
+Repository = "https://github.com/Capgemini-Innersource/ptr_agent_server.git"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "../.." }
+fallback-version = "0.1.0"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oai_platform_core"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --cov=src --cov-report=term-missing"
+testpaths = ["tests"]
+asyncio_mode = "strict"
