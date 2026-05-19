@@ -11,7 +11,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 import nest_asyncio
 
-from oai_mcp_server_core.utils.token_manager import TokenManager
+from oai_platform_core.security import TokenManager
 
 nest_asyncio.apply()
 
@@ -59,7 +59,7 @@ class BaseMCPServer(ABC):
 
         self.enable_request_isolation = enable_request_isolation
         self.registry = MCPRegistry(self.mcp)
-        self.token_manager = TokenManager()
+        self.token_manager = TokenManager(db_path_name="mcp_server_tokens.db")
 
         # Setup request-aware environment if enabled
         if enable_request_isolation:

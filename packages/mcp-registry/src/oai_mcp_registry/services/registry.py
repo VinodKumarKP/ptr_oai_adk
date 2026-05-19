@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, StreamingResponse, Response
 from fastmcp import FastMCP
 
 from oai_mcp_registry.models import AppConfig, ServerConfig, RegistryConfig, ServerRegistration, ServerDeregistration
-from oai_mcp_registry.utils.util import get_local_ip, get_public_ip
+from oai_platform_core.networking import get_local_ip, get_public_ip
 from oai_mcp_registry.services.db.database_logger import RegistryDatabaseLogger
 from oai_mcp_registry.services.deployers.base import BaseDeployer
 from oai_mcp_registry.services.deployers.factory import DeployerFactory

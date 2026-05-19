@@ -6,8 +6,8 @@ from fastapi import Header, HTTPException, Request
 from fastapi.security import APIKeyHeader
 
 from oai_agent_registry.models import RegistryConfig
-from oai_agent_registry.security.saml_token_validation import TokenValidator, TokenValidationError
-from oai_agent_registry.security.token_manager import TokenManager
+from oai_platform_core.security.saml_token_validation import TokenValidator, TokenValidationError
+from oai_platform_core.security import TokenManager
 
 # Define the API key security scheme
 api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
@@ -75,7 +75,7 @@ def _validate_token(request: Request, registry_config: RegistryConfig, agent_nam
         except Exception:
             raise HTTPException(status_code=500, detail="SAML token validation service unavailable")
     else:
-        token_manager = TokenManager()
+        token_manager = TokenManager(db_path_name="agent_registry_tokens.db")
         user_info = token_manager.validate_token(agent_name, token)
 
         if not user_info:

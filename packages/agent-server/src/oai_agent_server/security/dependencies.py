@@ -10,7 +10,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHea
 
 from oai_agent_server.exceptions import AuthenticationException
 from oai_agent_server.middleware.request_context import get_original_environ
-from oai_agent_server.utils.saml_token_validation import TokenValidator, TokenValidationError
+from oai_platform_core.security.saml_token_validation import TokenValidator, TokenValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +52,8 @@ def _client_in_trusted_network(request: Request) -> bool:
 @lru_cache(maxsize=1)
 def _get_token_manager():
     """Lazy module-level singleton for TokenManager (re-uses Redis connection)."""
-    from oai_agent_server.utils.token_manager import TokenManager
-    return TokenManager()
+    from oai_platform_core.security import TokenManager
+    return TokenManager(db_path_name="agent_server_tokens.db")
 
 # Define the API key security scheme
 api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)

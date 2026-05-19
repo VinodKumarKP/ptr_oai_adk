@@ -6,7 +6,7 @@ from fastmcp.server.dependencies import get_http_headers
 from oai_mcp_server_core.utils.logger_utils import get_logger
 from oai_mcp_server_core.core.context import RequestAwareEnviron
 from oai_mcp_server_core.core.exceptions import AuthenticationError, DependencyError, AuthenticationException
-from oai_mcp_server_core.utils.saml_token_validation import TokenValidator, TokenValidationError
+from oai_platform_core.security.saml_token_validation import TokenValidator, TokenValidationError
 
 
 class AuthenticationMiddleware(Middleware):
@@ -29,8 +29,8 @@ class AuthenticationMiddleware(Middleware):
         # Only import TokenManager if auth is enabled
         if self.auth_enabled:
             try:
-                from oai_mcp_server_core.utils.token_manager import TokenManager
-                self.token_manager = TokenManager()
+                from oai_platform_core.security import TokenManager
+                self.token_manager = TokenManager(db_path_name="mcp_server_tokens.db")
             except ImportError as e:
                 self.logger.error(f"Failed to import TokenManager: {e}")
                 self.token_manager = None

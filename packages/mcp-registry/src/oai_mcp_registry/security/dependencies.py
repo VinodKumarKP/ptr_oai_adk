@@ -6,14 +6,14 @@ from fastapi import Header, HTTPException, Request
 from fastapi.security import APIKeyHeader
 
 from oai_mcp_registry.models import RegistryConfig
-from oai_mcp_registry.security.saml_token_validation import TokenValidator, TokenValidationError
-from oai_mcp_registry.security.token_manager import TokenManager
+from oai_platform_core.security.saml_token_validation import TokenValidator, TokenValidationError
+from oai_platform_core.security import TokenManager
 
 # Define the API key security scheme
 api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
 
 # Shared TokenManager instance — one Redis connection pool for the process lifetime.
-_token_manager = TokenManager()
+_token_manager = TokenManager(db_path_name="mcp_registry_tokens.db")
 
 def is_saml_token(token: str) -> bool:
     """

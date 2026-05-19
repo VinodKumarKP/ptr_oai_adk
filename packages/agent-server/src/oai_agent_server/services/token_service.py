@@ -1,13 +1,13 @@
 from typing import Optional, Dict, Any
 
 from oai_agent_server.exceptions import TokenGenerationException
-from oai_agent_server.utils.token_manager import TokenManager
+from oai_platform_core.security import TokenManager
 
 
 class TokenService:
 
     def __init__(self):
-        self.token_manager = TokenManager()
+        self.token_manager = TokenManager(db_path_name="agent_server_tokens.db")
 
     def generate_token(self, server_key: str,
                        user_id: Optional[str] = None,

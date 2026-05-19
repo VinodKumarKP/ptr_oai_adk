@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from oai_agent_registry.routers.registry import router
 from oai_agent_registry.dependencies import registry_instance
 from oai_agent_registry.security.dependencies import verify_api_key, api_key_header
-from oai_agent_registry.utils.util import get_public_ip, get_private_ip
+from oai_platform_core.networking import get_public_ip, get_private_ip
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
