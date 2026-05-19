@@ -1,25 +1,28 @@
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List, AsyncGenerator
+"""
+MCP-registry deployer base.
 
-class BaseDeployer(ABC):
+Inherits the four framework-agnostic abstract methods from the canonical
+:py:class:`oai_platform_core.deployers.base.BaseDeployer` and adds the
+MCP-server-specific deploy / lifecycle methods.
+"""
+
+from __future__ import annotations
+
+from abc import abstractmethod
+from typing import Any, AsyncGenerator, Dict, List, Optional
+
+from oai_platform_core.deployers.base import BaseDeployer
+
+__all__ = ["BaseDeployer"]
+
+
+class BaseDeployer(BaseDeployer):  # type: ignore[no-redef]
+    """Abstract base for all MCP-server deployment strategies.
+
+    Extends the platform-core base with MCP-server-specific abstract
+    methods.  All concrete deployers (``DockerComposeManager``,
+    ``PythonPackageDeployer``, …) inherit from this class.
     """
-    Abstract base class for all deployment strategies (Docker Compose, Kubernetes, Python Package, etc.).
-    """
-
-    @abstractmethod
-    async def initialize(self) -> None:
-        """Initialize the deployment environment (e.g., start base services)."""
-        pass
-
-    @abstractmethod
-    async def shutdown(self) -> None:
-        """Shutdown the deployment environment (e.g., stop all services)."""
-        pass
-
-    @abstractmethod
-    def find_available_port(self) -> int:
-        """Find an available port for a new server."""
-        pass
 
     @abstractmethod
     async def deploy_server(
@@ -35,8 +38,7 @@ class BaseDeployer(ABC):
         refresh_repo: bool = False,
         no_build: bool = False,
     ) -> str:
-        """Deploy a single server."""
-        pass
+        """Deploy a single MCP server."""
 
     @abstractmethod
     async def stream_deploy_server(
@@ -52,25 +54,16 @@ class BaseDeployer(ABC):
         refresh_repo: bool = False,
         no_build: bool = False,
     ) -> AsyncGenerator[str, None]:
-        """Deploy a single server and stream the output."""
-        pass
+        """Deploy a single MCP server and stream the build/deploy output."""
 
     @abstractmethod
     def start_server(self, server_name: str) -> str:
         """Start a previously deployed but stopped server."""
-        pass
 
     @abstractmethod
     def stop_server(self, server_name: str) -> str:
-        """Stop a running server (pause without destroying)."""
-        pass
+        """Stop a running server without destroying it."""
 
     @abstractmethod
     def remove_server(self, server_name: str) -> str:
-        """Completely remove and teardown a server."""
-        pass
-
-    @abstractmethod
-    def image_exists(self, server_name: str, version: str) -> bool:
-        """Check if the deployment artifact for the given version already exists locally."""
-        pass
+        """Completely remove and tear down a server."""

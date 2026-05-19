@@ -13,4 +13,12 @@ db.base                         Shared async database backend base classes
 exceptions                      Shared exception hierarchy
                                 (OAIBaseException, AuthenticationException)
 logging_utils                   Shared logging helper (get_logger)
+security.token_utils            extract_bearer_token() — framework-agnostic
+                                API-token extraction from HTTP headers
+deployers.base                  BaseDeployer ABC (initialize, shutdown,
+                                find_available_port, image_exists)
+deployers.env_utils             build_deployment_env() — common deployment
+                                env-var builder (DB pool, Redis, port, etc.)
+deployers.infra_cli             generate_infra_compose_main() — shared CLI
+                                entry-point for infra compose generation
 """

@@ -1,25 +1,28 @@
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List, AsyncGenerator
+"""
+Agent-registry deployer base.
 
-class BaseDeployer(ABC):
+Inherits the four framework-agnostic abstract methods from the canonical
+:py:class:`oai_platform_core.deployers.base.BaseDeployer` and adds the
+agent-specific deploy / lifecycle methods.
+"""
+
+from __future__ import annotations
+
+from abc import abstractmethod
+from typing import Any, AsyncGenerator, Dict, List, Optional
+
+from oai_platform_core.deployers.base import BaseDeployer
+
+__all__ = ["BaseDeployer"]
+
+
+class BaseDeployer(BaseDeployer):  # type: ignore[no-redef]
+    """Abstract base for all agent deployment strategies.
+
+    Extends the platform-core base with agent-specific abstract methods.
+    All concrete deployers (``DockerComposeManager``,
+    ``PythonPackageDeployer``, …) inherit from this class.
     """
-    Abstract base class for all deployment strategies (Docker Compose, Kubernetes, Python Package, etc.).
-    """
-
-    @abstractmethod
-    async def initialize(self) -> None:
-        """Initialize the deployment environment (e.g., start base services)."""
-        pass
-
-    @abstractmethod
-    async def shutdown(self) -> None:
-        """Shutdown the deployment environment (e.g., stop all services)."""
-        pass
-
-    @abstractmethod
-    def find_available_port(self) -> int:
-        """Find an available port for a new agent."""
-        pass
 
     @abstractmethod
     async def deploy_agent(
@@ -36,7 +39,6 @@ class BaseDeployer(ABC):
         no_build: bool = False,
     ) -> str:
         """Deploy a single agent."""
-        pass
 
     @abstractmethod
     async def stream_deploy_agent(
@@ -52,31 +54,20 @@ class BaseDeployer(ABC):
         refresh_repo: bool = False,
         no_build: bool = False,
     ) -> AsyncGenerator[str, None]:
-        """Deploy a single agent and stream the output."""
-        pass
+        """Deploy a single agent and stream the build/deploy output."""
 
     @abstractmethod
     def start_agent(self, agent_name: str) -> str:
         """Start a previously deployed but stopped agent."""
-        pass
 
     @abstractmethod
     def stop_agent(self, agent_name: str) -> str:
-        """Stop a running agent (pause without destroying)."""
-        pass
+        """Stop a running agent without destroying it."""
 
     @abstractmethod
     def remove_agent(self, agent_name: str) -> str:
-        """Completely remove and teardown an agent."""
-        pass
-
-    @abstractmethod
-    def image_exists(self, agent_name: str, version: str) -> bool:
-        """Check if the deployment artifact for the given version already exists locally."""
-        pass
-
+        """Completely remove and tear down an agent."""
 
     @abstractmethod
     def start_infra_services(self) -> None:
-        """Start any necessary infrastructure services (e.g., databases, message queues)."""
-        pass
+        """Start infrastructure services required by agents (DBs, queues, …)."""

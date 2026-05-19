@@ -5,6 +5,7 @@ from oai_platform_core.security.saml_token_validation import (
     TokenValidator,
     is_saml_token,
 )
+from oai_platform_core.security.token_utils import extract_bearer_token
 
 __all__ = [
     "TokenManager",
@@ -12,4 +13,5 @@ __all__ = [
     "ValidationResult",
     "TokenValidator",
     "is_saml_token",
+    "extract_bearer_token",
 ]

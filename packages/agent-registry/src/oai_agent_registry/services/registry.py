@@ -829,7 +829,7 @@ class AgentRegistry:
 
     async def proxy_request(self, agent_name: str, path: str, request: Request) -> Response:
         """Proxies a request to the specified agent."""
-        _validate_token(request, self.registry_config, agent_name)
+        _validate_token(request, agent_name)
 
         if agent_name not in self.agents:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
