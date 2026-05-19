@@ -84,7 +84,7 @@ class AuthenticationMiddleware(Middleware):
             from starlette.exceptions import HTTPException
             raise HTTPException(status_code=401, detail="API token required")
 
-        if self.is_saml_token(api_token):
+        if is_saml_token(api_token):
             try:
                 validator = TokenValidator(os.environ.get("SAML_PUBLIC_KEY_PATH", None))
                 validation_result = validator.validate_token_and_get_role(api_token)
