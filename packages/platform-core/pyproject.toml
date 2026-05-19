@@ -45,6 +45,9 @@ fallback-version = "0.1.0"
 [tool.hatch.build.targets.wheel]
 packages = ["src/oai_platform_core"]
 
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""
+
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "-ra -q --cov=src --cov-report=term-missing"
