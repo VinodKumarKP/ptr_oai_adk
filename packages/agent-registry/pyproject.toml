@@ -28,6 +28,7 @@ dependencies = [
     "httpx",
     "redis",
     "redislite",
+    "pyyaml",
     "cryptography",
     "requests",
     "uvloop; sys_platform != 'win32'",

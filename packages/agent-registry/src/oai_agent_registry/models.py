@@ -1,6 +1,52 @@
 from typing import Dict, Optional, Any, List, Literal
 from pydantic import BaseModel, Field
 
+
+# ---------------------------------------------------------------------------
+# Bulk / Discovery models
+# ---------------------------------------------------------------------------
+
+class AgentDiscoveryItem(BaseModel):
+    """A single agent discovered from a Git repository."""
+    name: str
+    description: Optional[str] = None
+    framework: Optional[str] = None       # mapped from YAML 'type' field
+    agent_type: Optional[str] = None      # raw 'type' value from YAML
+    tags: Optional[List[str]] = Field(default_factory=list)
+    prompts: Optional[List[str]] = Field(default_factory=list)
+    port: Optional[int] = None
+    source: Optional[str] = None
+    status: str = "available"             # "available" | "already_registered" | "invalid"
+    config_file: Optional[str] = None    # filename of the YAML in the repo
+    error: Optional[str] = None
+
+
+class AgentDiscoveryResult(BaseModel):
+    """Result of scanning a Git repository for agent config YAMLs."""
+    git_repository_url: str
+    total_found: int
+    available_to_register: int
+    already_registered: int
+    invalid: int
+    agents: List[AgentDiscoveryItem]
+
+
+class BulkAgentRegistrationRequest(BaseModel):
+    """Request body for bulk-registering agents from a Git repository."""
+    git_repository_url: str
+    agent_names: List[str]
+    framework: Optional[Literal["langgraph", "openai", "crewai", "strands"]] = None
+    deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
+    auth_token: Optional[str] = None     # GitHub PAT for private repos
+    config_path: Optional[str] = None   # Custom path to agent config YAMLs in the repo
+
+
+class BulkAgentRegistrationResult(BaseModel):
+    """Summary of a bulk agent registration operation."""
+    total_registered: int
+    successful: List[str]
+    failed: List[Dict[str, str]]
+
 class AgentConfig(BaseModel):
     """Configuration for a single agent."""
     name: str = None
