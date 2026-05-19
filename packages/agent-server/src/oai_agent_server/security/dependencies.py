@@ -209,10 +209,10 @@ async def verify_jwt_token(
         raise AuthenticationException(reason="Authorization header required")
 
     token = credentials.credentials
+    validator = TokenValidator(os.environ.get("SAML_PUBLIC_KEY_PATH", None))
 
     if is_saml_token(str(token)):
         try:
-            validator = TokenValidator(os.environ.get("SAML_PUBLIC_KEY_PATH", None))
             validation_result = validator.validate_token_and_get_role(str(token))
             if validation_result.is_valid:
                 request.state.user_role = validation_result.role
@@ -227,12 +227,7 @@ async def verify_jwt_token(
         try:
             import jwt
 
-            default_path = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)),
-                'resources',
-                'keys',
-                'public-key.pem'
-            )
+            default_path = validator._get_default_key_path()
             public_key_path = os.environ.get("JWT_PUBLIC_KEY_PATH", default_path)
             public_key_content = os.environ.get("JWT_PUBLIC_KEY")
 
