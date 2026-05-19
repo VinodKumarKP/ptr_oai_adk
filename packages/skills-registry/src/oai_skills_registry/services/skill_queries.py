@@ -93,27 +93,44 @@ class SkillQueries:
             return []
 
         versions = []
+        auth_token = git_source.get("auth_token")
+        repository = git_source["repository"]
 
         for tag in tags:
+            tag_name = tag.get("name", "")
             try:
-                # Try to fetch SKILL.md from this tag
-                files = await provider.fetch_skill_files(
-                    repo=git_source["repository"],
-                    branch=None,
-                    tag=tag.get("name"),
-                    skill_name=skill_name,
-                    auth_token=git_source.get("auth_token")
-                )
+                # Use fast GitHub Contents API when available; fall back to git clone.
+                if hasattr(provider, "fetch_skill_md_from_api"):
+                    files = await provider.fetch_skill_md_from_api(
+                        repo=repository,
+                        tag=tag_name,
+                        skill_name=skill_name,
+                        auth_token=auth_token,
+                    )
+                else:
+                    files = await provider.fetch_skill_files(
+                        repo=repository,
+                        branch=None,
+                        tag=tag_name,
+                        skill_name=skill_name,
+                        auth_token=auth_token,
+                    )
+
                 skill_data = parse_skill_md(files["SKILL.md"])
                 if skill_data.get("name") == skill_name:
                     versions.append({
                         "version": skill_data.get("version"),
-                        "git_tag": tag.get("name"),
+                        "git_tag": tag_name,
                         "commit_sha": tag.get("commit", {}).get("sha", ""),
-                        "created_at": tag.get("created_at")
+                        "created_at": tag.get("created_at"),
+                        "message": tag.get("message", ""),
+                        "author": tag.get("tagger", {}).get("name", "") or skill_data.get("author", ""),
                     })
+            except FileNotFoundError:
+                self.logger.debug("Skill %s not found at tag %s, skipping", skill_name, tag_name)
+                continue
             except Exception as e:
-                self.logger.debug(f"Failed to parse version from tag {tag.get('name')}: {e}")
+                self.logger.debug("Failed to parse version from tag %s: %s", tag_name, e)
                 continue
 
-        return sorted(versions, key=lambda x: x.get("created_at", ""), reverse=True)
+        return sorted(versions, key=lambda x: x.get("created_at") or "", reverse=True)
