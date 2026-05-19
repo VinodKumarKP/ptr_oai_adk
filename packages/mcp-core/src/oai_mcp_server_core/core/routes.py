@@ -82,6 +82,24 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
             "isolation_enabled": enable_request_isolation
         })
 
+    def _token_response(token: str, user_id: Optional[str], role_id: Optional[str], ttl_seconds: Optional[int]) -> dict:
+        """Build the HTTP response dict for a freshly generated token.
+
+        generate_token() now returns only the token string (oai_platform_core
+        canonical API).  This helper reconstructs the full response shape that
+        clients expect, mirroring the normalisations applied inside TokenManager.
+        """
+        normalised_user = (
+            user_id.split("@")[0] if user_id and "@" in user_id else user_id
+        ) or "anonymous"
+        normalised_role = role_id or "default"
+        return {
+            "token": token,
+            "user_id": normalised_user,
+            "role_id": normalised_role,
+            "ttl_seconds": ttl_seconds,
+        }
+
     @mcp_app.custom_route("/token/custom", methods=["POST"])
     def generate_token(request: Request,
                        user_id: Optional[str] = None,
@@ -89,8 +107,8 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
                        ttl_seconds: Optional[int] = 3600):
         """Generate a token with embedded metadata."""
         server_key = getattr(request.app.state, "agent_name", "unknown")
-        result = token_manager.generate_token(server_key, user_id, role_id, ttl_seconds)
-        return JSONResponse(content=result)
+        token = token_manager.generate_token(server_key, user_id, role_id, ttl_seconds)
+        return JSONResponse(content=_token_response(token, user_id, role_id, ttl_seconds))
 
     @mcp_app.custom_route("/token/short-term", methods=["POST"])
     def generate_short_term_token(request: Request,
@@ -98,8 +116,8 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
                                   role_id: Optional[str] = None):
         """Generate a short-term token (5 minutes)."""
         server_key = getattr(request.app.state, "agent_name", "unknown")
-        result = token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=300)
-        return JSONResponse(content=result)
+        token = token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=300)
+        return JSONResponse(content=_token_response(token, user_id, role_id, 300))
 
     @mcp_app.custom_route("/token/long-term", methods=["POST"])
     def generate_long_term_token(request: Request,
@@ -107,8 +125,8 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
                                  role_id: Optional[str] = None):
         """Generate a long-term token (30 days)."""
         server_key = getattr(request.app.state, "agent_name", "unknown")
-        result = token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=2592000)
-        return JSONResponse(content=result)
+        token = token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=2592000)
+        return JSONResponse(content=_token_response(token, user_id, role_id, 2592000))
 
     @mcp_app.custom_route("/token/permanent", methods=["POST"])
     def generate_permanent_token(request: Request,
@@ -116,5 +134,5 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
                                  role_id: Optional[str] = None):
         """Generate a permanent token (no expiration)."""
         server_key = getattr(request.app.state, "agent_name", "unknown")
-        result = token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=None)
-        return JSONResponse(content=result)
+        token = token_manager.generate_token(server_key, user_id, role_id, ttl_seconds=None)
+        return JSONResponse(content=_token_response(token, user_id, role_id, None))

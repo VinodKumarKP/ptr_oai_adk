@@ -29,8 +29,7 @@ dependencies = [
     "fastmcp",
     "public-ip",
     "requests",
-    "redis",
-    "redislite",
+    "oai-platform-core[redislite]",
     "asyncpg"
 ]
 

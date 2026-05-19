@@ -25,10 +25,13 @@ dependencies = [
     "nest-asyncio",
     "ruamel.yaml",
     "requests",
-    "redis",
+    "oai-platform-core[redislite]",
     "fastapi==0.136.1"
 ]
 
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [project.urls]
 Homepage = "https://github.com/Capgemini-Innersource/ptr_mcp_server_core"
