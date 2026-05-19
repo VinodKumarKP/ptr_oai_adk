@@ -21,4 +21,12 @@ deployers.env_utils             build_deployment_env() — common deployment
                                 env-var builder (DB pool, Redis, port, etc.)
 deployers.infra_cli             generate_infra_compose_main() — shared CLI
                                 entry-point for infra compose generation
+deployers.docker_compose_base   BaseDockerComposeManager — template-method
+                                base for Docker Compose deployers; abstract
+                                hooks: _build_infra_compose_dict,
+                                _build_service_dict, _get_service_env
+deployers.python_package_base   BasePythonPackageDeployer — template-method
+                                base for Python-subprocess deployers; abstract
+                                hooks: _get_service_env, _get_server_py_path,
+                                _get_start_command
 """
