@@ -1,11 +1,23 @@
+import asyncio
+import json
 import os
-from typing import Optional
+from typing import AsyncGenerator, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import JSONResponse
+from starlette.responses import StreamingResponse
 
 from oai_mcp_registry.dependencies import get_registry
-from oai_mcp_registry.models import ServerRegistration, ServerDeregistration, McpServerLifecycleAction, ServerAction, ServerActionHistory
+from oai_mcp_registry.models import (
+    ServerRegistration,
+    ServerDeregistration,
+    McpServerLifecycleAction,
+    ServerAction,
+    ServerActionHistory,
+    MCPServerDiscoveryResult,
+    BulkMCPServerRegistrationRequest,
+    BulkMCPServerRegistrationResult,
+)
 from oai_mcp_registry.services.registry import MCPRegistry
 
 router = APIRouter()
@@ -135,3 +147,288 @@ async def get_server_history(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve action history: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Bulk registration helpers
+# ---------------------------------------------------------------------------
+
+logger = __import__("logging").getLogger(__name__)
+
+
+def _build_server_registrations(
+    request: BulkMCPServerRegistrationRequest,
+    servers_by_name: Dict[str, Dict],
+) -> Tuple[List[Tuple[str, ServerRegistration]], List[Dict[str, str]]]:
+    """Build ServerRegistration objects for each requested server name."""
+    to_deploy: List[Tuple[str, ServerRegistration]] = []
+    pre_failed: List[Dict[str, str]] = []
+
+    for server_name in request.server_names:
+        server_data = servers_by_name.get(server_name)
+        if server_data is None:
+            pre_failed.append({"server_name": server_name, "error": "Not found in repository"})
+            continue
+        if server_data.get("error"):
+            pre_failed.append({"server_name": server_name, "error": server_data["error"]})
+            continue
+
+        to_deploy.append((
+            server_name,
+            ServerRegistration(
+                name=server_name,
+                description=server_data.get("description", ""),
+                endpoint=server_data.get("endpoint") or "",
+                port=server_data.get("port"),
+                source=server_data.get("source") or request.git_repository_url,
+                active=True,
+                registered_via="registry",
+                tags=server_data.get("tags") or [],
+                current_version=None,
+                available_versions=[],
+                deployment_mode=request.deployment_mode,
+            ),
+        ))
+
+    return to_deploy, pre_failed
+
+
+async def _stream_bulk_mcp_deployment(
+    app,
+    agents_to_deploy: List[Tuple[str, ServerRegistration]],
+    pre_failed: List[Dict[str, str]],
+    registry: MCPRegistry,
+) -> AsyncGenerator[str, None]:
+    """
+    Async generator that deploys all MCP servers concurrently and yields SSE events.
+
+    Each event is a JSON-encoded line:
+      data: {"server": <name>, "status": "queued|building|done|error", "line": <text>}
+
+    Final summary event:
+      data: {"type": "complete", "total_registered": N, "successful": [...], "failed": [...]}
+    """
+    from oai_mcp_registry.models import ServerConfig
+
+    queue: asyncio.Queue = asyncio.Queue()
+    successful: List[str] = []
+    failed: List[Dict[str, str]] = list(pre_failed)
+
+    def _sse(payload: dict) -> str:
+        return f"data: {json.dumps(payload)}\n\n"
+
+    # Announce every server immediately so the UI can render panels upfront
+    for server_name, _ in agents_to_deploy:
+        yield _sse({"server": server_name, "status": "queued", "line": "Queued for deployment…"})
+
+    async def _deploy_one(server_name: str, server_reg: ServerRegistration) -> None:
+        try:
+            deployer = registry._get_deployer(server_reg.deployment_mode)
+            if not deployer:
+                raise RuntimeError(f"No deployer available for mode '{server_reg.deployment_mode}'")
+
+            if not server_reg.port:
+                server_reg.port = deployer.find_available_port()
+
+            await queue.put({
+                "server": server_name,
+                "status": "building",
+                "line": f"Starting {server_reg.deployment_mode} deployment on port {server_reg.port}…",
+            })
+
+            async for raw_line in deployer.stream_deploy_server(
+                server_name=server_name,
+                source_url=server_reg.source,
+                framework=None,
+                env={},
+                description=server_reg.description or "",
+                tags=server_reg.tags or [],
+                port=server_reg.port,
+                current_version=server_reg.current_version,
+                refresh_repo=False,
+            ):
+                line = raw_line.strip()
+                if line:
+                    await queue.put({"server": server_name, "status": "building", "line": line})
+
+            # Persist to DB and mount proxy after successful build
+            db_values = await registry._get_merged_server_values(server_name, server_reg, "registry")
+            if server_reg.port:
+                db_values["port"] = server_reg.port
+
+            server_config = ServerConfig(**db_values)
+            registry.config.servers[server_name] = server_config
+
+            # Mount the MCP proxy
+            try:
+                url = registry._build_upstream_url(server_config)
+                if url:
+                    from fastmcp import FastMCP
+                    mcp = FastMCP.as_proxy(url, name=server_name)
+                    sub_app = mcp.http_app()
+                    await registry.stop_sub_app(server_name)
+                    registry.sub_apps[server_name] = sub_app
+                    await registry.start_sub_app(server_name, sub_app)
+            except Exception as mount_exc:
+                logger.warning("Proxy mount failed for '%s': %s", server_name, mount_exc)
+
+            await registry.db_logger.log_server_registration(
+                server_name=server_name,
+                endpoint_url=db_values["endpoint"],
+                port=db_values["port"],
+                source=db_values["source"],
+                active=db_values["active"],
+                registered_via="registry",
+                tags=db_values["tags"],
+                description=db_values["description"],
+                current_version=db_values["current_version"],
+                available_versions=db_values["available_versions"],
+                deployment_mode=db_values["deployment_mode"],
+            )
+
+            successful.append(server_name)
+            await queue.put({
+                "server": server_name,
+                "status": "done",
+                "line": f"✅ Server '{server_name}' deployed successfully.",
+            })
+
+        except Exception as exc:
+            logger.error("Bulk deploy failed for MCP server '%s': %s", server_name, exc)
+            failed.append({"server_name": server_name, "error": str(exc)})
+            await queue.put({"server": server_name, "status": "error", "line": f"❌ {exc}"})
+        finally:
+            await queue.put(None)  # sentinel
+
+    # Launch all deployments concurrently
+    for server_name, server_reg in agents_to_deploy:
+        asyncio.create_task(_deploy_one(server_name, server_reg))
+
+    # Drain the queue until every task has sent its sentinel
+    pending = len(agents_to_deploy)
+    while pending > 0:
+        event = await queue.get()
+        if event is None:
+            pending -= 1
+        else:
+            yield _sse(event)
+
+    yield _sse({
+        "type": "complete",
+        "total_registered": len(successful),
+        "successful": successful,
+        "failed": failed,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Bulk registration endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/servers/discover", response_model=MCPServerDiscoveryResult)
+async def discover_servers(
+    request_data: Dict,
+    registry: MCPRegistry = Depends(get_registry),
+):
+    """
+    Discover all MCP server config YAMLs in a GitHub repository.
+
+    Scans common config directories (``mcp_registry_servers/servers_config/``,
+    ``servers_config/``, etc.) for ``.yaml`` files and returns parsed metadata.
+    Pass ``config_path`` in the body to override auto-detection.
+    """
+    from oai_mcp_registry.services.mcp_discovery import MCPDiscovery
+
+    git_repository_url = request_data.get("git_repository_url")
+    if not git_repository_url:
+        raise HTTPException(status_code=400, detail="git_repository_url is required")
+
+    auth_token = request_data.get("auth_token")
+    config_path = request_data.get("config_path")
+
+    try:
+        discovery = MCPDiscovery(logger=logger)
+        existing_names = list(registry.config.servers.keys()) if registry.config else []
+        result = await discovery.discover(
+            git_repository_url=git_repository_url,
+            existing_server_names=existing_names,
+            auth_token=auth_token,
+            config_path=config_path,
+        )
+        return MCPServerDiscoveryResult(**result)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Failed to discover MCP servers: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/servers/register-bulk")
+async def register_servers_bulk(
+    request: Request,
+    bulk_request: BulkMCPServerRegistrationRequest,
+    stream_output: bool = False,
+    registry: MCPRegistry = Depends(get_registry),
+):
+    """
+    Register and deploy multiple MCP servers from a GitHub repository.
+
+    When ``stream_output=true`` returns a multiplexed SSE stream with live
+    build logs for all servers running concurrently.
+    When ``stream_output=false`` deployment runs as background tasks and a
+    JSON summary is returned immediately.
+    """
+    from oai_mcp_registry.services.mcp_discovery import MCPDiscovery
+
+    if not bulk_request.server_names:
+        raise HTTPException(status_code=400, detail="server_names must not be empty")
+
+    try:
+        discovery = MCPDiscovery(logger=logger)
+        discovery_result = await discovery.discover(
+            git_repository_url=bulk_request.git_repository_url,
+            auth_token=bulk_request.auth_token,
+            config_path=bulk_request.config_path,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Discovery failed during bulk MCP register: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    servers_by_name: Dict[str, Dict] = {
+        s["name"]: s for s in discovery_result["servers"]
+    }
+
+    to_deploy, pre_failed = _build_server_registrations(bulk_request, servers_by_name)
+
+    # ── Streaming path ────────────────────────────────────────────────────────
+    if stream_output:
+        return StreamingResponse(
+            _stream_bulk_mcp_deployment(request.app, to_deploy, pre_failed, registry),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    # ── Non-streaming path ────────────────────────────────────────────────────
+    successful: List[str] = []
+    failed: List[Dict[str, str]] = list(pre_failed)
+
+    for server_name, server_reg in to_deploy:
+        try:
+            await registry.register_server(request.app, server_reg, stream_output=False)
+            successful.append(server_name)
+            logger.info("Bulk-registered MCP server '%s' (mode=%s)", server_name, server_reg.deployment_mode)
+        except Exception as exc:
+            logger.error("Failed to register MCP server '%s': %s", server_name, exc)
+            failed.append({"server_name": server_name, "error": str(exc)})
+
+    return BulkMCPServerRegistrationResult(
+        total_registered=len(successful),
+        successful=successful,
+        failed=failed,
+    )

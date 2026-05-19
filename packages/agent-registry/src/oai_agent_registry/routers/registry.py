@@ -1,7 +1,10 @@
+import asyncio
+import json
 import logging
-from typing import Dict, Optional
+from typing import AsyncGenerator, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from starlette.responses import StreamingResponse
 
 from oai_agent_registry.dependencies import get_registry
 from oai_agent_registry.models import (
@@ -146,64 +149,31 @@ async def discover_agents(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@router.post("/agents/register-bulk", response_model=BulkAgentRegistrationResult)
-async def register_agents_bulk(
+def _build_agent_registrations(
     request: BulkAgentRegistrationRequest,
-    api_key: bool = Depends(verify_api_key),
-    registry: AgentRegistry = Depends(get_registry),
-):
+    agents_by_name: Dict[str, Dict],
+) -> Tuple[List[Tuple[str, "AgentRegistration"]], List[Dict[str, str]]]:
     """
-    Register and deploy multiple agents from a GitHub repository in one operation.
-
-    Fetches each selected agent's config YAML, then calls the same
-    ``register_agent`` path used by the individual /register endpoint so that
-    deployment is triggered automatically according to ``deployment_mode``.
-
-    Requires a valid API token.
+    Build AgentRegistration objects for each requested agent name.
+    Returns (to_deploy, pre_failed) where pre_failed contains agents that
+    couldn't be found or had parse errors before deployment even starts.
     """
-    from oai_agent_registry.services.agent_discovery import AgentDiscovery
-
-    if not request.agent_names:
-        raise HTTPException(status_code=400, detail="agent_names must not be empty")
-
-    try:
-        # Re-discover to get the YAML metadata for the selected names
-        discovery = AgentDiscovery(logger=logger)
-        discovery_result = await discovery.discover(
-            git_repository_url=request.git_repository_url,
-            auth_token=request.auth_token,
-            config_path=request.config_path,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:
-        logger.error("Discovery failed during bulk register: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
-
-    # Build a lookup by agent name  (discover() returns a plain dict, not a model)
-    agents_by_name: Dict[str, Dict] = {
-        a["name"]: a for a in discovery_result["agents"]
-    }
-
-    successful: list[str] = []
-    failed: list[Dict[str, str]] = []
+    to_deploy: List[Tuple[str, AgentRegistration]] = []
+    pre_failed: List[Dict[str, str]] = []
 
     for agent_name in request.agent_names:
         agent_data = agents_by_name.get(agent_name)
         if agent_data is None:
-            failed.append({"agent_name": agent_name, "error": "Not found in repository"})
+            pre_failed.append({"agent_name": agent_name, "error": "Not found in repository"})
             continue
-
         if agent_data.get("error"):
-            failed.append({"agent_name": agent_name, "error": agent_data["error"]})
+            pre_failed.append({"agent_name": agent_name, "error": agent_data["error"]})
             continue
 
-        try:
-            # Apply overrides from request; fall back to values parsed from YAML
-            framework = request.framework or agent_data.get("framework")
-            deployment_mode = request.deployment_mode  # always set (default: docker)
-
-            agent_registration = AgentRegistration(
+        framework = request.framework or agent_data.get("framework")
+        to_deploy.append((
+            agent_name,
+            AgentRegistration(
                 name=agent_name,
                 description=agent_data.get("description", ""),
                 endpoint=agent_data.get("endpoint") or "",
@@ -216,18 +186,199 @@ async def register_agents_bulk(
                 tags=agent_data.get("tags") or [],
                 current_version=None,
                 available_versions=[],
-                deployment_mode=deployment_mode,
-            )
+                deployment_mode=request.deployment_mode,
+            ),
+        ))
 
-            # Delegate to register_agent so the deployer is invoked based on
-            # deployment_mode (docker / kubernetes / python_package).
-            await registry.register_agent(agent_registration, stream_output=False)
+    return to_deploy, pre_failed
+
+
+async def _stream_bulk_deployment(
+    agents_to_deploy: List[Tuple[str, "AgentRegistration"]],
+    pre_failed: List[Dict[str, str]],
+    registry: AgentRegistry,
+) -> AsyncGenerator[str, None]:
+    """
+    Async generator that deploys all agents concurrently and yields SSE events.
+
+    Each event is a JSON-encoded line:
+      data: {"agent": <name>, "status": "queued|building|done|error", "line": <text>}
+
+    A final summary event signals completion:
+      data: {"type": "complete", "total_registered": N, "successful": [...], "failed": [...]}
+    """
+    from oai_agent_registry.models import AgentConfig
+
+    queue: asyncio.Queue = asyncio.Queue()
+    successful: List[str] = []
+    failed: List[Dict[str, str]] = list(pre_failed)  # seed with pre-discovery failures
+
+    def _sse(payload: dict) -> str:
+        return f"data: {json.dumps(payload)}\n\n"
+
+    # Announce every agent immediately so the UI can render panels upfront
+    for agent_name, _ in agents_to_deploy:
+        yield _sse({"agent": agent_name, "status": "queued", "line": "Queued for deployment…"})
+
+    async def _deploy_one(agent_name: str, agent_reg: AgentRegistration) -> None:
+        """Deploy a single agent and push all output lines to the shared queue."""
+        try:
+            deployer = registry._get_deployer(agent_reg.deployment_mode)
+            if not deployer:
+                raise RuntimeError(f"No deployer available for mode '{agent_reg.deployment_mode}'")
+
+            # Assign a port if none was specified in the YAML
+            if not agent_reg.port:
+                agent_reg.port = deployer.find_available_port()
+
+            await queue.put({
+                "agent": agent_name,
+                "status": "building",
+                "line": f"Starting {agent_reg.deployment_mode} deployment on port {agent_reg.port}…",
+            })
+
+            async for raw_line in deployer.stream_deploy_agent(
+                agent_name=agent_name,
+                source_url=agent_reg.source,
+                framework=agent_reg.framework,
+                env={},
+                description=agent_reg.description or "",
+                tags=agent_reg.tags or [],
+                port=agent_reg.port,
+                current_version=agent_reg.current_version,
+                refresh_repo=False,
+            ):
+                line = raw_line.strip()
+                if line:
+                    await queue.put({"agent": agent_name, "status": "building", "line": line})
+
+            # Persist to DB and in-memory registry after a successful build
+            db_values = await registry._get_merged_agent_values(agent_name, agent_reg, "registry")
+            if agent_reg.port:
+                db_values["port"] = agent_reg.port
+
+            registry.agents[agent_name] = AgentConfig(**db_values)
+
+            await registry.db_logger.log_agent_registration(
+                agent_name=agent_name,
+                endpoint_url=db_values["endpoint"],
+                port=db_values["port"],
+                source=db_values["source"],
+                active=db_values["active"],
+                registered_via="registry",
+                framework=db_values["framework"],
+                prompts=db_values["prompts"],
+                tags=db_values["tags"],
+                description=db_values["description"],
+                current_version=db_values["current_version"],
+                available_versions=db_values["available_versions"],
+                deployment_mode=db_values["deployment_mode"],
+            )
 
             successful.append(agent_name)
-            logger.info(
-                "Bulk-registered and deploying agent '%s' (mode=%s) from %s",
-                agent_name, deployment_mode, request.git_repository_url,
-            )
+            await queue.put({
+                "agent": agent_name,
+                "status": "done",
+                "line": f"✅ Agent '{agent_name}' deployed successfully.",
+            })
+
+        except Exception as exc:
+            logger.error("Bulk deploy failed for '%s': %s", agent_name, exc)
+            failed.append({"agent_name": agent_name, "error": str(exc)})
+            await queue.put({
+                "agent": agent_name,
+                "status": "error",
+                "line": f"❌ {exc}",
+            })
+        finally:
+            await queue.put(None)  # sentinel — this agent is finished
+
+    # Launch all deployments concurrently
+    for agent_name, agent_reg in agents_to_deploy:
+        asyncio.create_task(_deploy_one(agent_name, agent_reg))
+
+    # Drain the queue until every task has sent its sentinel
+    pending = len(agents_to_deploy)
+    while pending > 0:
+        event = await queue.get()
+        if event is None:
+            pending -= 1
+        else:
+            yield _sse(event)
+
+    # Final summary — frontend uses this to render the completion card
+    yield _sse({
+        "type": "complete",
+        "total_registered": len(successful),
+        "successful": successful,
+        "failed": failed,
+    })
+
+
+@router.post("/agents/register-bulk")
+async def register_agents_bulk(
+    request: BulkAgentRegistrationRequest,
+    stream_output: bool = False,
+    api_key: bool = Depends(verify_api_key),
+    registry: AgentRegistry = Depends(get_registry),
+):
+    """
+    Register and deploy multiple agents from a GitHub repository in one operation.
+
+    When ``stream_output=true`` (query param) returns an SSE stream where each
+    event is a JSON object tagged with the agent name, allowing the UI to show
+    live build logs for every agent in parallel.
+
+    When ``stream_output=false`` (default) deployment runs in background tasks
+    and a JSON summary is returned immediately.
+
+    Requires a valid API token.
+    """
+    from oai_agent_registry.services.agent_discovery import AgentDiscovery
+
+    if not request.agent_names:
+        raise HTTPException(status_code=400, detail="agent_names must not be empty")
+
+    try:
+        discovery = AgentDiscovery(logger=logger)
+        discovery_result = await discovery.discover(
+            git_repository_url=request.git_repository_url,
+            auth_token=request.auth_token,
+            config_path=request.config_path,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Discovery failed during bulk register: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    agents_by_name: Dict[str, Dict] = {
+        a["name"]: a for a in discovery_result["agents"]
+    }
+
+    agents_to_deploy, pre_failed = _build_agent_registrations(request, agents_by_name)
+
+    # ── Streaming path ────────────────────────────────────────────────────────
+    if stream_output:
+        return StreamingResponse(
+            _stream_bulk_deployment(agents_to_deploy, pre_failed, registry),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",   # disable nginx buffering
+            },
+        )
+
+    # ── Non-streaming path (background tasks, immediate JSON response) ────────
+    successful: List[str] = []
+    failed: List[Dict[str, str]] = list(pre_failed)
+
+    for agent_name, agent_reg in agents_to_deploy:
+        try:
+            await registry.register_agent(agent_reg, stream_output=False)
+            successful.append(agent_name)
+            logger.info("Bulk-registered agent '%s' (mode=%s)", agent_name, agent_reg.deployment_mode)
         except Exception as exc:
             logger.error("Failed to register agent '%s': %s", agent_name, exc)
             failed.append({"agent_name": agent_name, "error": str(exc)})

@@ -1,6 +1,49 @@
 from typing import Dict, Optional, Literal, List
 from pydantic import BaseModel, Field
 
+
+# ---------------------------------------------------------------------------
+# Bulk / Discovery models
+# ---------------------------------------------------------------------------
+
+class MCPServerDiscoveryItem(BaseModel):
+    """A single MCP server discovered from a Git repository."""
+    name: str
+    description: Optional[str] = None
+    tags: Optional[List[str]] = Field(default_factory=list)
+    port: Optional[int] = None
+    source: Optional[str] = None
+    status: str = "available"       # "available" | "already_registered" | "invalid"
+    config_file: Optional[str] = None
+    error: Optional[str] = None
+
+
+class MCPServerDiscoveryResult(BaseModel):
+    """Result of scanning a Git repository for MCP server config YAMLs."""
+    git_repository_url: str
+    total_found: int
+    available_to_register: int
+    already_registered: int
+    invalid: int
+    servers: List[MCPServerDiscoveryItem]
+
+
+class BulkMCPServerRegistrationRequest(BaseModel):
+    """Request body for bulk-registering MCP servers from a Git repository."""
+    git_repository_url: str
+    server_names: List[str]
+    deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
+    auth_token: Optional[str] = None    # GitHub PAT for private repos
+    config_path: Optional[str] = None  # Custom path to server config YAMLs in the repo
+
+
+class BulkMCPServerRegistrationResult(BaseModel):
+    """Summary of a bulk MCP server registration operation."""
+    total_registered: int
+    successful: List[str]
+    failed: List[Dict[str, str]]
+
+
 class ServerConfig(BaseModel):
     """Represents a single upstream MCP server."""
     endpoint: Optional[str] = None
