@@ -22,6 +22,7 @@ classifiers = [
 
 dependencies = [
     "redis>=4.0",
+    "cryptography>=3.4",
 ]
 
 [project.optional-dependencies]
@@ -44,6 +45,8 @@ fallback-version = "0.1.0"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/oai_platform_core"]
+# Include non-Python assets (bundled SAML public key, etc.)
+artifacts = ["src/oai_platform_core/resources/**"]
 
 [tool.hatch.build.targets.wheel.sources]
 "src" = ""
