@@ -1,41 +1,17 @@
-import logging
-import os
-import tempfile
-from logging.handlers import RotatingFileHandler
+"""
+logger_utils — logging helper for oai_mcp_server_core.
 
+Delegates to the canonical implementation in ``oai_platform_core.logging_utils``
+so that all OAI packages share the same rotating-file + console logger setup.
 
-def get_logger():
-    """
-    Get a configured logger instance.
-    
-    The logger writes to both console and a rotating file in the temp directory.
-    
-    Returns:
-        logging.Logger: Configured logger instance
-    """
-    logger = logging.getLogger('root')
-    
-    # Avoid adding handlers multiple times if logger is already configured
-    if logger.handlers:
-        return logger
-        
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+Backward-compatible: existing callers that do::
 
-    temp_dir = tempfile.gettempdir()
-    log_file_path = os.path.join(temp_dir, 'app.log')
+    from oai_mcp_server_core.utils.logger_utils import get_logger
+    logger = get_logger()
 
-    # Create a file handler to write logs to a file
-    file_handler = RotatingFileHandler(log_file_path, maxBytes=1024 * 1024, backupCount=5)
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(formatter)
+continue to work without any changes.
+"""
 
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)  # You can set the desired log level for console output
-    console_handler.setFormatter(formatter)
+from oai_platform_core.logging_utils import get_logger  # noqa: F401 — re-export
 
-    # Add the handlers to the logger
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
-    # logger.setLevel(logging.DEBUG)  # Set root logger level
-
-    return logger
+__all__ = ["get_logger"]

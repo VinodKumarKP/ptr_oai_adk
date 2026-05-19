@@ -3,6 +3,7 @@ from oai_platform_core.security.saml_token_validation import (
     TokenValidationError,
     ValidationResult,
     TokenValidator,
+    is_saml_token,
 )
 
 __all__ = [
@@ -10,4 +11,5 @@ __all__ = [
     "TokenValidationError",
     "ValidationResult",
     "TokenValidator",
+    "is_saml_token",
 ]

@@ -1,4 +1,3 @@
-import base64
 import os
 from typing import Optional
 
@@ -6,27 +5,14 @@ from fastapi import Header, HTTPException, Request
 from fastapi.security import APIKeyHeader
 
 from oai_mcp_registry.models import RegistryConfig
+from oai_platform_core.security import TokenManager, is_saml_token
 from oai_platform_core.security.saml_token_validation import TokenValidator, TokenValidationError
-from oai_platform_core.security import TokenManager
 
 # Define the API key security scheme
 api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
 
 # Shared TokenManager instance — one Redis connection pool for the process lifetime.
 _token_manager = TokenManager(db_path_name="mcp_registry_tokens.db")
-
-def is_saml_token(token: str) -> bool:
-    """
-    Checks if a token is likely a SAML token by checking if it's base64 encoded XML.
-    """
-    if not token or not isinstance(token, str) or len(token) % 4 != 0:
-        return False
-    try:
-        decoded_token = base64.b64decode(token, validate=True)
-        # Check for SAML or SAMLP tags, without requiring the XML declaration
-        return b'<saml:' in decoded_token or b'<samlp:' in decoded_token
-    except (ValueError, TypeError):
-        return False
 
 def _validate_token(request: Request, registry_config: RegistryConfig, server_name: str):
     """

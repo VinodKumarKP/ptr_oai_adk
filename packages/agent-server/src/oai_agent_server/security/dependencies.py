@@ -1,4 +1,3 @@
-import base64
 import ipaddress
 import logging
 import os
@@ -10,6 +9,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHea
 
 from oai_agent_server.exceptions import AuthenticationException
 from oai_agent_server.middleware.request_context import get_original_environ
+from oai_platform_core.security import is_saml_token
 from oai_platform_core.security.saml_token_validation import TokenValidator, TokenValidationError
 
 logger = logging.getLogger(__name__)
@@ -57,20 +57,6 @@ def _get_token_manager():
 
 # Define the API key security scheme
 api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
-
-
-def is_saml_token(token: str) -> bool:
-    """
-    Checks if a token is likely a SAML token by checking if it's base64 encoded XML.
-    """
-    if not token or not isinstance(token, str) or len(token) % 4 != 0:
-        return False
-    try:
-        decoded_token = base64.b64decode(token, validate=True)
-        # Check for SAML or SAMLP tags, without requiring the XML declaration
-        return b'<saml:' in decoded_token or b'<samlp:' in decoded_token
-    except (ValueError, TypeError):
-        return False
 
 
 async def verify_api_key(

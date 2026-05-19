@@ -38,7 +38,7 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["TokenValidationError", "ValidationResult", "TokenValidator"]
+__all__ = ["TokenValidationError", "ValidationResult", "TokenValidator", "is_saml_token"]
 
 
 # ---------------------------------------------------------------------------
@@ -364,3 +364,31 @@ class TokenValidator:
                 is_tampered=True,
                 error_message="Internal validation error",
             )
+
+
+# ---------------------------------------------------------------------------
+# SAML token detection utility
+# ---------------------------------------------------------------------------
+
+def is_saml_token(token: str) -> bool:
+    """Return ``True`` if *token* looks like a base64-encoded SAML assertion.
+
+    The check is intentionally lightweight — it decodes the base64 payload and
+    looks for the ``<saml:`` or ``<samlp:`` XML namespace prefixes.  A full
+    cryptographic validation is performed separately by :py:class:`TokenValidator`.
+
+    Args:
+        token: The raw token string from the ``Authorization`` / ``api-token``
+               header.
+
+    Returns:
+        ``True`` when the token is (likely) a SAML assertion, ``False``
+        otherwise (including on any decoding error).
+    """
+    if not token or not isinstance(token, str) or len(token) % 4 != 0:
+        return False
+    try:
+        decoded = base64.b64decode(token, validate=True)
+        return b"<saml:" in decoded or b"<samlp:" in decoded
+    except (ValueError, TypeError):
+        return False
