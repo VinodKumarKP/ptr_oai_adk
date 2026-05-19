@@ -6,7 +6,7 @@ from fastmcp.server.dependencies import get_http_headers
 from oai_mcp_server_core.utils.logger_utils import get_logger
 from oai_mcp_server_core.core.context import RequestAwareEnviron
 from oai_mcp_server_core.core.exceptions import AuthenticationError, DependencyError, AuthenticationException
-from oai_platform_core.security.saml_token_validation import TokenValidator, TokenValidationError
+from oai_platform_core.security.saml_token_validation import TokenValidator, TokenValidationError, is_saml_token
 
 
 class AuthenticationMiddleware(Middleware):
@@ -34,19 +34,6 @@ class AuthenticationMiddleware(Middleware):
             except ImportError as e:
                 self.logger.error(f"Failed to import TokenManager: {e}")
                 self.token_manager = None
-
-    def is_saml_token(self, token: str) -> bool:
-        """
-        Checks if a token is likely a SAML token by checking if it's base64 encoded XML.
-        """
-        if not token or not isinstance(token, str) or len(token) % 4 != 0:
-            return False
-        try:
-            decoded_token = base64.b64decode(token, validate=True)
-            # Check for SAML or SAMLP tags, without requiring the XML declaration
-            return b'<saml:' in decoded_token or b'<samlp:' in decoded_token
-        except (ValueError, TypeError):
-            return False
 
     async def __call__(self, context: MiddlewareContext, call_next):
         """
