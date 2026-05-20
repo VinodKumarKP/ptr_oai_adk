@@ -184,9 +184,9 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
         return JSONResponse(content={"revoked": count, "message": f"Revoked {count} token(s)"})
 
     @mcp_app.custom_route("/token/revoke/{token_str}", methods=["DELETE"])
-    def revoke_token(token_str: str):
+    def revoke_token(request: Request):
         """Revoke a specific token.  Returns 404 if not found or already revoked."""
-        revoked = token_manager.revoke_token(token_str)
+        revoked = token_manager.revoke_token(request.path_params.get('token_str'))
         if not revoked:
             return JSONResponse(
                 status_code=404,
