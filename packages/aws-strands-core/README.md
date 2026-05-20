@@ -31,7 +31,7 @@ A powerful, YAML-based configuration system for building multi-agent AI workflow
 
 ## Overview
 
-The AWS Strands Multi-Agent Framework enables you to create sophisticated agent orchestrations through simple YAML configuration files. Built on AWS Strands and LangChain, it provides a declarative way to define multi-agent systems with support for various orchestration patterns.
+The AWS Strands Multi-Agent Framework enables you to create sophisticated agent orchestrations through simple YAML configuration files. Built on the AWS Strands SDK, it provides a declarative way to define multi-agent systems with support for various orchestration patterns.
 
 ### High-Level Architecture
 
@@ -54,28 +54,22 @@ The framework operates on a simple principle: your YAML configuration is the sin
 
 ## Prerequisites
 
-Before running the agent, ensure you have the necessary API keys set as environment variables based on your chosen `cloud_provider`:
+Before running the agent, ensure you have the necessary API keys set as environment variables based on your chosen model:
 
 ```bash
-# For OpenAI models
+# For OpenAI models (model_id: "gpt-4o", etc.)
 export OPENAI_API_KEY="sk-..."
 
-# For Anthropic models
+# For Anthropic models (model_id: "anthropic/claude-3-5-sonnet", etc.)
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# For AWS Bedrock
+# For AWS Bedrock (model_id: "bedrock/anthropic.claude-3-sonnet-..." or native Bedrock IDs)
 export AWS_ACCESS_KEY_ID="..."
 export AWS_SECRET_ACCESS_KEY="..."
 export AWS_DEFAULT_REGION="us-west-2"
 ```
 
-You must also install the specific LangChain provider package for the model you intend to use:
-
-```bash
-pip install langchain-openai      # If using cloud_provider: openai
-pip install langchain-anthropic   # If using cloud_provider: anthropic
-pip install langchain-aws         # If using cloud_provider: aws
-```
+This framework uses [LiteLLM](https://docs.litellm.ai/) (via `strands-agents`) for model routing. The `model_id` field in your YAML config drives which provider and model is used — the `cloud_provider` field is descriptive metadata only. No additional provider-specific LangChain packages are required.
 
 ## Quick Start
 
@@ -167,26 +161,26 @@ If you prefer to build your project from scratch, follow these steps.
 **1. Installation**
 
 ```bash
-pip install oai-aws-strands-agent-core
+pip install oai-aws-strands-core
 ```
 
 To install with specific optional dependencies:
 
 ```bash
 # For vector store support (required for any vector DB)
-pip install "oai-aws-strands-agent-core[vector-required]"
+pip install "oai-aws-strands-core[vector-required]"
 
 # For ChromaDB support
-pip install "oai-aws-strands-agent-core[chromadb]"
+pip install "oai-aws-strands-core[chromadb]"
 
 # For Postgres (pgvector) support
-pip install "oai-aws-strands-agent-core[postgres]"
+pip install "oai-aws-strands-core[postgres]"
 
 # For S3 vector store support
-pip install "oai-aws-strands-agent-core[s3]"
+pip install "oai-aws-strands-core[s3]"
 
 # For all features
-pip install "oai-aws-strands-agent-core[all]"
+pip install "oai-aws-strands-core[all]"
 ```
 
 **2. Create Your Configuration File**
@@ -225,7 +219,7 @@ system_prompt: You are a supervisor managing a team of agents.
 
 ```python
 import yaml
-from oai_aws_strands_agent_core.agents.strands_agent import StrandsAgent
+from oai_agent_core.aws_strands_core.agents.strands_agent import StrandsAgent
 
 # Load configuration
 with open("research_agent.yaml", "r") as f:
@@ -503,7 +497,7 @@ agent_list:
 
 ```yaml
 crew_config:
-  pattern: agents_as_tools
+  pattern: agent-as-tool
 
 agent_list:
   - coordinator:
@@ -546,6 +540,22 @@ system_prompt: You help with research.
 ## Tools System
 
 ### Defining Tools
+
+#### AWS Strands Built-in Tools (`strands_tools`)
+
+The AWS Strands SDK ships a built-in tool library called `strands_tools` that provides ready-to-use utilities such as `file_read`, `file_write`, `shell`, `http_request`, and more. Reference them by name in your agent config:
+
+```yaml
+tools:
+  file_read:
+    module: strands_tools
+  file_write:
+    module: strands_tools
+  shell:
+    module: strands_tools
+```
+
+The framework automatically loads any function exported from the `strands_tools` module, so no additional class or function configuration is needed.
 
 #### Load Class-Based Tools (LangChain Community)
 
@@ -1192,7 +1202,7 @@ system_prompt: You are an editor. Coordinate the research and writing process.
 ```python
 async for chunk in agent.astream("Research quantum computing"):
     if 'content' in chunk:
-        print(chunk['content'], end='', flush=True)
+        print(chunk['content']['text'], end='', flush=True)
 ```
 
 ## Observability
@@ -1284,7 +1294,7 @@ class StrandsAgent:
 
     def invoke(message: str, config: Dict = None) -> Dict:
         """
-        Synchronously invokes the.
+        Synchronously invokes the agent.
         (See ainvoke for parameter details.)
         """
 

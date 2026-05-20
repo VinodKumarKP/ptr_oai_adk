@@ -53,28 +53,22 @@ The framework operates on a simple principle: your YAML configuration is the sin
 
 ## Prerequisites
 
-Before running the agent, ensure you have the necessary API keys set as environment variables based on your chosen `cloud_provider`:
+Before running the agent, ensure you have the necessary API keys set as environment variables based on your chosen model:
 
 ```bash
-# For OpenAI models
+# For OpenAI models (model_id: "gpt-4o", etc.)
 export OPENAI_API_KEY="sk-..."
 
-# For Anthropic models
+# For Anthropic models (model_id: "anthropic/claude-3-5-sonnet", etc.)
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# For AWS Bedrock
+# For AWS Bedrock (model_id: "bedrock/anthropic.claude-3-sonnet-...")
 export AWS_ACCESS_KEY_ID="..."
 export AWS_SECRET_ACCESS_KEY="..."
 export AWS_DEFAULT_REGION="us-west-2"
 ```
 
-You must also install the specific LangChain provider package for the model you intend to use:
-
-```bash
-pip install langchain-openai      # If using cloud_provider: openai
-pip install langchain-anthropic   # If using cloud_provider: anthropic
-pip install langchain-aws         # If using cloud_provider: aws
-```
+This framework uses [LiteLLM](https://docs.litellm.ai/) for model routing. The `model_id` field in your YAML config drives which provider and model is used — the `cloud_provider` field is descriptive metadata only. No additional provider-specific LangChain packages are required.
 
 ## Quick Start
 
@@ -166,26 +160,26 @@ If you prefer to build your project from scratch, follow these steps.
 **1. Installation**
 
 ```bash
-pip install oai-crewai-agent-core
+pip install oai-crewai-core
 ```
 
 To install with specific optional dependencies:
 
 ```bash
 # For vector store support (required for any vector DB)
-pip install "oai-crewai-agent-core[vector-required]"
+pip install "oai-crewai-core[vector-required]"
 
 # For ChromaDB support
-pip install "oai-crewai-agent-core[chromadb]"
+pip install "oai-crewai-core[chromadb]"
 
 # For Postgres (pgvector) support
-pip install "oai-crewai-agent-core[postgres]"
+pip install "oai-crewai-core[postgres]"
 
 # For S3 vector store support
-pip install "oai-crewai-agent-core[s3]"
+pip install "oai-crewai-core[s3]"
 
 # For all features
-pip install "oai-crewai-agent-core[all]"
+pip install "oai-crewai-core[all]"
 ```
 
 **2. Create Your Configuration File**
@@ -234,7 +228,7 @@ crew_config:
 
 ```python
 import yaml
-from oai_crewai_agent_core.agents.crewai_agent import CrewAIAgent
+from oai_agent_core.crewai_core.agents.crewai_agent import CrewAIAgent
 
 # Load configuration
 with open("research_agent.yaml", "r") as f:
@@ -249,7 +243,9 @@ agent = CrewAIAgent(
 await agent.initialize()
 
 # Execute
-result = await agent.ainvoke({"topic": "Quantum Computing"})
+# Pass the user message as a string; template variables in task descriptions
+# (e.g. {topic}) are automatically mapped from the message content.
+result = await agent.ainvoke("Quantum Computing")
 print(result)
 ```
 
@@ -1053,11 +1049,20 @@ task_list:
 
 ### Providing Inputs
 
-Pass the variables as a dictionary when you invoke the agent.
+Pass the user message as a string. The framework automatically maps the message to the `{variable}` placeholders found in your task descriptions.
 
 ```python
+# Simple: message is auto-mapped to all template variables
+result = await agent.ainvoke("Quantum Computing")
+
+# Explicit: supply exact values for each variable via config
 result = await agent.ainvoke(
-    {"topic": "Quantum Computing"}
+    "Research quantum computing",
+    config={
+        'inputs': {
+            'topic': 'Quantum Computing',
+        }
+    }
 )
 ```
 
@@ -1127,9 +1132,9 @@ crew_config:
 ### Async Streaming
 
 ```python
-async for chunk in agent.astream({"topic": "Quantum Computing"}):
+async for chunk in agent.astream("Quantum Computing"):
     if 'content' in chunk:
-        print(chunk['content'], end='', flush=True)
+        print(chunk['content']['text'], end='', flush=True)
 ```
 
 ## Observability
@@ -1211,23 +1216,27 @@ class CrewAIAgent:
         Must be called before invoking the agent.
         """
 
-    async def ainvoke(message: Dict[str, Any]) -> Dict:
+    async def ainvoke(user_message: str, config: Dict = None) -> Dict:
         """
-        Asynchronously invokes the agent with a dictionary of inputs.
-        - message: A dictionary where keys match the {variables} in your task descriptions.
+        Asynchronously invokes the agent with a user message string.
+        - user_message: The user's input string. Template variables in task
+          descriptions (e.g. {topic}) are auto-mapped from this message.
+        - config: Optional dict. Use config={'inputs': {'topic': '...'}} to
+          supply explicit values for task template variables.
         Returns: A dictionary containing the agent's final response.
         """
 
-    def invoke(message: Dict[str, Any]) -> Dict:
+    def invoke(user_message: str, config: Dict = None) -> Dict:
         """
         Synchronously invokes the agent.
         (See ainvoke for parameter details.)
         """
 
-    async def astream(message: Dict[str, Any]) -> AsyncGenerator:
+    async def astream(user_message: str, config: Dict = None) -> AsyncGenerator:
         """
         Streams the agent's output as it's generated.
-        Yields: Chunks of the response.
+        Yields: Chunks of the response, each containing a 'content' dict
+        with a 'text' key.
         """
 
     def validate_tasks() -> Dict[str, Any]:

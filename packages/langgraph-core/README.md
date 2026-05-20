@@ -54,35 +54,28 @@ The framework operates on a simple principle: your YAML configuration is the sin
 
 ## Prerequisites
 
-Before running the agent, ensure you have the necessary API keys set as environment variables based on your chosen `cloud_provider`:
+Before running the agent, ensure you have the necessary API keys set as environment variables based on your chosen model:
 
 ```bash
-# For OpenAI models
+# For OpenAI models (model_id: "gpt-4o", etc.)
 export OPENAI_API_KEY="sk-..."
 
-# For Anthropic models
+# For Anthropic models (model_id: "anthropic/claude-3-5-sonnet", etc.)
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# For AWS Bedrock
+# For AWS Bedrock (model_id: "bedrock/anthropic.claude-3-sonnet-...")
 export AWS_ACCESS_KEY_ID="..."
 export AWS_SECRET_ACCESS_KEY="..."
 export AWS_DEFAULT_REGION="us-west-2"
 ```
 
-You must also install the specific LangChain provider package for the model you intend to use:
-
-```bash
-pip install langchain-openai      # If using cloud_provider: openai
-pip install langchain-anthropic   # If using cloud_provider: anthropic
-pip install langchain-aws         # If using cloud_provider: aws
-```
+This framework uses [LiteLLM](https://docs.litellm.ai/) for model routing. The `model_id` field in your YAML config drives which provider and model is used — the `cloud_provider` field is descriptive metadata only. No additional provider-specific LangChain packages are required.
 
 ## Quick Start
 
 There are two ways to get started: using the interactive project generator for a guided setup, or manually configuring your project.
 
-### Option 1: Use the Project G- [Agent Skills](#agent-skills)
-enerator (Recommended)
+### Option 1: Use the Project Generator (Recommended)
 
 The `oai-gen` CLI tool scaffolds a complete, production-ready project with all the necessary configurations, including multi-agent setups, knowledge bases, and more.
 
@@ -168,26 +161,26 @@ If you prefer to build your project from scratch, follow these steps.
 **1. Installation**
 
 ```bash
-pip install oai-langgraph-agent-core
+pip install oai-langgraph-core
 ```
 
 To install with specific optional dependencies:
 
 ```bash
 # For vector store support (required for any vector DB)
-pip install "oai-langgraph-agent-core[vector-required]"
+pip install "oai-langgraph-core[vector-required]"
 
 # For ChromaDB support
-pip install "oai-langgraph-agent-core[chromadb]"
+pip install "oai-langgraph-core[chromadb]"
 
 # For Postgres (pgvector) support
-pip install "oai-langgraph-agent-core[postgres]"
+pip install "oai-langgraph-core[postgres]"
 
 # For S3 vector store support
-pip install "oai-langgraph-agent-core[s3]"
+pip install "oai-langgraph-core[s3]"
 
 # For all features
-pip install "oai-langgraph-agent-core[all]"
+pip install "oai-langgraph-core[all]"
 ```
 
 **2. Create Your Configuration File**
@@ -226,7 +219,7 @@ system_prompt: You are a supervisor managing a team of agents.
 
 ```python
 import yaml
-from oai_langgraph_agent_core.agents.langgraph_agent import LangGraphAgent
+from oai_agent_core.langgraph_core.agents.langgraph_agent import LangGraphAgent
 
 # Load configuration
 with open("research_agent.yaml", "r") as f:
@@ -1191,7 +1184,7 @@ system_prompt: You are an editor. Coordinate the research and writing process.
 ```python
 async for chunk in agent.astream("Research quantum computing"):
     if 'content' in chunk:
-        print(chunk['content'], end='', flush=True)
+        print(chunk['content']['text'], end='', flush=True)
 ```
 
 ## Observability
