@@ -1,6 +1,7 @@
 """Builder for creating and configuring Strands Agent instances."""
 
 import asyncio
+import concurrent.futures
 import logging
 from typing import Dict, Any, List, Optional, Callable
 
@@ -52,9 +53,12 @@ class AgentBuilder(BaseAgentBuilder):
         Args:
             model_manager: Model configuration manager
             tool_registry: Tool registry instance
+            llm: Optional language model instance
             logger: Optional logger instance
             document_loader: Optional document loader instance
             vector_store: Optional vector store instance
+            skill_registry: Optional skill registry instance
+            structured_output_model_registry: Optional structured output model registry
         """
         super().__init__(
             model_manager=model_manager,
@@ -170,29 +174,19 @@ class AgentBuilder(BaseAgentBuilder):
         @tool(name=name, description=description)
         def agent_tool(query: str) -> str:
             """Delegate work to the sub-agent."""
-            import asyncio
-            # Strands agents are typically invoked synchronously or via invoke_async
-            # If we are in an async loop, we should use invoke_async and run it
-            # But tool execution is often synchronous in Strands unless async tool support is enabled.
-            # Assuming Strands supports async tools or we wrap it.
-            
-            # If Strands supports async tools natively:
-            # return await agent.invoke_async(query)
-            
-            # If we must return a sync function but run async code:
+            # Strands Agent instances are callable — they execute synchronously.
+            # However, when this tool is invoked from within an already-running
+            # async event loop (e.g. inside astream / ainvoke), calling the agent
+            # directly on the loop thread would block it.  In that case we offload
+            # the synchronous call to a fresh thread so the event loop stays free.
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
+                # We are inside a running event loop — run the agent in a thread.
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(agent, query)
+                    return future.result()
             except RuntimeError:
-                loop = None
-                
-            if loop and loop.is_running():
-                # We are in an async context, but this tool function is sync.
-                # This is tricky. Ideally Strands supports async tools.
-                # If not, we might block.
-                # For now, let's assume we can run it.
-                # If Strands agent is purely sync callable:
-                return agent(query)
-            else:
+                # No running event loop — safe to call the agent directly.
                 return agent(query)
 
         agent_tool.name = name
@@ -215,53 +209,6 @@ class AgentBuilder(BaseAgentBuilder):
         Returns:
             Dictionary mapping agent keys to Agent instances or Tools (for agent-as-tool)
         """
-        # Normalize configs first to match base class expectation
-        # Note: Strands config structure is slightly different (list of dicts with key as name)
-        # The base class _normalize_agent_configs handles this.
-        
-        # However, create_agents_from_config expects to return a Dict, while base class returns lists.
-        # So we use the helper _create_agents_parallel directly but adapt the input/output.
-        
-        config_manager = None # Not needed for normalization if we pass raw list?
-        # Actually, base class _normalize_agent_configs needs a config manager.
-        # We can create a temporary one or use self.model_manager if it has config capabilities?
-        # Strands builder didn't use ConfigManager explicitly before, it parsed raw dicts.
-        
-        # Let's adapt the input manually to match what _create_agents_parallel expects
-        agent_definitions = []
-        for agent_config in agent_configs:
-            agent_key = list(agent_config.keys())[0]
-            agent_data = agent_config[agent_key]
-            agent_definitions.append((agent_key, agent_data))
-            
-        base_agents, _, sub_agent_tools = await self._create_agents_parallel(
-            agent_definitions, architecture
-        )
-        
-        # Reconstruct the map
-        agent_map = {}
-        for agent in base_agents:
-            # Find the tool wrapper if it exists
-            if architecture == Constants.PATTERN_AGENT_AS_TOOL:
-                # This is tricky because sub_agent_tools is a list, not mapped by name
-                # We need to find the tool corresponding to this agent.
-                # The base implementation of _create_agents_parallel returns lists in order.
-                # But it filters sub_agent_tools.
-                pass
-        
-        # Actually, it's easier to just reimplement create_agents_from_config using the base helper
-        # but keeping the map logic.
-        
-        # Let's use the base class _create_agents_parallel but we need to map results back to keys.
-        # The base class returns (base_agent_list, agent_list, sub_agent_tools).
-        # If architecture is agent-as-tool, base_agent_list has agents, sub_agent_tools has tools.
-        # They should be in the same order as definitions.
-        
-        # Wait, _create_agents_parallel filters the lists based on pattern.
-        # If pattern is agent-as-tool, agent_list is empty.
-        
-        # To be safe and preserve the map, let's just use the logic we had but call create_single_agent
-        
         tasks = []
         keys = []
         configs = []
