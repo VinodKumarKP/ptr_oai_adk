@@ -313,7 +313,7 @@ def test_token(token_router_app):
     assert response.status_code == 200
     assert response.json()["token"] == "test_token"
     # Verify default TTL is 3600 (passed as positional)
-    service.generate_token.assert_called_with("unknown", None, None, 3600)
+    service.generate_token.assert_called_with("unknown", None, None, 3600, max_tokens=10)
 
 def test_token_short_term(token_router_app):
     app, service = token_router_app
@@ -322,7 +322,7 @@ def test_token_short_term(token_router_app):
     assert response.status_code == 200
     assert response.json()["token"] == "test_token"
     # Verify TTL is 300 (passed as keyword argument in implementation)
-    service.generate_token.assert_called_with("unknown", None, None, ttl_seconds=300)
+    service.generate_token.assert_called_with("unknown", None, None, 300, max_tokens=10)
 
 def test_token_long_term(token_router_app):
     app, service = token_router_app
@@ -331,7 +331,7 @@ def test_token_long_term(token_router_app):
     assert response.status_code == 200
     assert response.json()["token"] == "test_token"
     # Verify TTL is 2592000 (30 days)
-    service.generate_token.assert_called_with("unknown", None, None, ttl_seconds=2592000)
+    service.generate_token.assert_called_with("unknown", None, None, 2592000, max_tokens=10)
 
 def test_token_permanent(token_router_app):
     app, service = token_router_app
@@ -340,7 +340,7 @@ def test_token_permanent(token_router_app):
     assert response.status_code == 200
     assert response.json()["token"] == "test_token"
     # Verify TTL is None
-    service.generate_token.assert_called_with("unknown", None, None, ttl_seconds=None)
+    service.generate_token.assert_called_with("unknown", None, None, None, max_tokens=10)
 
 
 # --- Logs Router Tests ---

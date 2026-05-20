@@ -33,7 +33,8 @@ class TestTokenService:
             server_key="test_server",
             user_id="user1",
             role_id="admin",
-            ttl_seconds=3600
+            ttl_seconds=3600,
+            max_tokens=None
         )
 
     def test_generate_token_defaults(self, token_service):
@@ -50,7 +51,8 @@ class TestTokenService:
             server_key="test_server",
             user_id=None,
             role_id=None,
-            ttl_seconds=3600
+            ttl_seconds=3600,
+            max_tokens=None
         )
 
     def test_generate_token_exception(self, token_service):
