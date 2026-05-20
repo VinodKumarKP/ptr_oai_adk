@@ -17,11 +17,12 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from oai_skills_registry.services.db.database_logger import SkillsDatabaseLogger
 from oai_skills_registry.services.skills_registry import SkillsRegistry
+from oai_skills_registry.security.dependencies import _validate_token
 
 # ---------------------------------------------------------------------------
 # Runtime state
@@ -40,7 +41,7 @@ _auto_start_infra: Optional[bool] = None      # cli --auto-start-infra
 _infra_compose_file: Optional[str] = None     # cli --infra-compose-file
 _infra_startup_timeout: Optional[int] = None  # cli --infra-startup-timeout
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 async def initialize_registry(logger: Optional[logging.Logger] = None) -> SkillsRegistry:
@@ -142,22 +143,42 @@ def get_registry() -> SkillsRegistry:
     return _skills_registry
 
 
-async def verify_bearer_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> HTTPAuthorizationCredentials:
-    """Verify bearer token from Authorization header."""
-    if not credentials.credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authentication token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return credentials
+async def verify_bearer_token(request: Request) -> bool:
+    """FastAPI dependency — authenticate every protected endpoint.
+
+    Supports both SAML tokens and platform API tokens via
+    :func:`oai_skills_registry.security.dependencies._validate_token`.
+
+    On success, ``request.state`` is populated with:
+    - ``user_id``    — username or e-mail
+    - ``user_role``  — role string from token
+    - ``user_email`` — e-mail (SAML tokens only)
+
+    Authentication can be disabled by setting ``SKILLS_AUTH_ENABLED=false``.
+    Trusted local peers (loopback / docker-internal) bypass auth unless
+    ``FORCE_AUTH=true``.
+
+    Raises:
+        HTTPException 401: token missing or invalid.
+        HTTPException 500: SAML validation service unavailable.
+    """
+    _validate_token(request)
+    return True
 
 
-async def get_auth_user(credentials: HTTPAuthorizationCredentials = Depends(verify_bearer_token)) -> str:
-    """Extract username/identifier from token (simplified)."""
-    # In production, this would validate the JWT and extract user info
-    # For now, we'll just return a placeholder
-    return "authenticated_user"
+async def get_auth_user(
+    request: Request,
+    _auth: bool = Depends(verify_bearer_token),
+) -> str:
+    """Return the authenticated user's identifier from ``request.state``.
+
+    Prefers ``user_email`` (set by SAML flow) then falls back to ``user_id``
+    (set by API-token flow).  Returns ``"authenticated_user"`` when auth is
+    disabled or the request originates from a trusted peer.
+    """
+    email = getattr(request.state, "user_email", None)
+    user_id = getattr(request.state, "user_id", None)
+    return email or user_id or "authenticated_user"
 
 
 async def close_registry() -> None:
