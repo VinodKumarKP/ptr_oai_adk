@@ -217,3 +217,73 @@ def test_get_token_info_returns_hash_data(token_manager):
 def test_get_token_info_returns_none_when_empty(token_manager):
     token_manager.r.hgetall.return_value = {}
     assert token_manager.get_token_info("missing.token") is None
+
+
+# --- _connect fallback paths ---
+
+def test_connect_falls_back_to_redislite_when_redis_unavailable(tmp_path):
+    """When Redis ping fails, _connect falls back to redislite."""
+    import sys
+
+    fake_rl_client = MagicMock()
+    fake_rl_module = MagicMock()
+    fake_rl_module.Redis.return_value = fake_rl_client
+
+    mock_redis_client = MagicMock()
+    mock_redis_client.ping.side_effect = ConnectionError("refused")
+    mock_redis_module = MagicMock()
+    mock_redis_module.Redis.return_value = mock_redis_client
+
+    db_path = str(tmp_path / "tokens.db")
+    with patch.dict(sys.modules, {"redis": mock_redis_module, "redislite": fake_rl_module}):
+        client, backend = TokenManager._connect("localhost", 9999, 0, db_path, "t.db")
+
+    assert backend == "redislite"
+    fake_rl_module.Redis.assert_called_once_with(db_path, decode_responses=True)
+
+
+def test_connect_raises_when_redis_unavailable_and_no_redislite():
+    """When both Redis and redislite are unavailable a RuntimeError is raised."""
+    import sys
+
+    mock_redis_client = MagicMock()
+    mock_redis_client.ping.side_effect = ConnectionError("refused")
+    mock_redis_module = MagicMock()
+    mock_redis_module.Redis.return_value = mock_redis_client
+
+    with patch.dict(sys.modules, {"redis": mock_redis_module, "redislite": None}):
+        with pytest.raises((RuntimeError, ImportError)):
+            TokenManager._connect("localhost", 9999, 0, None, "t.db")
+
+
+def test_connect_uses_redislite_db_path_env(tmp_path, monkeypatch):
+    """REDISLITE_DB_PATH env var is used when no explicit path is given."""
+    import sys
+
+    db_env = str(tmp_path / "env.db")
+    monkeypatch.setenv("REDISLITE_DB_PATH", db_env)
+
+    fake_rl_module = MagicMock()
+    mock_redis_module = MagicMock()
+    mock_redis_module.Redis.return_value.ping.side_effect = ConnectionError("x")
+
+    with patch.dict(sys.modules, {"redis": mock_redis_module, "redislite": fake_rl_module}):
+        client, backend = TokenManager._connect("localhost", 9999, 0, None, "t.db")
+
+    fake_rl_module.Redis.assert_called_once_with(db_env, decode_responses=True)
+
+
+# --- _hset_mapping fallback ---
+
+def test_hset_mapping_falls_back_to_hmset(token_manager):
+    """If hset(mapping=…) raises TypeError, hmset is used instead."""
+    token_manager.r.hset.side_effect = TypeError("no mapping kwarg")
+    token_manager.r.hmset = MagicMock()
+    token_manager._hset_mapping("mykey", {"a": "1"})
+    token_manager.r.hmset.assert_called_once_with("mykey", {"a": "1"})
+
+
+def test_hset_mapping_uses_hset_when_available(token_manager):
+    token_manager.r.hset.side_effect = None
+    token_manager._hset_mapping("mykey", {"a": "1"})
+    token_manager.r.hset.assert_called_once_with("mykey", mapping={"a": "1"})
