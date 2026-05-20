@@ -66,6 +66,18 @@ class SQLiteBackend(PersistentSQLiteBackend):
     DEFAULT_DB_NAME = "agent_logs.db"
     USE_WAL_MODE    = True
 
+    @staticmethod
+    def _resolve_db_path() -> str:
+        """Return the resolved SQLite database path for this backend.
+
+        Delegates to the platform-core module-level ``_resolve_db_path``
+        function using this class's ``DEFAULT_DB_NAME`` as the fallback
+        filename.  Exposed as a static method so tests can call it without
+        instantiating the backend.
+        """
+        from oai_platform_core.db.base import _resolve_db_path as _base_resolve
+        return _base_resolve(SQLiteBackend.DEFAULT_DB_NAME)
+
     CHAT_LOGS_INSERT = "INSERT INTO chat_logs (interaction_id, timestamp, agent_name, session_id, user_id, endpoint, input_message, output_response, request_headers, model_info, token_usage, total_tokens, response_time_ms, status, error_message) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
     ACTIVITY_LOG_INSERT = "INSERT INTO agent_activity_log (interaction_id, timestamp, agent_name, session_id, user_id, endpoint, chunk_sequence, chunk_content, chunk_text, serialization_warning, request_headers) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
     EVALUATION_LOG_INSERT = "INSERT INTO llm_judge_evaluations (interaction_id, agent_name, session_id, quality_score, hallucination_detected, evaluation_data, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)"

@@ -1104,7 +1104,7 @@ class TestPostgresBackend:
         assert "5432" in captured["dsn"]
         assert "agent_logs" in captured["dsn"]
         assert captured["kwargs"]["min_size"] == 2
-        assert captured["kwargs"]["max_size"] == 4
+        assert captured["kwargs"]["max_size"] == 10
 
     def test_execute_raises_when_not_initialised(self):
         with _make_pg_module() as (mod, _, __):
