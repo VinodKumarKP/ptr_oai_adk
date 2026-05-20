@@ -1,5 +1,6 @@
 """Unified LangChain agent implementation for single and multi-agent workflows."""
 
+import asyncio
 import logging
 from typing import List, AsyncGenerator, Optional, Dict, Any
 
@@ -13,10 +14,6 @@ from oai_agent_core.langgraph_core.components import LangChainToolRegistry
 from oai_agent_core.langgraph_core.components.configuration.model_config import \
     LangChainModelConfigurationManager as ModelConfigurationManager
 from oai_agent_core.langgraph_core.processing import ResultExtractor
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 
 class LangGraphAgent(BaseAgent):
     """Unified LangChain agent that handles both single and multi-agent workflows.
@@ -293,7 +290,7 @@ class LangGraphAgent(BaseAgent):
         self._set_langfuse_config()
 
         # Determine the actual original message to use (config overrides argument)
-        actual_original_message = config.get('original_message') if config else user_message
+        actual_original_message = config.get('original_message', user_message) if config else user_message
 
         # Format message with template variables
         formatted_message = self._prepare_message(user_message, config)
@@ -364,12 +361,8 @@ class LangGraphAgent(BaseAgent):
                         original_message=actual_original_message if config and config.get('include_original_message',
                                                                                False) else None
                     )
-                    if chunk['messages'][-1].response_metadata.get('finish_reason', 'None') != 'stop':
-                        formatted_chunk['content']['text'] = self._guardrail_output_message(formatted_chunk['content']['text'])
-                        yield formatted_chunk
-                    else:
-                        formatted_chunk['content']['text'] = self._guardrail_output_message(formatted_chunk['content']['text'])
-                        yield formatted_chunk
+                    formatted_chunk['content']['text'] = self._guardrail_output_message(formatted_chunk['content']['text'])
+                    yield formatted_chunk
 
                     # Track content for memory if available in chunk
                     # Note: In non-verbose mode, chunk structure depends on stream_mode="values"
@@ -416,7 +409,7 @@ class LangGraphAgent(BaseAgent):
         self._set_langfuse_config()
 
         # Determine the actual original message to use (config overrides argument)
-        actual_original_message = config.get('original_message') if config else user_message
+        actual_original_message = config.get('original_message', user_message) if config else user_message
 
         # Format message with template variables
         formatted_message = self._prepare_message(user_message, config)
@@ -478,7 +471,6 @@ class LangGraphAgent(BaseAgent):
         Returns:
             Dictionary containing the formatted response.
         """
-        import asyncio
         loop = asyncio.get_event_loop()
         if loop.is_running():
             # If we're in an async context, use the sync version directly
@@ -504,7 +496,7 @@ class LangGraphAgent(BaseAgent):
         self._set_langfuse_config()
 
         # Determine the actual original message to use (config overrides argument)
-        actual_original_message = config.get('original_message') if config else user_message
+        actual_original_message = config.get('original_message', user_message) if config else user_message
 
         # Format message with template variables
         formatted_message = self._prepare_message(user_message, config)
@@ -686,4 +678,5 @@ class LangGraphAgent(BaseAgent):
             pass
 
     async def stream(self, user_message: str, config: Optional[Dict[str, Any]] = None):
-        pass
+        """Not implemented — use :meth:`astream` for streaming responses."""
+        raise NotImplementedError("Use astream() for streaming responses from LangGraphAgent.")

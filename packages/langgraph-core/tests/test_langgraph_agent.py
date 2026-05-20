@@ -397,10 +397,11 @@ def test_repr(agent):
     assert "test_agent" in repr_str
 
 def test_stream_not_implemented(agent):
+    # stream() should raise NotImplementedError; callers should use astream() instead.
     async def run():
-        result = await agent.stream("hello")
-        assert result is None
-        
+        with pytest.raises(NotImplementedError):
+            await agent.stream("hello")
+
     asyncio.run(run())
 
 def test_set_langfuse_config_enabled(agent):

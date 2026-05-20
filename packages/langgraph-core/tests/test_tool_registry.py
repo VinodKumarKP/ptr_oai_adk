@@ -55,7 +55,9 @@ def test_is_framework_tool_type(registry):
     assert registry._is_framework_tool_type(lambda x: x) is False
 
 def test_is_framework_builtin_tool(registry):
-    assert registry._is_framework_builtin_tool('strands_tools') is True
+    # LangChain has no special built-in tool module — method always returns False.
+    # Built-in LangChain community tools use the standard class-based loader.
+    assert registry._is_framework_builtin_tool('strands_tools') is False
     assert registry._is_framework_builtin_tool('other_module') is False
 
 @pytest.mark.asyncio
@@ -140,14 +142,10 @@ async def test_load_mcp_tools_invalid_url(registry):
         await registry.load_mcp_tools_from_config(mcp_config)
 
 def test_load_framework_builtin_tool_success(registry):
-    with patch('oai_agent_core.utils.dynamic_class_loader.DynamicClassLoader.dynamic_import_tool') as mock_import:
-        mock_tool = MagicMock()
-        mock_import.return_value = mock_tool
-        
-        registry._load_framework_builtin_tool('my_tool', 'strands_tools')
-        
-        assert 'my_tool' in registry.tools
-        assert registry.tools['my_tool'] == mock_tool
+    # _load_framework_builtin_tool is a no-op in LangChain; it should log a warning
+    # and NOT add anything to registry.tools.
+    registry._load_framework_builtin_tool('my_tool', 'strands_tools')
+    assert 'my_tool' not in registry.tools
 
 def test_load_framework_builtin_tool_failure(registry):
     with patch('oai_agent_core.utils.dynamic_class_loader.DynamicClassLoader.dynamic_import_tool') as mock_import:
