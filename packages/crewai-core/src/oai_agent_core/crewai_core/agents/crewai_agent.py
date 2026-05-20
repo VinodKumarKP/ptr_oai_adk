@@ -5,6 +5,7 @@ complex multi-agent workflows through YAML configuration files. Supports both
 Crew and Flow execution modes.
 """
 
+import asyncio
 import uuid
 from typing import Optional, List, Any, Dict, AsyncGenerator
 
@@ -48,7 +49,6 @@ class CrewAIAgent(BaseAgent):
                  session_id: str = "default",
                  user_id: str = "default",
                  config_root: Optional[str] = None,
-                 region_name: str = "us-west-2",
                  document_loader: Optional[Any] = None,
                  vector_store: Optional[Any] = None,
                  **kwargs):
@@ -62,7 +62,6 @@ class CrewAIAgent(BaseAgent):
             session_id: Session identifier for output tracking
             user_id: User identifier for tracing
             config_root: Root directory for configuration files
-            region_name: AWS region for model configuration
             document_loader: Optional document loader instance
             vector_store: Optional vector store instance
             **kwargs: Additional arguments passed to BaseAgent
@@ -343,22 +342,13 @@ class CrewAIAgent(BaseAgent):
         Returns:
             CrewAI execution result
         """
-        # Initialize the execution context
+        # Initialize the execution context (crew or flow — both use kickoff_async/kickoff)
         execution_context = await self.initialize(session_id=self.session_id)
 
-        # Execute based on mode
-        if self.execution_mode == 'flow':
-            # For flows, we use kickoff with inputs
-            if async_mode:
-                result = await execution_context.kickoff_async(inputs=inputs)
-            else:
-                result = execution_context.kickoff(inputs=inputs)
+        if async_mode:
+            result = await execution_context.kickoff_async(inputs=inputs)
         else:
-            # For crews
-            if async_mode:
-                result = await execution_context.kickoff_async(inputs=inputs)
-            else:
-                result = execution_context.kickoff(inputs=inputs)
+            result = execution_context.kickoff(inputs=inputs)
 
         return result
 
@@ -398,19 +388,13 @@ class CrewAIAgent(BaseAgent):
                 tags=[self.agent_name, 'crewai', self.execution_mode],
             )
 
-            # Execute the crew/flow
+            # Execute the crew/flow (both use the same kickoff API)
             execution_context = await self.initialize(session_id=self.session_id)
 
-            if self.execution_mode == 'flow':
-                if async_mode:
-                    result = await execution_context.kickoff_async(inputs=inputs)
-                else:
-                    result = execution_context.kickoff(inputs=inputs)
+            if async_mode:
+                result = await execution_context.kickoff_async(inputs=inputs)
             else:
-                if async_mode:
-                    result = await execution_context.kickoff_async(inputs=inputs)
-                else:
-                    result = execution_context.kickoff(inputs=inputs)
+                result = execution_context.kickoff(inputs=inputs)
 
             # Update span with execution results
             response = self.result_extractor.get_response(
@@ -468,7 +452,7 @@ class CrewAIAgent(BaseAgent):
         session_id = result.get('session_id')
         final_result = result.get('result')
         input_message = result.get('input_message')
-        original_message = config.get('original_message') if config else user_message
+        original_message = config.get('original_message', user_message) if config else user_message
 
         response = self.result_extractor.get_response(
             session_id=session_id,
@@ -501,7 +485,6 @@ class CrewAIAgent(BaseAgent):
         Returns:
             Dictionary containing the complete response
         """
-        import asyncio
         result = asyncio.run(self.ainvoke(user_message, config))
         return result
 
@@ -523,7 +506,7 @@ class CrewAIAgent(BaseAgent):
         session_id = result.get('session_id')
         final_result = result.get('result')
         input_message = result.get('input_message')
-        original_message = config.get('original_message') if config else user_message
+        original_message = config.get('original_message', user_message) if config else user_message
 
         # Stream using ResultExtractor
         async for chunk in self.result_extractor.stream_response(session_id, final_result):
