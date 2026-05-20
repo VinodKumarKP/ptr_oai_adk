@@ -54,6 +54,11 @@ async def root():
             "POST /skills/{skill_name}/downgrade":     "Downgrade to a previous version",
             "POST /skills/{skill_name}/deprecate":     "Mark a version as deprecated",
             "GET  /skills/{skill_name}/history":       "Get complete skill action history",
+            # token management
+            "POST   /tokens/generate":                 "Generate a new API token",
+            "GET    /tokens":                          "List all active tokens",
+            "DELETE /tokens/{token}":                  "Revoke a specific token",
+            "DELETE /tokens":                          "Revoke all tokens",
         },
     }
     return JSONResponse(info)
