@@ -5,6 +5,7 @@ from YAML configuration.
 """
 
 import asyncio
+import re
 from typing import Dict, List, Any, Tuple, Optional
 
 from crewai import Agent, Crew, Task, Process
@@ -47,6 +48,7 @@ class CrewBuilder:
             logger: Logger instance
             document_loader: Optional document loader instance
             vector_store: Optional vector store instance
+            structured_output_model_registry: Optional registry for Pydantic output models.
         """
         self.config = config
         self.tool_registry = tool_registry
@@ -401,8 +403,6 @@ class CrewBuilder:
             task_data: Task configuration dictionary
             variable_set: Set to add variables to
         """
-        import re
-
         desc = task_data.get('description', '')
         output = task_data.get('expected_output', '')
 

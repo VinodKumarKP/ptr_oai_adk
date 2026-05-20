@@ -7,7 +7,7 @@ from YAML configuration files.
 import os
 import sys
 import importlib.util
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from pathlib import Path
 from crewai import Flow
 
@@ -28,7 +28,7 @@ class FlowBuilder:
         logger: Logger instance
     """
 
-    def __init__(self, config: Dict[str, Any], tool_registry, llm, logger, project_root:None):
+    def __init__(self, config: Dict[str, Any], tool_registry, llm, logger, project_root: Optional[str] = None):
         """Initialize the FlowBuilder.
 
         Args:
@@ -99,6 +99,26 @@ class FlowBuilder:
                 f"Ensure the class constructor accepts 'tools', 'llm', and 'inputs' parameters."
             )
 
+    def _resolve_script_path(self, script_path: str) -> str:
+        """Resolve a (possibly relative) script path to an absolute path.
+
+        Args:
+            script_path: Raw path from configuration
+
+        Returns:
+            Absolute path string
+        """
+        if self.project_root and script_path and script_path.startswith('.'):
+            resolved = Path(str(script_path).replace('.', self.project_root, 1))
+        else:
+            resolved = Path(script_path).expanduser()
+
+        if not os.path.isabs(resolved):
+            config_root = self.config.get('config_root', '.')
+            resolved = os.path.join(config_root, resolved)
+
+        return os.path.abspath(resolved)
+
     def _load_flow_class(self, script_path: str, class_name: str):
         """Load a Flow class from a Python script.
 
@@ -112,18 +132,7 @@ class FlowBuilder:
         Raises:
             ValueError: If script or class cannot be loaded
         """
-        # Resolve the full path
-        if self.project_root and script_path and script_path.startswith('.'):
-            script_path = Path(str(script_path).replace('.', self.project_root, 1))
-        else:
-            script_path = Path(script_path).expanduser()
-
-        if not os.path.isabs(script_path):
-            # If relative path, make it relative to config root or current directory
-            config_root = self.config.get('config_root', '.')
-            script_path = os.path.join(config_root, script_path)
-
-        script_path = os.path.abspath(script_path)
+        script_path = self._resolve_script_path(script_path)
 
         # Check if file exists
         if not os.path.exists(script_path):
@@ -231,17 +240,7 @@ class FlowBuilder:
 
         # If we have script_path, check if file exists
         if script_path:
-            if self.project_root and script_path and script_path.startswith('.'):
-                script_path = Path(str(script_path).replace('.', self.project_root, 1))
-            else:
-                script_path = Path(script_path).expanduser()
-
-            if not os.path.isabs(script_path):
-                # If relative path, make it relative to config root or current directory
-                config_root = self.config.get('config_root', '.')
-                script_path = os.path.join(config_root, script_path)
-
-            full_path = os.path.abspath(script_path)
+            full_path = self._resolve_script_path(script_path)
 
             if not os.path.exists(full_path):
                 errors.append(f"Flow script not found: {full_path}")
