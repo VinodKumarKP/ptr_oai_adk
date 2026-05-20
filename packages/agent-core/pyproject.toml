@@ -71,6 +71,9 @@ all = [
 source = "vcs"
 raw-options = { root = "../.." }
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/oai_agent_core"]
 
