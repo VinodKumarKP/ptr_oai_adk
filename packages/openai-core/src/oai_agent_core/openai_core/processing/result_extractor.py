@@ -82,7 +82,10 @@ class ResultExtractor(BaseResultExtractor):
             original_message: str = None,
             final: bool = True
     ) -> Dict[str, Any]:
-        """Format result into standardized response structure."""
+        """Format result into standardized response structure.
+
+        Overrides base to supply a sensible default for ``model_provider``.
+        """
         return super().format_response(
             result=result,
             session_id=session_id,

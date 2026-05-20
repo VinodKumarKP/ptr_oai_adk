@@ -377,7 +377,7 @@ class OpenAIAgent(BaseAgent):
         result_dict = await self.process_request(user_message, config)
         result = result_dict['result']
 
-        user_message = config.get('original_message') if config else user_message
+        user_message = config.get('original_message', user_message) if config else user_message
 
         response = self.result_extractor.format_response(
             result,
@@ -526,7 +526,7 @@ class OpenAIAgent(BaseAgent):
                         content,
                         session_id=self.session_id,
                         model_id=getattr(self.llm, 'model', 'unknown'),
-                        model_provider=self.agent_config.get('cloud_provider', 'langchain'),
+                        model_provider=self.agent_config.get('cloud_provider', 'openai'),
                         include_raw=config.get('include_raw', False) if config else False,
                         input_message=message if config and config.get('include_input_message', False) else None,
                         original_message=actual_original_message if config and config.get('include_original_message',

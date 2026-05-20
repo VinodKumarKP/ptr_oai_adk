@@ -1,5 +1,6 @@
 """Tool Registry for OpenAI Agents."""
 
+import functools
 from typing import Dict, Any, Callable, Optional, List
 
 from agents.mcp import MCPServerStreamableHttp, MCPServerSse, MCPServerStdio
@@ -32,9 +33,8 @@ class OpenAIToolRegistry(BaseToolRegistry):
         Returns:
             Wrapped function with new defaults.
         """
-        # For OpenAI/LangChain tools, we can use partial application or a wrapper
+        # For openai-agents library tools, we use partial application or a wrapper
         # This is a simplified implementation
-        import functools
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -215,7 +215,7 @@ class OpenAIToolRegistry(BaseToolRegistry):
         Returns:
             String containing input parameter schemas for the tools.
         """
-        print(f"Fetching input schema of tools: {tool_list}")
+        self.logger.debug(f"Fetching input schema of tools: {tool_list}")
         schemas = []
         for tool_name in tool_list.split(','):
             tool_name = tool_name.strip()
@@ -239,7 +239,7 @@ class OpenAIToolRegistry(BaseToolRegistry):
         Returns:
             Result of the tool execution.
         """
-        print(f"Executing tool:{tool_name} with arguments: {arguments}")
+        self.logger.debug(f"Executing tool: {tool_name} with arguments: {arguments}")
         import json
         if isinstance(arguments, str):
             try:

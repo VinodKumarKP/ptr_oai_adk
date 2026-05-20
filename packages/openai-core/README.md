@@ -1,6 +1,6 @@
 # OpenAI Multi-Agent Framework
 
-A powerful, YAML-based configuration system for building multi-agent AI workflows with OpenAI and LangChain. Build complex agent orchestrations without writing code—just configure and run.
+A powerful, YAML-based configuration system for building multi-agent AI workflows using the [openai-agents](https://github.com/openai/openai-agents-python) library and LiteLLM. Build complex agent orchestrations without writing code—just configure and run.
 
 ## Table of Contents
 
@@ -28,10 +28,13 @@ A powerful, YAML-based configuration system for building multi-agent AI workflow
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
 - [API Reference](#api-reference)
+  - [Import](#import)
+  - [OpenAIAgent Class](#openaiagent-class)
+  - [Model ID Format](#model-id-format-litellm)
 
 ## Overview
 
-The OpenAI Multi-Agent Framework enables you to create sophisticated agent orchestrations through simple YAML configuration files. Built on OpenAI's function calling and LangChain, it provides a declarative way to define multi-agent systems with support for various orchestration patterns.
+The OpenAI Multi-Agent Framework enables you to create sophisticated agent orchestrations through simple YAML configuration files. Built on the [openai-agents](https://github.com/openai/openai-agents-python) library with LiteLLM for multi-provider model support, it provides a declarative way to define multi-agent systems with support for various orchestration patterns.
 
 ### High-Level Architecture
 
@@ -69,12 +72,10 @@ export AWS_SECRET_ACCESS_KEY="..."
 export AWS_DEFAULT_REGION="us-west-2"
 ```
 
-You must also install the specific LangChain provider package for the model you intend to use:
+This package uses [LiteLLM](https://docs.litellm.ai/) under the hood (via `openai-agents[litellm]`), so the same model-string conventions apply. No provider-specific LangChain packages are required.
 
 ```bash
-pip install langchain-openai      # If using cloud_provider: openai
-pip install langchain-anthropic   # If using cloud_provider: anthropic
-pip install langchain-aws         # If using cloud_provider: aws
+pip install "openai-agents[litellm]"
 ```
 
 ## Quick Start
@@ -224,8 +225,9 @@ system_prompt: You are a supervisor managing a team of agents.
 **3. Initialize and Run**
 
 ```python
+import asyncio
 import yaml
-from oai_openai_agent_core.agents.openai_agent import OpenAIAgent
+from oai_agent_core.openai_core import OpenAIAgent
 
 # Load configuration
 with open("research_agent.yaml", "r") as f:
@@ -236,12 +238,12 @@ agent = OpenAIAgent(
     agent_config=config
 )
 
-# Initialize
-await agent.initialize()
+async def main():
+    await agent.initialize()
+    result = await agent.ainvoke("Research the latest trends in quantum computing")
+    print(result['content']['text'])
 
-# Execute
-result = await agent.ainvoke("Research the latest trends in quantum computing")
-print(result)
+asyncio.run(main())
 ```
 
 ## Project Structure
@@ -283,14 +285,14 @@ ptr_agent_servers_my_project/
 
 ## Key Features
 
-### 🤖 OpenAI Native Integration
-Leverages OpenAI's function calling capabilities for reliable and accurate tool use.
+### 🤖 openai-agents Library
+Built directly on the [openai-agents](https://github.com/openai/openai-agents-python) library for reliable tool use, streaming, and multi-agent handoffs.
 
 ### 🔄 Flexible Orchestration
 Support for both single-agent and multi-agent supervisor patterns.
 
 ### 🛠️ Extensible Tools System
-Integrate LangChain community tools, custom tools, and MCP servers seamlessly.
+Integrate custom Python function tools, class-based tools, and MCP servers seamlessly. LangChain community tools are also supported via automatic wrapping.
 
 ### 🎯 Agent Skills
 Group sets of related prompts, instructions, and workflows into reusable "skills" to modularize agent behavior. Support adding resources and scripts to skills for advanced workflows.
@@ -352,8 +354,10 @@ This template shows all the possible configuration options available. You can mi
 ```yaml
 # 1. Model Configuration: Defines the LLM to be used.
 model:
+  # model_id follows LiteLLM conventions (e.g. "gpt-4o", "anthropic/claude-3-5-sonnet-20241022")
   model_id: "gpt-4o"
-  cloud_provider: "openai" # Options: openai, anthropic, aws, etc.
+  # cloud_provider is metadata used in responses; routing is driven by model_id
+  cloud_provider: "openai"
   params:  # Optional: Override default model parameters
     temperature: 0.7
     max_tokens: 4096
@@ -543,16 +547,9 @@ system_prompt: You help with research.
 
 ### Defining Tools
 
-#### Load Class-Based Tools (LangChain Community)
+#### Native Python Function Tools
 
-```yaml
-tools:
-  web_search:
-    module: langchain_community.tools
-    class: DuckDuckGoSearchRun
-```
-
-#### Load Custom Module Tools
+The recommended way. Any module-level function decorated with `@function_tool` (from `openai-agents`) or any plain callable is automatically wrapped and registered.
 
 ```yaml
 tools:
@@ -561,6 +558,17 @@ tools:
     function_list:
       - my_function
     base_path: ./src
+```
+
+#### Class-Based Tools (auto-wrapped)
+
+Class-based tools (including LangChain community tools) are loaded and automatically wrapped for use with the openai-agents library.
+
+```yaml
+tools:
+  web_search:
+    module: langchain_community.tools
+    class: DuckDuckGoSearchRun
 ```
 
 ### Setting Default Parameter Values
@@ -1185,10 +1193,26 @@ system_prompt: You are an editor. Coordinate the research and writing process.
 
 ### Async Streaming
 
+Each yielded chunk is a formatted response dict. Text lives at `chunk['content']['text']`.
+
 ```python
 async for chunk in agent.astream("Research quantum computing"):
-    if 'content' in chunk:
-        print(chunk['content'], end='', flush=True)
+    content = chunk.get('content', {})
+    text = content.get('text', '') if isinstance(content, dict) else ''
+    if text:
+        print(text, end='', flush=True)
+```
+
+To also surface tool-call events:
+
+```python
+async for chunk in agent.astream("Research quantum computing"):
+    content = chunk.get('content', {})
+    event_type = chunk.get('type', '')
+    if event_type == 'tool_call_item':
+        print(f"\n[Tool call: {content.get('text', '')}]")
+    elif isinstance(content, dict) and content.get('text'):
+        print(content['text'], end='', flush=True)
 ```
 
 ## Observability
@@ -1242,6 +1266,16 @@ tools:
 
 ## API Reference
 
+### Import
+
+```python
+# Recommended — uses package __init__ exports
+from oai_agent_core.openai_core import OpenAIAgent
+
+# Or direct module import
+from oai_agent_core.openai_core.agents.openai_agent import OpenAIAgent
+```
+
 ### OpenAIAgent Class
 
 The main class for creating and managing OpenAI agents.
@@ -1263,7 +1297,7 @@ class OpenAIAgent:
         - user_id: An identifier for the user interacting with the agent.
         - config_root: The root directory for configuration files.
         """
-    
+
     async def initialize() -> None:
         """
         Sets up the agent, tools, and orchestration pattern based on the YAML config.
@@ -1274,33 +1308,37 @@ class OpenAIAgent:
         """
         Asynchronously invokes the agent with a user message.
         - message: The user's input string.
-        - config: A dictionary for providing dynamic inputs.
-        Returns: A dictionary containing the agent's final response.
+        - config: Optional dict for providing dynamic inputs or flags such as
+                  'inputs', 'include_raw', 'include_input_message',
+                  'original_message'.
+        Returns: A dict with keys 'content' (dict with 'text'), 'model',
+                 'token_usage', 'session_id', and optionally 'raw_result'.
         """
 
     def invoke(message: str, config: Dict = None) -> Dict:
         """
-        Synchronously invokes the agent.
+        Synchronous wrapper around ainvoke. Runs the event loop internally.
         (See ainvoke for parameter details.)
         """
-
-
 
     async def astream(message: str, config: Dict = None) -> AsyncGenerator:
         """
         Streams the agent's output as it's generated.
-        Yields: Chunks of the response, including text and tool calls.
-        """
-
-    def validate_tasks() -> Dict[str, Any]:
-        """
-        Analyzes the configuration to identify agents, tools, and input variables.
-        Returns: A dictionary with details about the configured tasks.
-        """
-
-    def get_agent_info() -> Dict[str, Any]:
-        """
-        Retrieves summary information about the agent's current state and configuration.
-        Returns: A dictionary containing agent metadata.
+        Yields: Formatted response dicts. Text is at chunk['content']['text'].
+                Tool-call events have chunk['type'] == 'tool_call_item'.
         """
 ```
+
+### Model ID format (LiteLLM)
+
+`model_id` in the YAML follows LiteLLM's model-string conventions:
+
+| Provider | Example `model_id` |
+|----------|--------------------|
+| OpenAI | `gpt-4o`, `gpt-4o-mini` |
+| Anthropic | `anthropic/claude-3-5-sonnet-20241022` |
+| AWS Bedrock | `bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0` |
+| Azure OpenAI | `azure/<deployment-name>` |
+| Any LiteLLM-supported provider | see [LiteLLM docs](https://docs.litellm.ai/docs/providers) |
+
+The `cloud_provider` field (e.g., `openai`, `anthropic`, `aws`) is used only as metadata in responses and does not affect model routing — the `model_id` drives LiteLLM routing.

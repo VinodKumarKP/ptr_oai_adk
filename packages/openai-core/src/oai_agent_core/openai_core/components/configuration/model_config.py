@@ -64,5 +64,5 @@ class OpenAIModelConfigurationManager(BaseModelConfigurationManager):
             return model
 
         except Exception as e:
-            self.logger.error(f"Failed to create ChatLiteLLM: {e}")
+            self.logger.error(f"Failed to create LitellmModel: {e}")
             raise

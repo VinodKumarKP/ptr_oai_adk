@@ -6,7 +6,7 @@ from typing import Dict, Any, List, Optional, Callable
 try:
     from agents import function_tool
 except ImportError:
-    raise ImportError("Please install strands-agents: pip install openai-agents")
+    raise ImportError("Please install openai-agents: pip install openai-agents")
 
 from oai_agent_core.core.base_knowledge_base_factory import BaseKnowledgeBaseFactory
 
@@ -86,7 +86,7 @@ class KnowledgeBaseFactory(BaseKnowledgeBaseFactory):
         @function_tool(name_override=f"load_knowledge_base_{name}",
                        description_override=f"Load the knowledge base {name}")
         def load_knowledge_base_tool(doc_list: List[str], session_id: Optional[str] = None) -> str:
-            """Load the knowledge base.""
+            """Load the knowledge base.
 
             Args:
                 doc_list: List of document paths to load.

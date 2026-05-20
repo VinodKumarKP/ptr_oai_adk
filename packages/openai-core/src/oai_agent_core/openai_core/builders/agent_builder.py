@@ -1,6 +1,5 @@
 """Builder for creating OpenAI Agents."""
 import logging
-import subprocess
 from typing import Dict, Any, Optional, List
 
 from agents import Agent, ModelSettings, function_tool
@@ -44,6 +43,8 @@ class AgentBuilder(BaseAgentBuilder):
             logger: Optional logger instance.
             document_loader: Optional document loader instance.
             vector_store: Optional vector store instance.
+            skill_registry: Optional skill registry for skills-based prompting.
+            structured_output_model_registry: Optional registry for structured output models.
         """
         super().__init__(
             model_manager=model_manager,
