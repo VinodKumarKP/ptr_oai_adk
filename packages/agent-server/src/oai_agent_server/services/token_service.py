@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from oai_agent_server.exceptions import TokenGenerationException
 from oai_platform_core.security import TokenManager
@@ -37,3 +37,28 @@ class TokenService:
             }
         except Exception as e:
             raise TokenGenerationException(reason=str(e))
+
+    def get_all_tokens(self, server_key: str, include_expired: bool = False) -> List[Dict[str, Any]]:
+        """Return all tokens for the given server key.
+
+        :param server_key: server key to list tokens for
+        :param include_expired: whether to include already-expired TTL tokens
+        :return: List of token metadata dicts
+        """
+        return self.token_manager.get_all_tokens(server_key, include_expired=include_expired)
+
+    def revoke_token(self, token: str) -> bool:
+        """Revoke a specific token.
+
+        :param token: the token string to revoke
+        :return: True if revoked, False if not found or already revoked
+        """
+        return self.token_manager.revoke_token(token)
+
+    def revoke_all_tokens(self, server_key: str) -> int:
+        """Revoke all tokens for the given server key.
+
+        :param server_key: server key whose tokens should be revoked
+        :return: count of revoked tokens
+        """
+        return self.token_manager.revoke_all_tokens(server_key)

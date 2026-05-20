@@ -44,7 +44,14 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
                 "GET /health": "Health check endpoint",
                 "GET /info": "Get MCP Server information",
                 "GET /debug/env": "Debug request environment (if enabled)",
-                "GET /docs": "Swagger UI documentation"
+                "GET /docs": "Swagger UI documentation",
+                "POST /token/custom": "Generate a token with custom TTL",
+                "POST /token/short-term": "Generate a short-term token (5 min)",
+                "POST /token/long-term": "Generate a long-term token (30 days)",
+                "POST /token/permanent": "Generate a permanent (non-expiring) token",
+                "GET /token/list": "List all active tokens",
+                "DELETE /token/revoke-all": "Revoke all tokens",
+                "DELETE /token/revoke/{token}": "Revoke a specific token",
             },
             "auth_enabled": auth_enabled,
             "features": {
@@ -132,3 +139,31 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
         """Generate a permanent token (no expiration)."""
         token = token_manager.generate_token(server_name, user_id, role_id, ttl_seconds=None)
         return JSONResponse(content=_token_response(token, user_id, role_id, None))
+
+    # -----------------------------------------------------------------------
+    # Token management — list, revoke-all, revoke-single
+    # -----------------------------------------------------------------------
+
+    @mcp_app.custom_route("/token/list", methods=["GET"])
+    def list_tokens(request: Request,
+                    include_expired: bool = Query(False, description="Include already-expired TTL tokens")):
+        """List all active (and optionally expired) tokens for this MCP server."""
+        tokens = token_manager.get_all_tokens(server_name, include_expired=include_expired)
+        return JSONResponse(content={"tokens": tokens, "total": len(tokens)})
+
+    @mcp_app.custom_route("/token/revoke-all", methods=["DELETE"])
+    def revoke_all_tokens(request: Request):
+        """Revoke every active token for this MCP server."""
+        count = token_manager.revoke_all_tokens(server_name)
+        return JSONResponse(content={"revoked": count, "message": f"Revoked {count} token(s)"})
+
+    @mcp_app.custom_route("/token/revoke/{token_str}", methods=["DELETE"])
+    def revoke_token(request: Request, token_str: str):
+        """Revoke a specific token.  Returns 404 if not found or already revoked."""
+        revoked = token_manager.revoke_token(token_str)
+        if not revoked:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": "Token not found or already revoked"},
+            )
+        return JSONResponse(content={"revoked": True, "message": "Token revoked successfully"})

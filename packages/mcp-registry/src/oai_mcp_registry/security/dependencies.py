@@ -21,8 +21,16 @@ from oai_platform_core.security.saml_token_validation import TokenValidator, Tok
 # Define the API key security scheme
 api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
 
-# Shared TokenManager instance — one Redis connection pool for the process lifetime.
-_token_manager = TokenManager(db_path_name="mcp_registry_tokens.db")
+# Shared TokenManager — one connection pool for the process lifetime.
+_token_manager: Optional[TokenManager] = None
+
+
+def _get_token_manager() -> TokenManager:
+    """Return the shared TokenManager, creating it lazily on first call."""
+    global _token_manager
+    if _token_manager is None:
+        _token_manager = TokenManager(db_path_name="mcp_registry_tokens.db")
+    return _token_manager
 
 
 def _validate_token(request: Request, server_name: str) -> None:
@@ -73,7 +81,7 @@ def _validate_token(request: Request, server_name: str) -> None:
                 status_code=500, detail="SAML token validation service unavailable"
             )
     else:
-        user_info = _token_manager.validate_token(server_name, token)
+        user_info = _get_token_manager().validate_token(server_name, token)
         if not user_info:
             raise HTTPException(status_code=401, detail="Invalid or expired API token")
         request.state.user_id = user_info.get("user_id")
