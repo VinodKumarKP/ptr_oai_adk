@@ -60,8 +60,9 @@ def get_local_ip() -> str:
     Returns:
         Local IP string, e.g. ``"192.168.1.10"``.
     """
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock = None
     try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.connect(("8.8.8.8", 1))
         return sock.getsockname()[0]
     except Exception as exc:
@@ -72,7 +73,8 @@ def get_local_ip() -> str:
         )
         return _FALLBACK
     finally:
-        sock.close()
+        if sock is not None:
+            sock.close()
 
 
 def get_private_ip() -> str:
