@@ -1,36 +1,44 @@
 # OAI Agent Registry
 
-A powerful, FastAPI-based proxy server designed to manage and route requests to multiple OAI (OpenAI-compatible) agent servers. It acts as a single entry point for all your agents, providing centralized control, dynamic discovery, and robust security.
+The OAI Agent Registry is a powerful, FastAPI-based proxy and lifecycle manager for OAI-compatible agent servers. It acts as a single entry point for all your agents, providing centralized control, dynamic discovery, deployment, and robust security.
 
 ## Key Features
 
-*   **Dynamic Routing**: Intelligently proxies requests to the correct agent based on the URL path.
-*   **Auto-Discovery**: Automatically discovers and registers agents running on the same host within a specified port range.
-*   **Centralized Configuration**: Manage all agent endpoints and registry settings from a single JSON configuration file.
-*   **Robust Security**: Secure your agents with API token authentication, including support for both standard and SAML-based tokens.
-*   **Health Checks**: Built-in endpoints to monitor the health of the registry and all registered agents.
-*   **Interactive API Docs**: Automatically proxies and rewrites agent OpenAPI documentation, making all agent APIs explorable through a single Swagger UI.
-*   **High Performance**: Built on FastAPI and `httpx` for asynchronous, high-throughput request handling.
+- **Dynamic Routing**: Intelligently proxies requests to the correct agent based on the URL path.
+- **Agent Lifecycle Management**: Start, stop, restart, and redeploy agents directly through the registry's API.
+- **Multiple Deployment Strategies**:
+    - **Docker**: Deploy agents as Docker containers.
+    - **Python Package**: Run agents as Python packages.
+- **Auto-Discovery**: Automatically discovers and registers agents running on the same host.
+- **Centralized Configuration**: Manage all agent endpoints and registry settings from a single JSON file.
+- **Database Integration**: Persists agent and action history to a database (PostgreSQL or SQLite).
+- **Robust Security**: Secure your agents with API token authentication.
+- **Health Checks**: Built-in endpoints to monitor the health of the registry and all registered agents.
+- **Interactive API Docs**: Automatically proxies and rewrites agent OpenAPI documentation.
+
+## Architecture
+
+The agent registry is composed of several key modules:
+
+- **`app.py`**: The main FastAPI application entry point.
+- **`cli.py`**: The command-line interface for starting the registry.
+- **`routers/`**: Contains the API endpoints for the registry and agent management.
+- **`services/`**:
+    - **`registry.py`**: The core service that manages agents, proxying, and lifecycle operations.
+    - **`deployers/`**: Contains the deployment strategies (Docker, Python package).
+    - **`db/`**: Handles database logging and persistence.
+- **`security/`**: Manages API token authentication and validation.
+- **`models.py`**: Defines the Pydantic models for configuration and API data structures.
 
 ## Installation
 
-You can install the agent registry directly from the source:
-
 ```bash
-pip install .
-```
-
-For development, install in editable mode:
-
-```bash
-pip install -e .
+pip install oai-agent-registry
 ```
 
 ## Usage
 
 ### Starting the Server
-
-The agent registry is started from the command line. You can configure it using a JSON file or command-line arguments.
 
 ```bash
 python -m oai_agent_registry.cli [OPTIONS]
@@ -42,22 +50,10 @@ python -m oai_agent_registry.cli [OPTIONS]
 *   `--host`: The host to bind the server to (default: `0.0.0.0`).
 *   `--port`, `-p`: The port to run the server on (default: `8081`).
 *   `--enable-auto-discovery`: Enable the auto-discovery of agents.
-*   `--start-port`: The starting port for the auto-discovery scan (default: `8000`).
-*   `--end-port`: The ending port for the auto-discovery scan (default: `8100`).
-
-**Example:**
-
-```bash
-# Start with auto-discovery enabled on a specific port range
-python -m oai_agent_registry.cli --enable-auto-discovery --start-port 9000 --end-port 9010
-
-# Start using a configuration file
-python -m oai_agent_registry.cli --config /path/to/your/config.json
-```
+*   `--start-port`: The starting port for the auto-discovery scan.
+*   `--end-port`: The ending port for the auto-discovery scan.
 
 ### Configuration File
-
-You can configure the registry using a JSON file for more advanced setups.
 
 **Example `config.json`:**
 
@@ -67,21 +63,13 @@ You can configure the registry using a JSON file for more advanced setups.
     "host": "0.0.0.0",
     "port": 8081,
     "auth_enabled": true,
-    "force_auth": false,
     "api_key": "your-secret-api-key",
-    "enable_auto_discovery": true,
-    "start_port": 8000,
-    "end_port": 8100
+    "enable_auto_discovery": true
   },
   "agents": {
-    "my_first_agent": {
+    "my_agent": {
       "endpoint": "http://localhost:8001",
-      "enabled": true,
-      "description": "An agent that does amazing things."
-    },
-    "another_agent": {
-      "endpoint": "http://localhost:8002",
-      "enabled": false
+      "enabled": true
     }
   }
 }
@@ -91,50 +79,29 @@ You can configure the registry using a JSON file for more advanced setups.
 
 ### Registry Management
 
-*   **GET `/`**: Returns a welcome message and a list of available registry endpoints.
-*   **GET `/info`**: Provides detailed information about the registry, including uptime and a list of all registered agents (both configured and auto-discovered).
-*   **GET `/health`**: Performs a health check on the registry and all enabled agents, returning their status.
-*   **POST `/reload-config`**: Hot-reloads the configuration from the JSON file.
+- **GET `/`**: Returns a welcome message and a list of available registry endpoints.
+- **GET `/info`**: Provides detailed information about the registry and its agents.
+- **GET `/health`**: Performs a health check on the registry and all enabled agents.
+- **POST `/reload-config`**: Hot-reloads the configuration from the JSON file.
+
+### Agent Lifecycle & Deployment
+
+- **POST `/register`**: Register a new agent or update an existing one.
+- **POST `/deregister`**: De-register an agent.
+- **POST `/{agent_name}/start`**: Start a registered agent.
+- **POST `/{agent_name}/stop`**: Stop a running agent.
+- **POST `/{agent_name}/restart`**: Restart an agent.
+- **POST `/{agent_name}/rebuild`**: Rebuild and redeploy an agent.
+- **POST `/{agent_name}/redeploy`**: Redeploy an agent from the latest source.
 
 ### Agent Proxy
 
-*   **ANY `/{agent_name}/{path:path}`**: Proxies any request to the specified path on the corresponding agent. For example, a `POST` request to `/my_first_agent/chat` will be forwarded to `http://localhost:8001/chat`.
+- **ANY `/{agent_name}/{path:path}`**: Proxies any request to the specified path on the corresponding agent.
 
 ## Security
 
-When `auth_enabled` is set to `true`, all incoming requests must include a valid API token. The token can be provided in one of the following headers:
+When `auth_enabled` is `true`, all requests must include a valid API token in one of the following headers:
 
-*   `api-token`
-*   `api_token`
-*   `x-api-key`
-*   `Authorization: Bearer <token>`
-
-The registry supports both simple API keys and complex, agent-specific tokens managed by a Redis-based `TokenManager`. It can also validate SAML tokens if configured.
-
-## Development
-
-To run the server during development:
-
-```bash
-python -m oai_agent_registry.cli --config /path/to/dev-config.json
-```
-
-The project is structured to be modular and extensible:
-
-```
-oai_agent_registry/
-├── app.py               # FastAPI application setup
-├── cli.py               # Command-line interface
-├── dependencies.py      # FastAPI dependency injection
-├── exceptions.py        # Custom exception classes
-├── models.py            # Pydantic data models
-├── routers/             # API route definitions
-│   └── registry.py
-├── security/            # Authentication and authorization
-│   └── dependencies.py
-└── services/            # Core business logic
-    └── registry.py
-└── utils/               # Shared utilities
-    ├── token_manager.py
-    └── saml_token_validation.py
-```
+- `api-token`
+- `x-api-key`
+- `Authorization: Bearer <token>`
