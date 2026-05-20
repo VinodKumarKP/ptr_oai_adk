@@ -26,7 +26,7 @@ def test_init(agent):
     assert agent.agent_name == "test_agent"
     assert agent.is_multi_agent is False
     assert agent._initialized is False
-    assert agent.agent_type == 'OPENAI'
+    assert agent.agent_type == 'openai'
 
 def test_initialize_single_agent(agent):
     async def run():
