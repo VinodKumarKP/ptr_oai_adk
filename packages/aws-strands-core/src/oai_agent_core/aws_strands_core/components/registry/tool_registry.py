@@ -1,6 +1,9 @@
 """AWS Strands-specific tool registry implementation."""
 
+import asyncio
 import inspect
+import json
+import yaml
 from typing import Dict, Any, Callable, List
 
 import httpx
@@ -92,8 +95,6 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
             arguments: YAML string containing arguments for each tool, keyed by tool name.
         """
         self.logger.info(f"Executing multiple tools with arguments: {arguments}")
-        import yaml
-        import asyncio
         arguments = yaml.safe_load(arguments)
 
         tool_names = []
@@ -118,7 +119,6 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
             Result of the tool execution.
         """
         self.logger.info(f"Executing tool:{tool_name} with arguments: {arguments}")
-        import json
         if isinstance(arguments, str):
             try:
                 arguments = json.loads(arguments)

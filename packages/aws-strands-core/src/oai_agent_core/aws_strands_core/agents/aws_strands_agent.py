@@ -5,6 +5,7 @@ AWS Strands SDK, enabling building complex multi-agent workflows through
 YAML configuration files.
 """
 
+import asyncio
 from typing import Optional, Any, Dict, AsyncGenerator
 
 from oai_agent_core.core.base_agent import BaseAgent
@@ -74,7 +75,9 @@ class StrandsAgent(BaseAgent):
         """
         # Initialize base agent
         self.agent_type = Constants.AWS_STRANDS
-        self.model_manager = ModelConfigurationManager()
+        # Build the properly-configured model manager before calling super() so the
+        # parent receives the final instance (avoids constructing it twice).
+        self.model_manager = ModelConfigurationManager()  # temporary; replaced below
 
         super().__init__(
             llm=llm if llm else {},
@@ -96,7 +99,7 @@ class StrandsAgent(BaseAgent):
         self.context_map = {}
         self.multi_agent_system = None
 
-        # Initialize utility managers
+        # Replace model manager with one that has the full config and logger.
         self.model_manager = ModelConfigurationManager(
             default_config=self.agent_config.get('model', {}),
             logger=self.logger
@@ -414,7 +417,6 @@ class StrandsAgent(BaseAgent):
         Returns:
             Formatted response dictionary
         """
-        import asyncio
         return asyncio.run(self.ainvoke(user_message, config))
 
     async def astream(
@@ -493,7 +495,7 @@ class StrandsAgent(BaseAgent):
             Response chunks
         """
         # Determine the actual original message to use (config overrides argument)
-        actual_original_message = config.get('original_message') if config else original_message
+        actual_original_message = config.get('original_message', original_message) if config else original_message
 
         if len(self.agent_map) == 1 or self.agent_config.get('crew_config', {}).get('pattern',
                                                                                     None) == Constants.PATTERN_AGENT_AS_TOOL:
@@ -881,7 +883,8 @@ class StrandsAgent(BaseAgent):
             pass
 
     async def stream(self, user_message: str, config: Optional[Dict[str, Any]] = None):
-        pass
+        """Not implemented — use :meth:`astream` for streaming responses."""
+        raise NotImplementedError("Use astream() for streaming responses from StrandsAgent.")
 
     def close(self):
         try:

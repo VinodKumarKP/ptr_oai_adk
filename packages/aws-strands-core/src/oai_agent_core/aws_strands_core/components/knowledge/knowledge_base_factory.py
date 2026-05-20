@@ -31,6 +31,8 @@ class KnowledgeBaseFactory(BaseKnowledgeBaseFactory):
             logger: Optional logger instance
             project_root: Optional project root path for resolving relative paths
             llm: Optional LLM instance for query analysis
+            vector_store: Optional vector store instance
+            document_loader: Optional document loader callable
         """
         super().__init__(knowledge_base_config=knowledge_base_config,
                          logger=logger,
@@ -70,13 +72,13 @@ class KnowledgeBaseFactory(BaseKnowledgeBaseFactory):
             description: The description of the tool.
 
         Returns:
-            A function tool decorated with @function_tool that agents can use
-            to search the knowledge base.
+            A Strands @tool decorated function that agents can use
+            to load documents into the knowledge base.
         """
 
         @tool(name=f"load_knowledge_base_{name}")
         def load_knowledge_base_tool(doc_list: List[str], session_id: Optional[str] = None) -> str:
-            """Load the knowledge base.""
+            """Load the knowledge base.
 
             Args:
                 doc_list: List of document paths to load.

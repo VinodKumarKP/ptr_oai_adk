@@ -780,10 +780,11 @@ class TestStrandsAgentStreamMethod:
     """Test the stream method (placeholder)"""
     
     def test_stream_method(self, agent):
+        # stream() should raise NotImplementedError; callers must use astream() instead.
         async def run():
-            result = await agent.stream("msg")
-            assert result is None  # Current implementation returns None
-            
+            with pytest.raises(NotImplementedError):
+                await agent.stream("msg")
+
         asyncio.run(run())
 
 class TestStrandsAgentEdgeCases:
