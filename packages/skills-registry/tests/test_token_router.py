@@ -64,11 +64,13 @@ class TestGenerateToken:
         resp = client.post("/tokens/generate?ttl_seconds=86400")
         assert resp.status_code == 200
         assert resp.json()["ttl_seconds"] == 86400
+        # max_tokens is now forwarded to enforce the per-server token limit
         mock_tm.generate_token.assert_called_once_with(
             server_key="skills-registry",
             user_id=None,
             role_id=None,
             ttl_seconds=86400,
+            max_tokens=10,
         )
 
     def test_generate_permanent_token(self, client, mock_tm):
@@ -77,11 +79,13 @@ class TestGenerateToken:
 
         resp = client.post("/tokens/generate?ttl_seconds=-1")
         assert resp.status_code == 200
+        # max_tokens is now forwarded to enforce the per-server token limit
         mock_tm.generate_token.assert_called_once_with(
             server_key="skills-registry",
             user_id=None,
             role_id=None,
             ttl_seconds=None,
+            max_tokens=10,
         )
 
     def test_generate_with_user_and_role(self, client, mock_tm):
@@ -123,7 +127,13 @@ class TestListTokens:
 
         resp = client.get("/tokens")
         assert resp.status_code == 200
-        assert resp.json() == {"tokens": [], "total": 0}
+        data = resp.json()
+        # Core fields
+        assert data["tokens"] == []
+        assert data["total"] == 0
+        # Quota fields added alongside the token list
+        assert data["max_tokens"] == 10
+        assert data["can_generate"] is True
 
     def test_list_passes_include_expired(self, client, mock_tm):
         mock_tm.get_all_tokens.return_value = []
