@@ -12,7 +12,8 @@ class TokenService:
     def generate_token(self, server_key: str,
                        user_id: Optional[str] = None,
                        role_id: Optional[str] = None,
-                       ttl_seconds: Optional[int] = 3600) -> Dict[str, Any]:
+                       ttl_seconds: Optional[int] = 3600,
+                       max_tokens: Optional[int] = None) -> Dict[str, Any]:
         """
         Generate a token with embedded metadata.
 
@@ -20,6 +21,7 @@ class TokenService:
         :param user_id: user id
         :param role_id: role id
         :param ttl_seconds: ttl_seconds
+        :param max_tokens: optional hard cap on active tokens; raises ValueError when reached
         :return: Dictionary containing the token and metadata
         """
         try:
@@ -27,7 +29,8 @@ class TokenService:
                 server_key=server_key,
                 user_id=user_id,
                 role_id=role_id,
-                ttl_seconds=ttl_seconds
+                ttl_seconds=ttl_seconds,
+                max_tokens=max_tokens,
             )
             return {
                 "token": token,

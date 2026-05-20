@@ -6,6 +6,11 @@ from starlette.responses import PlainTextResponse, JSONResponse
 
 from oai_mcp_server_core.core.context import RequestAwareEnviron, request_env
 
+# Maximum number of active tokens allowed per MCP server.
+# Per-user scoping will be added in a future release.
+MAX_TOKENS_PER_SERVER = 10
+
+
 def register_server_routes(mcp_app, server_name: str, server_config, enable_request_isolation: bool, token_manager):
     """Register system and token routes for the MCP server."""
 
@@ -107,38 +112,49 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
             "ttl_seconds": ttl_seconds,
         }
 
+    def _generate_token_response(user_id, role_id, ttl_seconds):
+        """Shared generate helper — enforces per-server token limit."""
+        try:
+            token = token_manager.generate_token(
+                server_name, user_id, role_id, ttl_seconds,
+                max_tokens=MAX_TOKENS_PER_SERVER,
+            )
+        except ValueError as exc:
+            msg = str(exc)
+            return JSONResponse(
+                status_code=429,
+                content={"detail": msg, "max_tokens": MAX_TOKENS_PER_SERVER},
+            )
+        return JSONResponse(content=_token_response(token, user_id, role_id, ttl_seconds))
+
     @mcp_app.custom_route("/token/custom", methods=["POST"])
     def generate_token(request: Request,
                        user_id: Optional[str] = None,
                        role_id: Optional[str] = None,
                        ttl_seconds: Optional[int] = 3600):
-        """Generate a token with embedded metadata."""
-        token = token_manager.generate_token(server_name, user_id, role_id, ttl_seconds)
-        return JSONResponse(content=_token_response(token, user_id, role_id, ttl_seconds))
+        """Generate a token with custom TTL (hard limit: MAX_TOKENS_PER_SERVER active tokens)."""
+        return _generate_token_response(user_id, role_id, ttl_seconds)
 
     @mcp_app.custom_route("/token/short-term", methods=["POST"])
     def generate_short_term_token(request: Request,
                                   user_id: Optional[str] = None,
                                   role_id: Optional[str] = None):
         """Generate a short-term token (5 minutes)."""
-        token = token_manager.generate_token(server_name, user_id, role_id, ttl_seconds=300)
-        return JSONResponse(content=_token_response(token, user_id, role_id, 300))
+        return _generate_token_response(user_id, role_id, 300)
 
     @mcp_app.custom_route("/token/long-term", methods=["POST"])
     def generate_long_term_token(request: Request,
                                  user_id: Optional[str] = None,
                                  role_id: Optional[str] = None):
         """Generate a long-term token (30 days)."""
-        token = token_manager.generate_token(server_name, user_id, role_id, ttl_seconds=2592000)
-        return JSONResponse(content=_token_response(token, user_id, role_id, 2592000))
+        return _generate_token_response(user_id, role_id, 2592000)
 
     @mcp_app.custom_route("/token/permanent", methods=["POST"])
     def generate_permanent_token(request: Request,
                                  user_id: Optional[str] = None,
                                  role_id: Optional[str] = None):
         """Generate a permanent token (no expiration)."""
-        token = token_manager.generate_token(server_name, user_id, role_id, ttl_seconds=None)
-        return JSONResponse(content=_token_response(token, user_id, role_id, None))
+        return _generate_token_response(user_id, role_id, None)
 
     # -----------------------------------------------------------------------
     # Token management — list, revoke-all, revoke-single
@@ -147,9 +163,19 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
     @mcp_app.custom_route("/token/list", methods=["GET"])
     def list_tokens(request: Request,
                     include_expired: bool = Query(False, description="Include already-expired TTL tokens")):
-        """List all active (and optionally expired) tokens for this MCP server."""
+        """List all active (and optionally expired) tokens for this MCP server.
+
+        Response includes ``max_tokens`` and ``can_generate`` so the UI can
+        enforce the quota without a separate request.
+        """
         tokens = token_manager.get_all_tokens(server_name, include_expired=include_expired)
-        return JSONResponse(content={"tokens": tokens, "total": len(tokens)})
+        active_count = sum(1 for t in tokens if not t.get("is_expired", False))
+        return JSONResponse(content={
+            "tokens": tokens,
+            "total": len(tokens),
+            "max_tokens": MAX_TOKENS_PER_SERVER,
+            "can_generate": active_count < MAX_TOKENS_PER_SERVER,
+        })
 
     @mcp_app.custom_route("/token/revoke-all", methods=["DELETE"])
     def revoke_all_tokens(request: Request):

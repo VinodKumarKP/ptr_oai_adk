@@ -176,12 +176,32 @@ class TokenManager:
     # Token generation
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Token counting
+    # ------------------------------------------------------------------
+
+    def count_active_tokens(self, server_key: str) -> int:
+        """Return the number of currently active (non-expired) tokens for *server_key*.
+
+        Args:
+            server_key: Logical server name.
+
+        Returns:
+            Count of active tokens.
+        """
+        return len(self.get_all_tokens(server_key, include_expired=False))
+
+    # ------------------------------------------------------------------
+    # Token generation
+    # ------------------------------------------------------------------
+
     def generate_token(
         self,
         server_key: str,
         user_id: Optional[str] = None,
         role_id: Optional[str] = None,
         ttl_seconds: Optional[int] = None,
+        max_tokens: Optional[int] = None,
     ) -> str:
         """Generate a new API token and persist it in the store.
 
@@ -192,10 +212,25 @@ class TokenManager:
             role_id:      Optional role identifier.  Defaults to ``"default"``.
             ttl_seconds:  Lifetime in seconds.  ``None`` creates a permanent
                           token.
+            max_tokens:   Optional hard cap on active tokens per server.  When
+                          set and the current count is already at the cap, a
+                          ``ValueError`` is raised instead of generating a new
+                          token.  Pass ``None`` to disable the check.
 
         Returns:
             Token string: ``<43-char random>.<base64url metadata>``
+
+        Raises:
+            ValueError: if *max_tokens* is set and the limit has been reached.
         """
+        if max_tokens is not None:
+            current_count = self.count_active_tokens(server_key)
+            if current_count >= max_tokens:
+                raise ValueError(
+                    f"Token limit reached: {current_count}/{max_tokens} active tokens already "
+                    f"exist for '{server_key}'. Revoke existing tokens before generating new ones."
+                )
+
         random_part = secrets.token_urlsafe(32)  # always 43 chars
 
         # Normalise user_id
