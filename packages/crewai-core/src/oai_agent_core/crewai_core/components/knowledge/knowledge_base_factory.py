@@ -69,19 +69,19 @@ class KnowledgeBaseFactory(BaseKnowledgeBaseFactory):
         return decorated_tool
 
     def create_load_tool(self, name: str = "load_knowledge_base", description: str = "Load the knowledge base.") -> Any:
-        """Create a tool for loading the knowledge base.
+        """Create a tool for loading documents into the knowledge base.
 
         Args:
             name: The name of the tool.
             description: The description of the tool.
 
         Returns:
-            A function tool decorated with @function_tool that agents can use
-            to search the knowledge base.
+            A CrewAI @tool decorated callable that agents can invoke to load
+            documents into the knowledge base.
         """
 
         def load_knowledge_base_tool(doc_list: List[str], session_id: Optional[str] = None) -> str:
-            """Load the knowledge base.""
+            """Load the knowledge base.
 
             Args:
                 doc_list: List of document paths to load.

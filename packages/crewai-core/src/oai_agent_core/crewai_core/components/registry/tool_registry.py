@@ -7,17 +7,22 @@ from crewai.mcp import MCPServerStdio, MCPServerHTTP, MCPServerSSE
 from crewai.tools.base_tool import Tool
 from oai_agent_core.core.base_tool_registry import BaseToolRegistry
 
-from oai_agent_core.utils.dynamic_class_loader import DynamicClassLoader
-
 
 class CrewAIToolRegistry(BaseToolRegistry):
     """CrewAI-specific tool registry implementation."""
 
     async def execute_tool(self, tool_name: str, arguments: Any) -> Any:
-        pass
+        """Execute a tool — not supported in CrewAI mode (tools are invoked by the agent internally)."""
+        raise NotImplementedError(
+            "Direct tool execution is not supported in CrewAI mode. "
+            "Tools are invoked by CrewAI agents internally during crew/flow execution."
+        )
 
     def get_input_parameter_schema(self, tool_list: str) -> str:
-        pass
+        """Return input schema — not supported in CrewAI mode (lazy loading is not used)."""
+        raise NotImplementedError(
+            "get_input_parameter_schema is not supported in CrewAI mode."
+        )
 
     def load_mcp_tools_from_config(self, mcp_configs: Dict[str, Any], agent_name: Optional[str] = None) -> List[Any]:
         """Load MCP (Model Context Protocol) tools from configuration.
@@ -138,30 +143,25 @@ class CrewAIToolRegistry(BaseToolRegistry):
         return tool
 
     def _is_framework_builtin_tool(self, module_name: str) -> bool:
-        """Check if the module is a CrewAI built-in tool."""
-        return module_name == 'strands_tools'
+        """Check if the module is a CrewAI built-in tool module.
+
+        CrewAI tools are loaded via class-based config (``class:`` key) rather
+        than a special built-in module, so this always returns False.
+        """
+        return False
 
     def _load_framework_builtin_tool(self, tool_name: str, module_name: str) -> None:
-        """Load a CrewAI-specific built-in tool.
+        """Load a framework-specific built-in tool.
 
-        Args:
-            tool_name: Name of the tool
-            module_name: Module name (should be 'strands_tools')
+        CrewAI does not have a dedicated built-in tool module analogous to
+        strands_tools. Built-in CrewAI tools (e.g. SerperDevTool, FileReadTool)
+        are loaded via the standard class-based loader using their module path.
+        This method is a no-op and should not be called.
         """
-        try:
-            tool_module = DynamicClassLoader.dynamic_import_tool(
-                tool_name,
-                base_module='strands_tools'
-            )
-            self.tools[tool_name] = tool_module
-            self.logger.info(f"✅ Loaded Strands tool: {tool_name}")
-
-        except ImportError as e:
-            self.logger.warning(
-                f"❌ Failed to import strands_tools.{tool_name}: {e}\n"
-                f"   This tool may not be available in your strands_tools version.\n"
-                f"   Run 'python discover_tools.py' to see available tools."
-            )
+        self.logger.warning(
+            f"_load_framework_builtin_tool called for '{tool_name}' in CrewAI registry — "
+            f"use class-based tool config instead (module + class keys)."
+        )
 
     def _is_framework_tool_type(self, obj: Any) -> bool:
         """Check if an object is a CrewAI Tool type."""

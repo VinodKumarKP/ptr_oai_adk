@@ -90,21 +90,11 @@ class ResultExtractor(BaseResultExtractor):
         session_output = self.output_serializer.get_session_outputs(session_id)
         chunks = []
 
-        for idx, item in enumerate(session_output):
-            is_last = idx == len(session_output) - 1
-
-            if is_last:
-                # Final chunk with complete metadata
-                chunks.append({
-                    'result': item.get('text') or item.get('result'),
-                    'raw': final_result
-                })
-            else:
-                # Intermediate chunks
-                chunks.append({
-                    'result': item.get('text') or item.get('result'),
-                    'raw': final_result
-                })
+        for item in session_output:
+            chunks.append({
+                'result': item.get('text') or item.get('result'),
+                'raw': final_result
+            })
 
         return chunks
 
@@ -238,13 +228,16 @@ class ResultExtractor(BaseResultExtractor):
             result: Any,
             session_id: str,
             model_id: str,
-            model_provider: str = 'openai',
+            model_provider: str = 'crewai',
             include_raw: bool = False,
             input_message: str = None,
             original_message: str = None,
             final: bool = True
     ) -> Dict[str, Any]:
-        """Format result into standardized response structure."""
+        """Format result into standardized response structure.
+
+        Overrides base to supply a sensible default for ``model_provider``.
+        """
         return super().format_response(
             result=result,
             session_id=session_id,

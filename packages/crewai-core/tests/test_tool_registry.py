@@ -72,11 +72,13 @@ def test_is_framework_tool_type(registry):
         assert registry._is_framework_tool_type("string") is False
 
 def test_is_framework_builtin_tool(registry):
-    assert registry._is_framework_builtin_tool('strands_tools') is True
+    # CrewAI has no special built-in tool module — method always returns False.
+    # Built-in CrewAI tools (e.g. SerperDevTool) use the standard class-based loader.
+    assert registry._is_framework_builtin_tool('crewai_tools') is False
     assert registry._is_framework_builtin_tool('other') is False
 
 def test_load_framework_builtin_tool(registry):
-    with patch('oai_agent_core.utils.dynamic_class_loader.DynamicClassLoader.dynamic_import_tool') as mock_import:
-        mock_import.return_value = "tool_obj"
-        registry._load_framework_builtin_tool("my_tool", "strands_tools")
-        assert registry.tools["my_tool"] == "tool_obj"
+    # _load_framework_builtin_tool is a no-op in CrewAI; it should log a warning
+    # and NOT add anything to registry.tools.
+    registry._load_framework_builtin_tool("my_tool", "some_module")
+    assert "my_tool" not in registry.tools
