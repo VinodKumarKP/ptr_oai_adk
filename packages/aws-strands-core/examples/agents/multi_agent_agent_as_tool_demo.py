@@ -31,9 +31,9 @@ async def run_agent_as_tool_demo():
 
     # Test 1: Complex query requiring sub-agent tool
     print("\n--- Test 1: Flight Booking via Tool ---")
-    query = "Book a flight from LAX to SFO for tomorrow."
+    query = "Book a flight from LAX to SFO for May 21 2026."
     result = await agent.ainvoke(query)
-    pprint(result['content'][0]['text'])
+    pprint(result['content']['text'])
 
 if __name__ == "__main__":
     asyncio.run(run_agent_as_tool_demo())
