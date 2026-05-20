@@ -14,7 +14,7 @@ The OAI Agent Registry is a powerful, FastAPI-based proxy and lifecycle manager 
 - **Database Integration**: Persists agent and action history to a database (PostgreSQL or SQLite).
 - **Robust Security**: Secure your agents with API token authentication.
 - **Health Checks**: Built-in endpoints to monitor the health of the registry and all registered agents.
-- **Interactive API Docs**: Automatically proxies and rewrites agent OpenAPI documentation.
+- **Interactive API Docs**: Access Swagger UI at `/docs` for interactive API documentation.
 
 ## Architecture
 
@@ -32,26 +32,45 @@ The agent registry is composed of several key modules:
 
 ## Installation
 
+You can install the `oai-agent-registry` package directly from the Git repository using `uv` and `pip`:
+
 ```bash
-pip install oai-agent-registry
+uv pip install "oai-agent-registry @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit.git@main#subdirectory=packages/agent-registry"
 ```
+
+## Database Configuration
+
+The Agent Registry supports both PostgreSQL and SQLite for logging agent registrations and actions. It automatically attempts to connect to a PostgreSQL database first. If a PostgreSQL connection cannot be established or the driver is unavailable, it seamlessly falls back to using a local SQLite database (`agent_registry.db` by default).
+
+To use PostgreSQL, you must have a PostgreSQL server running (either locally or in a container) and provide the connection details via environment variables. If these variables are not set or the server is unreachable, SQLite will be used.
+
+### Database Environment Variables
+
+- `LOGGING_DB_HOST`: The database host (default: `localhost`).
+- `LOGGING_DB_PORT`: The database port (default: `5432`).
+- `LOGGING_DB_NAME`: The name of the database (default: `agent_logs`).
+- `LOGGING_DB_USER`: The database user (default: `postgres`).
+- `LOGGING_DB_PASSWORD`: The database password (default: `postgres`).
+- `REGISTRY_DB_LOGGING_ENABLED`: Set to `true` to enable database logging (default: `true`).
+
+## CLI
+
+The `oai-agent-registry` command-line interface provides a convenient way to start the HTTP server.
+
+**Basic Usage:**
+```bash
+oai-agent-registry
+```
+
+**Options:**
+- `--config`, `-c`: Path to a JSON configuration file.
+- `--host`: Host address to bind to (default: `0.0.0.0`).
+- `--port`, `-p`: Port number to listen on (default: `8081`).
+- `--enable-auto-discovery`: Enable the auto-discovery of agents.
+- `--start-port`: The starting port for the auto-discovery scan.
+- `--end-port`: The ending port for the auto-discovery scan.
 
 ## Usage
-
-### Starting the Server
-
-```bash
-python -m oai_agent_registry.cli [OPTIONS]
-```
-
-**Command-Line Options:**
-
-*   `--config`, `-c`: Path to a JSON configuration file.
-*   `--host`: The host to bind the server to (default: `0.0.0.0`).
-*   `--port`, `-p`: The port to run the server on (default: `8081`).
-*   `--enable-auto-discovery`: Enable the auto-discovery of agents.
-*   `--start-port`: The starting port for the auto-discovery scan.
-*   `--end-port`: The ending port for the auto-discovery scan.
 
 ### Configuration File
 
@@ -77,6 +96,8 @@ python -m oai_agent_registry.cli [OPTIONS]
 
 ## API Endpoints
 
+The registry provides a rich set of API endpoints for managing agents and the registry itself. You can explore these endpoints interactively by visiting `/docs` in your browser.
+
 ### Registry Management
 
 - **GET `/`**: Returns a welcome message and a list of available registry endpoints.
@@ -87,7 +108,20 @@ python -m oai_agent_registry.cli [OPTIONS]
 ### Agent Lifecycle & Deployment
 
 - **POST `/register`**: Register a new agent or update an existing one.
+    - **Request Body**: `AgentRegistration` model
+    ```json
+    {
+      "name": "my-new-agent",
+      "endpoint": "http://localhost:8002"
+    }
+    ```
 - **POST `/deregister`**: De-register an agent.
+    - **Request Body**: `AgentDeregistration` model
+    ```json
+    {
+      "name": "my-new-agent"
+    }
+    ```
 - **POST `/{agent_name}/start`**: Start a registered agent.
 - **POST `/{agent_name}/stop`**: Stop a running agent.
 - **POST `/{agent_name}/restart`**: Restart an agent.
