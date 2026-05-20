@@ -51,12 +51,16 @@ class ResultExtractor(BaseResultExtractor):
             session_id: str,
             model_id: str,
             model_provider: str = 'langchain',
-            include_raw: bool = True,
+            include_raw: bool = False,
             input_message: str = None,
             original_message: str = None,
             final: bool = True
     ) -> Dict[str, Any]:
-        """Format response to match AWS Strands agent output format."""
+        """Format response into standardized response structure.
+
+        Provides a sensible default for ``model_provider`` ('langchain') so
+        callers do not need to supply it explicitly.
+        """
         formatted = {}
 
         if 'structured_response' in result:
@@ -103,7 +107,7 @@ class ResultExtractor(BaseResultExtractor):
             input_message: str = None,
             original_message: str = None
     ) -> Dict[str, Any]:
-        """Format streaming chunk to match AWS Strands format."""
+        """Format a streaming chunk into standardized LangGraph/LangChain format."""
         formatted = {}
 
         last_message = self.extract_last_message(chunk)

@@ -1,5 +1,6 @@
 """Builder for creating and configuring LangChain Agent instances."""
 
+import asyncio
 import logging
 from typing import Dict, Any, List, Optional
 
@@ -57,6 +58,7 @@ class AgentBuilder(BaseAgentBuilder):
             document_loader: Optional document loader instance
             vector_store: Optional vector store instance
             skill_registry: Optional skill registry instance
+            structured_output_model_registry: Optional structured output model registry
         """
         super().__init__(
             model_manager=model_manager,
@@ -86,7 +88,6 @@ class AgentBuilder(BaseAgentBuilder):
         Returns:
             Configured Agent instance.
         """
-        # Get system prompt
         # Get system prompt (instructions)
         if self.tool_registry.enable_lazy_loading:
             tools = self.tool_registry.lazy_loading_required_tools()
@@ -137,7 +138,6 @@ class AgentBuilder(BaseAgentBuilder):
         @tool
         def agent_tool(query: str) -> str:
             """Delegate work to the sub-agent."""
-            import asyncio
             response = asyncio.run(agent.ainvoke({"messages": [HumanMessage(content=query)]}))
             return response["messages"][-1].content
 

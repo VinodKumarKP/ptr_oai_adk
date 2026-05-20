@@ -1,6 +1,9 @@
 """LangChain-specific tool registry implementation."""
 
+import asyncio
 import inspect
+import json
+import yaml
 from typing import Dict, Any, Callable
 
 from langchain_core.tools import StructuredTool
@@ -8,7 +11,6 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.sessions import StdioConnection, SSEConnection, StreamableHttpConnection
 
 from oai_agent_core.core.base_tool_registry import BaseToolRegistry
-from oai_agent_core.utils.dynamic_class_loader import DynamicClassLoader
 
 
 class LangChainToolRegistry(BaseToolRegistry):
@@ -24,7 +26,6 @@ class LangChainToolRegistry(BaseToolRegistry):
                     Result of the tool execution.
                 """
         self.logger.info(f"Executing tool:{tool_name} with arguments: {arguments}")
-        import json
         if isinstance(arguments, str):
             try:
                 arguments = json.loads(arguments)
@@ -109,8 +110,6 @@ class LangChainToolRegistry(BaseToolRegistry):
             arguments: YAML string containing arguments for each tool, keyed by tool name.
         """
         self.logger.info(f"Executing multiple tools with arguments: {arguments}")
-        import yaml
-        import asyncio
         arguments = yaml.safe_load(arguments)
 
         tool_names = []
@@ -280,30 +279,28 @@ class LangChainToolRegistry(BaseToolRegistry):
         return tool
 
     def _is_framework_builtin_tool(self, module_name: str) -> bool:
-        """Check if the module is a LangChain built-in tool."""
-        return module_name == 'strands_tools'
+        """Check if the module is a LangChain built-in tool.
+
+        LangChain community tools (e.g. from langchain_community) use the standard
+        class-based loader path — there is no dedicated built-in module shortcut.
+        """
+        return False
 
     def _load_framework_builtin_tool(self, tool_name: str, module_name: str) -> None:
         """Load a LangChain-specific built-in tool.
 
+        LangChain has no special built-in tool shortcut — this method is a no-op.
+        Use the standard class-based tool configuration to load community tools.
+
         Args:
             tool_name: Name of the tool
-            module_name: Module name (should be 'strands_tools')
+            module_name: Module name (unused)
         """
-        try:
-            tool_module = DynamicClassLoader.dynamic_import_tool(
-                tool_name,
-                base_module='strands_tools'
-            )
-            self.tools[tool_name] = tool_module
-            self.logger.info(f"✅ Loaded Strands tool: {tool_name}")
-
-        except ImportError as e:
-            self.logger.warning(
-                f"❌ Failed to import strands_tools.{tool_name}: {e}\n"
-                f"   This tool may not be available in your strands_tools version.\n"
-                f"   Run 'python discover_tools.py' to see available tools."
-            )
+        self.logger.warning(
+            f"_load_framework_builtin_tool called for '{tool_name}' (module: '{module_name}'), "
+            "but LangChain has no built-in tool shortcut. "
+            "Configure the tool via the standard class-based loader instead."
+        )
 
     def _is_framework_tool_type(self, obj: Any) -> bool:
         """Check if an object is a LangChain StructuredTool type."""

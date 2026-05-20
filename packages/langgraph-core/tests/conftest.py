@@ -14,6 +14,18 @@ if langgraph_src_path not in sys.path:
 if agent_core_src_path not in sys.path:
     sys.path.insert(0, agent_core_src_path)
 
+# Extend oai_agent_core namespace path to include our local src directory.
+# The installed oai_agent_core package is a regular package (has __init__.py), so
+# Python won't automatically merge it with the local src/ directory.  We extend
+# its __path__ here so that subpackages like langgraph_core are discoverable.
+try:
+    import oai_agent_core as _oai_pkg
+    _local_ns = os.path.join(langgraph_src_path, 'oai_agent_core')
+    if _local_ns not in _oai_pkg.__path__:
+        _oai_pkg.__path__.insert(0, _local_ns)
+except ImportError:
+    pass
+
 # Define Mock Classes
 class MockBaseToolRegistry:
     def __init__(self, *args, **kwargs):
@@ -300,6 +312,10 @@ sys.modules['oai_agent_core.manager'] = MagicMock()
 sys.modules['oai_agent_core.manager.config_manager'] = config_manager_module
 sys.modules['oai_agent_core.components.configuration'] = MagicMock()
 sys.modules['oai_agent_core.components.configuration.model_config'] = config_manager_module
+sys.modules['oai_agent_core.components.output_parser'] = MagicMock()
+sys.modules['oai_agent_core.components.output_parser.output_model_registry'] = MagicMock()
+sys.modules['oai_agent_core.components.skills'] = MagicMock()
+sys.modules['oai_agent_core.components.skills.skill_registry'] = MagicMock()
 sys.modules['oai_agent_core.utils'] = MagicMock()
 sys.modules['oai_agent_core.utils.dynamic_class_loader'] = MagicMock()
 sys.modules['oai_agent_core.utils.path_utils'] = MagicMock()

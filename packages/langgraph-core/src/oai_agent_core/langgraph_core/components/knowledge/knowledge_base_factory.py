@@ -78,14 +78,14 @@ class KnowledgeBaseFactory(BaseKnowledgeBaseFactory):
             description: The description of the tool.
 
         Returns:
-            A function tool decorated with @function_tool that agents can use
-            to search the knowledge base.
+            A LangChain @tool decorated function that agents can use
+            to load documents into the knowledge base.
         """
 
         @tool(name_or_callable=f"load_knowledge_base_{name}",
               description=f"Load the knowledge base {name}")
         def load_knowledge_base_tool(doc_list: List[str], session_id: Optional[str] = None) -> str:
-            """Load the knowledge base.""
+            """Load the knowledge base.
 
             Args:
                 doc_list: List of document paths to load.
