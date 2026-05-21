@@ -16,12 +16,14 @@ from oai_agent_registry.models import (
     AgentRegistration,
     BulkAgentRegistrationRequest,
     BulkAgentRegistrationResult,
+    UpdateServerEnvVarsRequest
 )
 from oai_agent_registry.security.dependencies import verify_api_key
 from oai_agent_registry.services.registry import AgentRegistry
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
 
 @router.get("/")
 async def root():
@@ -41,50 +43,58 @@ async def root():
         }
     }
 
+
 @router.get("/info")
 async def get_info(registry: AgentRegistry = Depends(get_registry)):
     """Returns information about the registry and its agents."""
     return await registry.get_info()
+
 
 @router.get("/health")
 async def health_check(registry: AgentRegistry = Depends(get_registry)):
     """Performs a health check on all enabled agents."""
     return await registry.health_check()
 
+
 @router.post("/reload-config")
 async def reload_config(registry: AgentRegistry = Depends(get_registry)):
     """Reloads the configuration from the config file."""
     return await registry.reload_config()
 
+
 @router.post("/register")
 async def register_agent(
-    agent_registration: AgentRegistration, 
-    stream_output: bool = False, 
-    registry: AgentRegistry = Depends(get_registry)
+        agent_registration: AgentRegistration,
+        stream_output: bool = False,
+        registry: AgentRegistry = Depends(get_registry)
 ):
     """Registers a new agent."""
     return await registry.register_agent(agent_registration, stream_output)
+
 
 @router.post("/deregister")
 async def deregister_agent(agent_deregistration: AgentDeregistration, registry: AgentRegistry = Depends(get_registry)):
     """Deregisters an agent."""
     return await registry.deregister_agent(agent_deregistration)
 
+
 @router.post("/lifecycle/{agent_name}")
 async def execute_lifecycle_action(
-    agent_name: str,
-    action_payload: AgentLifecycleAction,
-    registry: AgentRegistry = Depends(get_registry)
+        agent_name: str,
+        action_payload: AgentLifecycleAction,
+        registry: AgentRegistry = Depends(get_registry)
 ):
     """Executes a lifecycle action on an agent."""
-    return await registry.execute_lifecycle_action(agent_name, action_payload.action, action_payload.version, action_payload.stream_output)
+    return await registry.execute_lifecycle_action(agent_name, action_payload.action, action_payload.version,
+                                                   action_payload.stream_output)
+
 
 @router.get("/history/{agent_name}", response_model=AgentActionHistory)
 async def get_agent_history(
-    agent_name: str,
-    action: Optional[str] = None,
-    limit: int = 100,
-    registry: AgentRegistry = Depends(get_registry)
+        agent_name: str,
+        action: Optional[str] = None,
+        limit: int = 100,
+        registry: AgentRegistry = Depends(get_registry)
 ):
     """
     Retrieves action history for a specific agent.
@@ -111,10 +121,11 @@ async def get_agent_history(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve action history: {str(e)}")
 
+
 @router.post("/agents/discover", response_model=AgentDiscoveryResult)
 async def discover_agents(
-    request_data: Dict,
-    registry: AgentRegistry = Depends(get_registry),
+        request_data: Dict,
+        registry: AgentRegistry = Depends(get_registry),
 ):
     """
     Discover all agent config YAMLs in a GitHub repository.
@@ -150,8 +161,8 @@ async def discover_agents(
 
 
 def _build_agent_registrations(
-    request: BulkAgentRegistrationRequest,
-    agents_by_name: Dict[str, Dict],
+        request: BulkAgentRegistrationRequest,
+        agents_by_name: Dict[str, Dict],
 ) -> Tuple[List[Tuple[str, "AgentRegistration"]], List[Dict[str, str]]]:
     """
     Build AgentRegistration objects for each requested agent name.
@@ -199,9 +210,9 @@ def _build_agent_registrations(
 
 
 async def _stream_bulk_deployment(
-    agents_to_deploy: List[Tuple[str, "AgentRegistration"]],
-    pre_failed: List[Dict[str, str]],
-    registry: AgentRegistry,
+        agents_to_deploy: List[Tuple[str, "AgentRegistration"]],
+        pre_failed: List[Dict[str, str]],
+        registry: AgentRegistry,
 ) -> AsyncGenerator[str, None]:
     """
     Async generator that deploys all agents concurrently and yields SSE events.
@@ -243,15 +254,15 @@ async def _stream_bulk_deployment(
             })
 
             async for raw_line in deployer.stream_deploy_agent(
-                agent_name=agent_name,
-                source_url=agent_reg.source,
-                framework=agent_reg.framework,
-                env=agent_reg.env_vars or {},
-                description=agent_reg.description or "",
-                tags=agent_reg.tags or [],
-                port=agent_reg.port,
-                current_version=agent_reg.current_version,
-                refresh_repo=False,
+                    agent_name=agent_name,
+                    source_url=agent_reg.source,
+                    framework=agent_reg.framework,
+                    env=agent_reg.env_vars or {},
+                    description=agent_reg.description or "",
+                    tags=agent_reg.tags or [],
+                    port=agent_reg.port,
+                    current_version=agent_reg.current_version,
+                    refresh_repo=False,
             ):
                 line = raw_line.strip()
                 if line:
@@ -324,10 +335,10 @@ async def _stream_bulk_deployment(
 
 @router.post("/agents/register-bulk")
 async def register_agents_bulk(
-    request: BulkAgentRegistrationRequest,
-    stream_output: bool = False,
-    api_key: bool = Depends(verify_api_key),
-    registry: AgentRegistry = Depends(get_registry),
+        request: BulkAgentRegistrationRequest,
+        stream_output: bool = False,
+        api_key: bool = Depends(verify_api_key),
+        registry: AgentRegistry = Depends(get_registry),
 ):
     """
     Register and deploy multiple agents from a GitHub repository in one operation.
@@ -373,7 +384,7 @@ async def register_agents_bulk(
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",   # disable nginx buffering
+                "X-Accel-Buffering": "no",  # disable nginx buffering
             },
         )
 
@@ -395,6 +406,16 @@ async def register_agents_bulk(
         successful=successful,
         failed=failed,
     )
+
+
+@router.patch("/agents/{agent_name}/env-vars")
+async def update_server_env_vars(
+        agent_name: str,
+        payload: UpdateServerEnvVarsRequest,
+        registry: AgentRegistry = Depends(get_registry),
+):
+    """Update environment variables for a registered agent server."""
+    return await registry.update_server_env_vars(agent_name, payload.env_vars, payload.sensitive_vars)
 
 
 @router.api_route("/{agent_name}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])

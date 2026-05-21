@@ -1025,3 +1025,45 @@ class AgentRegistry:
                 "current_version": agent_config.current_version,
             }
         return seeds
+
+    async def update_server_env_vars(
+        self,
+        agent_name: str,
+        env_vars: Dict[str, str],
+        sensitive_vars: Optional[list] = None,
+    ) -> JSONResponse:
+        """Updates environment variables for a registered MCP server in-place."""
+        if agent_name not in self.agents:
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
+
+        server_config = self.agents.get(agent_name)
+        server_config.env_vars = env_vars
+        server_config.sensitive_vars = sensitive_vars or []
+
+        # Persist to DB
+        try:
+            await self.db_logger.log_agent_registration(
+                agent_name=agent_name,
+                endpoint_url=server_config.endpoint or "",
+                port=server_config.port,
+                description=server_config.description,
+                active=server_config.enabled,
+                registered_via=server_config.registered_via,
+                source=getattr(server_config, "source", None),
+                tags=getattr(server_config, "tags", []),
+                current_version=getattr(server_config, "current_version", None),
+                available_versions=getattr(server_config, "available_versions", []),
+                deployment_mode=getattr(server_config, "deployment_mode", "docker"),
+                env_vars=env_vars,
+                sensitive_vars=sensitive_vars or [],
+            )
+        except Exception as exc:
+            logger.warning("DB update for env_vars of '%s' failed: %s", agent_name, exc)
+
+        logger.info("Updated env_vars for server '%s' (%d vars).", agent_name, len(env_vars))
+        return JSONResponse({
+            "message": f"Environment variables updated for '{agent_name}'.",
+            "server_name": agent_name,
+            "env_vars_count": len(env_vars),
+            "sensitive_vars": sensitive_vars or [],
+        })

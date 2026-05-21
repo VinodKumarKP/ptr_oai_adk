@@ -155,3 +155,10 @@ class Config(BaseModel):
     """Root configuration model."""
     agents: Dict[str, Any]
     registry: RegistryConfig = Field(default_factory=RegistryConfig)
+
+
+class UpdateServerEnvVarsRequest(BaseModel):
+    """Payload for updating environment variables on a registered MCP server."""
+    env_vars: Dict[str, str] = Field(default_factory=dict)
+    sensitive_vars: Optional[List[str]] = Field(default_factory=list)
+
