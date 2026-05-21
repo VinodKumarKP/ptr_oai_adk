@@ -1,14 +1,12 @@
 import json
 import logging
 import os
-import time
 import asyncio
-from datetime import datetime
-from typing import Dict, Optional, Any, Union
+from typing import Any, Dict, Optional, Union
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse, Response
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastmcp import FastMCP
 
 from oai_mcp_registry.models import AppConfig, ServerConfig, RegistryConfig, ServerRegistration, ServerDeregistration
@@ -20,24 +18,43 @@ from oai_mcp_registry.services.deployers.factory import DeployerFactory
 logger = logging.getLogger("MCPRegistry")
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _sse(gen) -> StreamingResponse:
+    """Wraps an async generator as a Server-Sent Events response."""
+    return StreamingResponse(gen, media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# Registry
+# ---------------------------------------------------------------------------
+
 class MCPRegistry:
+
     def __init__(self, config_path: str = None):
-        self.config_path = config_path or os.getenv("MCP_CONFIG_PATH", './config/proxy_config.json')
+        self.config_path = config_path or os.getenv("MCP_CONFIG_PATH", "./config/proxy_config.json")
         self.host_ip = get_local_ip()
+        self.public_ip = get_public_ip()
         self.sub_apps: Dict[str, FastAPI] = {}
         self.config: Optional[AppConfig] = None
         self.registry_config: RegistryConfig = RegistryConfig()
-        self.public_ip = get_public_ip()
         self.db_logger: RegistryDatabaseLogger = RegistryDatabaseLogger(logger=logger)
         self.deployers: Dict[str, BaseDeployer] = {}
-        self.start_sub_app = None  # set by app.py lifespan
-        self.stop_sub_app = None  # set by app.py lifespan
+        # Injected by app.py lifespan so sub-app tasks stay in the same asyncio task.
+        self.start_sub_app = None
+        self.stop_sub_app = None
 
         try:
             self.load_configuration()
-        except (FileNotFoundError, Exception) as e:
-            logger.critical(f"Failed to load configuration: {e}")
+        except Exception as e:
+            logger.critical("Failed to load configuration: %s", e)
             self.config = AppConfig(servers={}, registry=self.registry_config)
+
+    # ------------------------------------------------------------------
+    # Configuration
+    # ------------------------------------------------------------------
 
     def load_configuration(self):
         if not os.path.exists(self.config_path):
@@ -45,91 +62,52 @@ class MCPRegistry:
             return
 
         try:
-            with open(self.config_path, "r") as f:
-                config_data = json.load(f)
-                self.config = AppConfig(**config_data)
+            with open(self.config_path) as f:
+                self.config = AppConfig(**json.load(f))
                 self.registry_config = self.config.registry
-
-            # Add registered_via attribute for config servers
-            for name, server in self.config.servers.items():
-                server.registered_via = 'config'
-
-            logger.info(f"Successfully loaded configuration from {self.config_path}")
-        except (json.JSONDecodeError, Exception) as e:
-            raise Exception(f"Configuration Invalid: {e}") from e
+            for server in self.config.servers.values():
+                server.registered_via = "config"
+            logger.info("Loaded configuration from %s", self.config_path)
+        except Exception as e:
+            raise Exception(f"Configuration invalid: {e}") from e
 
     def _build_seed_configs_from_servers(self) -> dict:
-        """Groups config servers by deployment mode for factory initialization."""
+        """Groups config servers by deployment mode for deployer factory initialisation."""
         seeds: dict = {}
-        for server_name, server_config in self.config.servers.items():
-            mode = getattr(server_config, "deployment_mode", "docker") or "docker"
-            if mode not in seeds:
-                seeds[mode] = {}
-
-            seeds[mode][server_name] = {
-                "port": server_config.port,
-                "source": server_config.source or "",
-                "framework": getattr(server_config, "framework", ""),
-                "tags": server_config.tags or [],
-                "env": server_config.env_vars,  # env vars come from the config file; expand here if needed
-                "description": server_config.description or "",
-                "current_version": server_config.current_version,
+        for name, cfg in self.config.servers.items():
+            mode = getattr(cfg, "deployment_mode", "docker") or "docker"
+            seeds.setdefault(mode, {})[name] = {
+                "port":            cfg.port,
+                "source":          cfg.source or "",
+                "framework":       getattr(cfg, "framework", ""),
+                "tags":            cfg.tags or [],
+                "env":             cfg.env_vars,
+                "description":     cfg.description or "",
+                "current_version": cfg.current_version,
             }
         return seeds
 
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
     async def initialize(self):
-        """Initializes the MCPRegistry, including the database logger and deployers."""
+        """Starts infra (optional), DB, deployers, and proxy sub-apps."""
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        build_dir = os.path.abspath(os.path.join(current_dir, '..', 'resources', 'docker'))
+        build_dir   = os.path.abspath(os.path.join(current_dir, "..", "resources", "docker"))
 
-        # --- Optional: auto-start infra Docker services before DB init ---
-        #
-        # Sequence:
-        #  1. Create a DockerComposeManager for the "docker" deployer early.
-        #  2. Call start_infra_services() — regenerates docker-compose.yaml
-        #     (always authoritative) then runs
-        #     `docker compose up -d --wait postgres valkey`.
-        #  3. TCP-poll Postgres as a safety net for older Docker Compose versions
-        #     that do not support --wait.
-        #  4. Only then initialise the DB logger so asyncpg finds Postgres ready.
-        #
+        compose_output = os.path.join(build_dir, "docker-compose.generated.yaml")
+        base_compose   = os.path.join(build_dir, "docker-compose.yaml")
+        base_url       = (f"{os.environ.get('MCP_BASE_URL', 'localhost')}"
+                          f":{os.environ.get('MCP_BASE_URL_PORT', self.registry_config.port)}")
+        local_reg_url  = f"http://host.docker.internal:{os.environ.get('MCP_BASE_URL_PORT', self.registry_config.port)}"
+
+        # --- Optional: bring up Postgres + Valkey before DB init ---
+        # Sequence: early deployer → start_infra_services() → TCP-poll Postgres → init DB.
         if self.registry_config.auto_start_infra:
-            from oai_mcp_registry.services.infra_manager import InfraManager
-
-            _seed = self._build_seed_configs_from_servers()
-            try:
-                _early_deployer = DeployerFactory.get_deployer(
-                    mode="docker",
-                    seed_config=_seed.get("docker", {}),
-                    compose_output_path=os.path.join(build_dir, "docker-compose.generated.yaml"),
-                    base_compose_path=os.path.join(build_dir, "docker-compose.yaml"),
-                    agent_base_url=(
-                        f"{os.environ.get('MCP_BASE_URL', 'localhost')}"
-                        f":{os.environ.get('MCP_BASE_URL_PORT', self.registry_config.port)}"
-                    ),
-                    agent_local_registry_url=(
-                        f"http://host.docker.internal"
-                        f":{os.environ.get('MCP_BASE_URL_PORT', self.registry_config.port)}"
-                    ),
-                )
-                # Generates docker-compose.yaml then starts only postgres + valkey.
-                _early_deployer.start_infra_services()
-            except Exception as exc:
-                logger.error("auto_start_infra: docker compose startup failed: %s", exc)
-
-            # TCP safety-net poll — essential when docker compose --wait is not
-            # available (Compose < v2.4).
-            try:
-                await InfraManager.wait_for_postgres(
-                    timeout=self.registry_config.infra_startup_timeout,
-                )
-            except TimeoutError as exc:
-                logger.error("auto_start_infra: Postgres did not become ready: %s", exc)
-            except Exception as exc:
-                logger.warning("auto_start_infra: Postgres readiness check failed: %s", exc)
+            await self._auto_start_infra(build_dir, base_url, local_reg_url)
 
         await self.db_logger.initialize()
-
         if self.db_logger.is_active:
             logger.info("RegistryDatabaseLogger initialized successfully.")
             await self._sync_servers_to_db()
@@ -137,138 +115,201 @@ class MCPRegistry:
         else:
             logger.warning("RegistryDatabaseLogger could not be initialized.")
 
-        # Initialize deployers for available modes
+        # Initialise deployers
         seed_configs = self._build_seed_configs_from_servers()
-
         for mode in ["docker", "python_package"]:
             try:
                 self.deployers[mode] = DeployerFactory.get_deployer(
                     mode=mode,
                     seed_config=seed_configs.get(mode, {}),
-                    compose_output_path=os.path.join(build_dir, "docker-compose.generated.yaml"),
-                    base_compose_path=os.path.join(build_dir, "docker-compose.yaml"),
-                    agent_base_url=f"{os.environ.get('MCP_BASE_URL', 'localhost')}:{os.environ.get('MCP_BASE_URL_PORT', self.registry_config.port)}",
-                    agent_local_registry_url=f"http://host.docker.internal:{os.environ.get('MCP_BASE_URL_PORT', self.registry_config.port)}",
+                    compose_output_path=compose_output,
+                    base_compose_path=base_compose,
+                    agent_base_url=base_url,
+                    agent_local_registry_url=local_reg_url,
                 )
-                logger.info(f"Deployer '{mode}' initialized with {len(seed_configs.get(mode, {}))} seed servers.")
+                logger.info("Deployer '%s' initialised with %d seed servers.", mode, len(seed_configs.get(mode, {})))
                 await self.deployers[mode].initialize()
             except NotImplementedError as e:
-                logger.debug(f"Deployer '{mode}' not initialized: {e}")
+                logger.debug("Deployer '%s' not available: %s", mode, e)
             except Exception as e:
-                logger.error(f"Failed to initialize deployer '{mode}': {e}")
+                logger.error("Failed to initialise deployer '%s': %s", mode, e)
 
         self.initialize_proxies()
 
+    async def _auto_start_infra(self, build_dir: str, base_url: str, local_reg_url: str):
+        """Brings up Postgres + Valkey via Docker Compose, then waits for Postgres."""
+        from oai_mcp_registry.services.infra_manager import InfraManager
+
+        seed = self._build_seed_configs_from_servers()
+        try:
+            early = DeployerFactory.get_deployer(
+                mode="docker",
+                seed_config=seed.get("docker", {}),
+                compose_output_path=os.path.join(build_dir, "docker-compose.generated.yaml"),
+                base_compose_path=os.path.join(build_dir, "docker-compose.yaml"),
+                agent_base_url=base_url,
+                agent_local_registry_url=local_reg_url,
+            )
+            early.start_infra_services()
+        except Exception as e:
+            logger.error("auto_start_infra: docker compose startup failed: %s", e)
+
+        # TCP safety-net — required when docker compose --wait is unavailable (< v2.4).
+        try:
+            await InfraManager.wait_for_postgres(timeout=self.registry_config.infra_startup_timeout)
+        except TimeoutError as e:
+            logger.error("auto_start_infra: Postgres did not become ready: %s", e)
+        except Exception as e:
+            logger.warning("auto_start_infra: Postgres readiness check failed: %s", e)
+
     async def shutdown(self):
-        """Shuts down the MCPRegistry, including closing deployers and the database logger."""
-        for server, server_config in self.config.servers.items():
-            if getattr(server_config, 'registered_via', 'dynamic') != 'dynamic':
-                deployer = self._get_deployer(getattr(server_config, 'deployment_mode', 'docker'))
+        """Stops config-declared containers, shuts down deployers, closes DB."""
+        # Dynamic containers are left running intentionally — they outlive the registry process.
+        for name, cfg in self.config.servers.items():
+            if getattr(cfg, "registered_via", "dynamic") != "dynamic":
+                deployer = self._get_deployer(getattr(cfg, "deployment_mode", "docker"))
                 if deployer:
-                    deployer.remove_server(server)
+                    deployer.remove_server(name)
 
         for mode, deployer in self.deployers.items():
-            logger.info(f"Shutting down deployer '{mode}'...")
+            logger.info("Shutting down deployer '%s'...", mode)
             await deployer.shutdown()
 
         await self.db_logger.close()
         logger.info("RegistryDatabaseLogger closed.")
 
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
     def _get_deployer(self, mode: str) -> Optional[BaseDeployer]:
-        """Gets the appropriate deployer, defaulting to docker."""
+        """Returns the deployer for *mode*, falling back to 'docker'."""
         return self.deployers.get(mode) or self.deployers.get("docker")
 
     def _get_server_current_version(self, server_name: str) -> Optional[str]:
-        """Returns the current_version for a server, or None if not found."""
+        """Returns current_version for a server, or None if not found."""
         cfg = self.config.servers.get(server_name)
-        return getattr(cfg, 'current_version', None) if cfg else None
+        return getattr(cfg, "current_version", None) if cfg else None
+
+    def _server_deploy_kwargs(self, server_name: str, server_config: ServerConfig, **overrides) -> Dict[str, Any]:
+        """Builds the common keyword arguments for every deployer deploy/stream call."""
+        base = {
+            "server_name":     server_name,
+            "source_url":      server_config.source or "",
+            "framework":       getattr(server_config, "framework", None),
+            "env":             server_config.env_vars or {},
+            "description":     server_config.description or "",
+            "tags":            server_config.tags or [],
+            "port":            server_config.port,
+            "current_version": server_config.current_version,
+        }
+        base.update(overrides)
+        return base
+
+    async def _persist_server_to_db(self, server_name: str, server_config: ServerConfig) -> None:
+        """Writes the current in-memory ServerConfig state to the database."""
+        await self.db_logger.log_server_registration(
+            server_name=server_name,
+            endpoint_url=server_config.endpoint or "",
+            port=server_config.port,
+            description=server_config.description,
+            active=server_config.enabled,
+            registered_via=server_config.registered_via,
+            source=server_config.source,
+            tags=server_config.tags or [],
+            current_version=server_config.current_version,
+            available_versions=server_config.available_versions or [],
+            deployment_mode=server_config.deployment_mode or "docker",
+            env_vars=server_config.env_vars or None,
+            sensitive_vars=server_config.sensitive_vars or None,
+        )
+
+    async def _mount_proxy(self, server_name: str, url: str) -> None:
+        """Stops any existing sub-app for *server_name*, then mounts a fresh proxy."""
+        mcp     = FastMCP.as_proxy(url, name=server_name)
+        sub_app = mcp.http_app()
+        await self.stop_sub_app(server_name)
+        self.sub_apps[server_name] = sub_app
+        await self.start_sub_app(server_name, sub_app)
+
+    # ------------------------------------------------------------------
+    # DB sync helpers (called during initialise)
+    # ------------------------------------------------------------------
 
     async def _sync_servers_to_db(self):
-        """Synchronizes config-declared servers to the database, marking them as registered_via='config'.
+        """Upserts config-declared servers into the DB.
 
-        If a config server does not define env_vars, any previously-saved env_vars stored in the
-        database are preserved (and loaded back into the in-memory ServerConfig) rather than being
-        wiped. This ensures that env vars set via the UI survive a registry restart.
+        If a config server has no env_vars defined, previously-saved env_vars from
+        the DB are preserved so that values set through the UI survive a restart.
         """
         if not self.db_logger.is_active:
-            logger.warning("Database logger is not active, skipping server sync to DB.")
+            logger.warning("DB logger not active — skipping server sync.")
             return
 
-        for server_name, server_config in self.config.servers.items():
-            if getattr(server_config, 'registered_via', 'dynamic') != 'config':
+        for server_name, cfg in self.config.servers.items():
+            if getattr(cfg, "registered_via", "dynamic") != "config":
                 continue
 
-            # Determine effective env_vars: prefer config-file values if explicitly set,
-            # otherwise fall back to whatever is already stored in the database so we
-            # don't wipe env vars that were configured through the UI.
-            config_env_vars = getattr(server_config, 'env_vars', None) or {}
-            config_sensitive_vars = getattr(server_config, 'sensitive_vars', None) or []
+            config_env  = getattr(cfg, "env_vars",       None) or {}
+            config_sens = getattr(cfg, "sensitive_vars",  None) or []
 
-            effective_env_vars = config_env_vars
-            effective_sensitive_vars = config_sensitive_vars
-
-            if not config_env_vars:
-                # Config doesn't define env_vars — try to restore from DB.
+            if not config_env:
+                # Config file has no env_vars — restore whatever the DB has so we
+                # don't erase values the user set through the UI.
                 try:
                     existing = await self.db_logger.get_server_details(server_name)
                     if existing:
-                        db_env = existing.get('env_vars') or {}
-                        db_sensitive = existing.get('sensitive_vars') or []
+                        db_env  = existing.get("env_vars")       or {}
+                        db_sens = existing.get("sensitive_vars") or []
                         if db_env:
-                            effective_env_vars = db_env
-                            effective_sensitive_vars = db_sensitive
-                            # Also restore into in-memory config so /info reflects them immediately.
-                            server_config.env_vars = effective_env_vars
-                            server_config.sensitive_vars = effective_sensitive_vars
-                            logger.debug(
-                                f"Restored {len(db_env)} env_vars from DB for config server '{server_name}'."
-                            )
+                            cfg.env_vars       = db_env
+                            cfg.sensitive_vars = db_sens
+                            config_env  = db_env
+                            config_sens = db_sens
+                            logger.debug("Restored %d env_vars from DB for '%s'.", len(db_env), server_name)
                 except Exception as e:
-                    logger.warning(f"Could not read existing env_vars for '{server_name}' from DB: {e}")
+                    logger.warning("Could not read existing env_vars for '%s' from DB: %s", server_name, e)
 
             try:
                 await self.db_logger.log_server_registration(
                     server_name=server_name,
-                    endpoint_url=server_config.endpoint or "",
-                    port=server_config.port,
-                    description=server_config.description,
+                    endpoint_url=cfg.endpoint or "",
+                    port=cfg.port,
+                    description=cfg.description,
                     active=True,
                     registered_via="config",
-                    source=server_config.source,
-                    tags=server_config.tags,
-                    current_version=server_config.current_version,
-                    available_versions=server_config.available_versions,
-                    deployment_mode=server_config.deployment_mode,
-                    env_vars=effective_env_vars or None,
-                    sensitive_vars=effective_sensitive_vars or None,
+                    source=cfg.source,
+                    tags=cfg.tags,
+                    current_version=cfg.current_version,
+                    available_versions=cfg.available_versions,
+                    deployment_mode=cfg.deployment_mode,
+                    env_vars=config_env or None,
+                    sensitive_vars=config_sens or None,
                 )
-                logger.debug(f"Synced config server '{server_name}' to DB.")
+                logger.debug("Synced config server '%s' to DB.", server_name)
             except Exception as e:
-                logger.error(f"Failed to sync server '{server_name}' to DB from config: {e}")
+                logger.error("Failed to sync '%s' to DB: %s", server_name, e)
 
     async def _load_dynamic_servers_from_db(self):
-        """Restores dynamic servers from the DB that were active before the registry restarted."""
-        logger.info("Restoring active dynamic MCP servers from database...")
+        """Restores dynamic servers that were registered before the last restart."""
+        logger.info("Restoring dynamic MCP servers from database...")
         try:
-            dynamic_servers = await self.db_logger.get_all_servers()
+            rows = await self.db_logger.get_all_servers()
         except Exception as e:
-            logger.error(f"Failed to load dynamic servers from DB: {e}")
+            logger.error("Failed to load dynamic servers from DB: %s", e)
             return
 
-        restored = 0
-        skipped = 0
-        for row in dynamic_servers:
+        restored = skipped = 0
+        for row in rows:
             server_name = row.get("server_name")
             if not server_name:
                 continue
-
             if server_name in self.config.servers:
-                logger.debug(f"Skipping DB restore for '{server_name}' — already declared in config.")
+                logger.debug("Skipping DB restore for '%s' — already in config.", server_name)
                 skipped += 1
                 continue
-
             try:
-                server_config = ServerConfig(
+                cfg = ServerConfig(
                     endpoint=row.get("endpoint_url", ""),
                     port=row.get("port"),
                     description=row.get("description", "A proxied MCP server"),
@@ -280,97 +321,105 @@ class MCPRegistry:
                     env_vars=row.get("env_vars") or None,
                     sensitive_vars=row.get("sensitive_vars") or [],
                 )
-                server_config.registered_via = 'dynamic'
-                self.config.servers[server_name] = server_config
+                cfg.registered_via = "dynamic"
+                self.config.servers[server_name] = cfg
                 restored += 1
-                logger.debug(f"Restored dynamic server '{server_name}' from DB.")
+                logger.debug("Restored dynamic server '%s' from DB.", server_name)
             except Exception as e:
-                logger.error(f"Failed to restore dynamic server '{server_name}' from DB: {e}")
+                logger.error("Failed to restore '%s' from DB: %s", server_name, e)
 
-        logger.info(f"Dynamic server restore complete: {restored} restored, {skipped} skipped (config collision).")
+        logger.info("Restore complete: %d restored, %d skipped (config collision).", restored, skipped)
+
+    # ------------------------------------------------------------------
+    # Discovery
+    # ------------------------------------------------------------------
 
     async def discover_servers(self, host: str = None):
+        """Probes localhost ports for MCP /info endpoints and registers any found."""
         start = self.registry_config.start_port
-        end = self.registry_config.end_port
+        end   = self.registry_config.end_port
+        # Always probe localhost; the stored endpoint uses the configured host.
+        # (If host is a remote machine, discovery must be triggered from that host.)
         host = host or self.registry_config.host or "localhost"
         if host == "0.0.0.0":
             host = "localhost"
-        logger.info(f"Starting auto-discovery of MCP servers in port range {start}-{end} on host {host}...")
+        logger.info("Auto-discovery: scanning ports %d–%d on host %s...", start, end, host)
 
         async def _probe(client: httpx.AsyncClient, port: int):
             try:
-                response = await client.get(f"http://localhost:{port}/info", timeout=1.0)
-                if response.status_code != 200:
+                resp = await client.get(f"http://localhost:{port}/info", timeout=1.0)
+                if resp.status_code != 200:
                     return
-                server_info = response.json()
-                server_name = server_info.get("server_name")
+                info        = resp.json()
+                server_name = info.get("server_name")
                 if not server_name or server_name in self.config.servers:
                     return
-                server_config = ServerConfig(
+                cfg = ServerConfig(
                     endpoint=f"http://{host}:{port}",
-                    description=server_info.get("server_config", {}).get("description", "Auto-discovered MCP server"),
-                    source=server_info.get("source"),
-                    tags=server_info.get("tags", []),
-                    current_version=server_info.get("current_version"),
-                    available_versions=server_info.get("available_versions", []),
-                    deployment_mode=server_info.get("deployment_mode", "docker"),
+                    description=info.get("server_config", {}).get("description", "Auto-discovered MCP server"),
+                    source=info.get("source"),
+                    tags=info.get("tags", []),
+                    current_version=info.get("current_version"),
+                    available_versions=info.get("available_versions", []),
+                    deployment_mode=info.get("deployment_mode", "docker"),
                 )
-                server_config.registered_via = 'dynamic'
-                self.config.servers[server_name] = server_config
-                logger.info(f"Discovered MCP server '{server_name}' at http://{host}:{port}")
+                cfg.registered_via = "dynamic"
+                self.config.servers[server_name] = cfg
+                logger.info("Discovered '%s' at http://%s:%d", server_name, host, port)
                 await self.db_logger.log_server_registration(
                     server_name=server_name,
                     endpoint_url=f"http://{host}:{port}",
                     port=port,
-                    description=server_config.description,
+                    description=cfg.description,
                     active=True,
                     registered_via="dynamic",
-                    source=server_config.source,
-                    tags=server_config.tags,
-                    current_version=server_config.current_version,
-                    available_versions=server_config.available_versions,
-                    deployment_mode=server_config.deployment_mode,
+                    source=cfg.source,
+                    tags=cfg.tags,
+                    current_version=cfg.current_version,
+                    available_versions=cfg.available_versions,
+                    deployment_mode=cfg.deployment_mode,
                 )
             except (httpx.RequestError, json.JSONDecodeError):
                 pass
 
         async with httpx.AsyncClient() as client:
-            await asyncio.gather(*[_probe(client, port) for port in range(start, end + 1)])
+            await asyncio.gather(*[_probe(client, p) for p in range(start, end + 1)])
 
         self.initialize_proxies()
 
+    # ------------------------------------------------------------------
+    # Proxy management
+    # ------------------------------------------------------------------
+
     def _build_upstream_url(self, server_info: ServerConfig) -> str:
-        url = ""
         if server_info.endpoint:
             url = server_info.endpoint
         elif server_info.port:
             url = f"http://{self.host_ip}:{server_info.port}/mcp"
-
-        if url and not (url.endswith("/sse") or url.endswith("/mcp")):
+        else:
+            return ""
+        if not (url.endswith("/sse") or url.endswith("/mcp")):
             url = f"{url.rstrip('/')}/mcp"
         return url
 
     def initialize_proxies(self):
         if not self.config:
             return
-
-        logger.info(f"Initializing {len(self.config.servers)} upstream servers...")
+        logger.info("Initialising %d upstream proxies...", len(self.config.servers))
         self.sub_apps = {}
-
         for name, info in self.config.servers.items():
             try:
                 url = self._build_upstream_url(info)
                 if not url:
-                    logger.warning(f"Skipping '{name}': No endpoint or port defined.")
+                    logger.warning("Skipping '%s': no endpoint or port defined.", name)
                     continue
-
-                logger.info(f"  [Registering] {name} -> {url}")
-                mcp = FastMCP.as_proxy(url, name=name)
-                self.sub_apps[name] = mcp.http_app()
+                logger.info("  [Proxy] %s -> %s", name, url)
+                self.sub_apps[name] = FastMCP.as_proxy(url, name=name).http_app()
             except Exception as e:
-                logger.error(f"  [Failed] Could not initialize '{name}': {e}")
+                logger.error("  [Failed] Could not initialise proxy for '%s': %s", name, e)
 
     async def reload_config(self) -> JSONResponse:
+        """Reloads the config file and re-initialises proxies."""
         try:
             self.load_configuration()
             await self._sync_servers_to_db()
@@ -379,550 +428,422 @@ class MCPRegistry:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def _get_merged_server_values(self, server_name: str, server_registration: ServerRegistration,
-                                        registered_via: str) -> Dict[str, Any]:
-        """Merges new registration values with existing database values for partial updates."""
-        existing = await self.db_logger.get_server_details(server_name) if self.db_logger.is_active else None
-        if existing is None:
-            existing = {}
+    # ------------------------------------------------------------------
+    # Registration
+    # ------------------------------------------------------------------
 
-        reg = server_registration
-        new_versions = reg.available_versions if (reg.available_versions is not None and len(reg.available_versions) > 0) else None
+    async def _get_merged_server_values(
+        self, server_name: str, reg: ServerRegistration, registered_via: str,
+    ) -> Dict[str, Any]:
+        """Merges a new registration request with existing DB values for partial updates."""
+        existing = (await self.db_logger.get_server_details(server_name)) if self.db_logger.is_active else {}
+        existing = existing or {}
 
-        # Merge env_vars: existing DB values overwritten by any new values supplied
-        existing_env = existing.get('env_vars') or {}
-        new_env = reg.env_vars or {}
-        merged_env = {**existing_env, **new_env} if new_env else (existing_env or None)
+        # Prefer new versions only when the caller actually supplies them.
+        new_versions = reg.available_versions if reg.available_versions else None
 
-        # Merge sensitive_vars: union of existing + new
-        existing_sensitive = existing.get('sensitive_vars') or []
-        new_sensitive = reg.sensitive_vars or []
-        merged_sensitive = list(set(existing_sensitive) | set(new_sensitive))
+        # env_vars: overlay new values on top of existing ones.
+        merged_env = {**(existing.get("env_vars") or {}), **(reg.env_vars or {})} or None
+
+        # sensitive_vars: union.
+        merged_sensitive = list(set(existing.get("sensitive_vars") or []) | set(reg.sensitive_vars or []))
+
+        def _pick(new_val, existing_key, default=None):
+            return new_val if new_val is not None else existing.get(existing_key, default)
 
         return {
-            'endpoint': reg.endpoint if reg.endpoint is not None else existing.get('endpoint', ''),
-            'port': reg.port if reg.port is not None else existing.get('port'),
-            'source': reg.source if reg.source is not None else existing.get('source', ''),
-            'active': True,
-            'registered_via': registered_via if registered_via is not None else existing.get('registered_via', 'dynamic'),
-            'tags': reg.tags if reg.tags is not None else existing.get('tags', []),
-            'description': reg.description if reg.description is not None else existing.get('description', ''),
-            'current_version': reg.current_version if reg.current_version is not None else existing.get('current_version'),
-            'available_versions': new_versions if new_versions is not None else existing.get('available_versions', []),
-            'deployment_mode': reg.deployment_mode if reg.deployment_mode is not None else existing.get('deployment_mode', 'docker'),
-            'env_vars': merged_env,
-            'sensitive_vars': merged_sensitive,
+            "endpoint":          _pick(reg.endpoint,          "endpoint",          ""),
+            "port":              _pick(reg.port,               "port"),
+            "source":            _pick(reg.source,             "source",            ""),
+            "active":            True,
+            "registered_via":    _pick(registered_via,         "registered_via",   "dynamic"),
+            "tags":              _pick(reg.tags,               "tags",             []),
+            "description":       _pick(reg.description,        "description",       ""),
+            "current_version":   _pick(reg.current_version,    "current_version"),
+            "available_versions":_pick(new_versions,           "available_versions",[]),
+            "deployment_mode":   _pick(reg.deployment_mode,    "deployment_mode",  "docker"),
+            "env_vars":          merged_env,
+            "sensitive_vars":    merged_sensitive,
         }
 
-    async def register_server(self, app: FastAPI, server_registration: ServerRegistration,
-                              stream_output: bool = False) -> Union[JSONResponse, StreamingResponse]:
-        """Registers a new MCP server dynamically via the /register endpoint."""
-        server_name = server_registration.name
-        if server_name in self.config.servers:
-            logger.info(f"Server '{server_name}' is already registered. Updating its configuration.")
-
+    async def register_server(
+        self,
+        server_registration: ServerRegistration,
+        stream_output: bool = False,
+    ) -> Union[JSONResponse, StreamingResponse]:
+        """Registers (or re-registers) an MCP server dynamically."""
+        server_name    = server_registration.name
         registered_via = server_registration.registered_via or "dynamic"
+
+        if server_name in self.config.servers:
+            logger.info("Server '%s' already registered — updating.", server_name)
+
+        # Resolve deployment_mode when caller passes 'unknown'.
+        if server_registration.deployment_mode == "unknown":
+            server_registration.deployment_mode = (
+                self.config.servers[server_name].deployment_mode
+                if server_name in self.config.servers else "docker"
+            )
+
+        deployer      = self._get_deployer(server_registration.deployment_mode)
         assigned_port = server_registration.port
 
-        if server_registration.deployment_mode == 'unknown':
-            if server_name in self.config.servers:
-                server_registration.deployment_mode = self.config.servers[server_name].deployment_mode
-            else:
-                server_registration.deployment_mode = "docker"
-
-        deployer = self._get_deployer(server_registration.deployment_mode)
-
+        # --- Registry-managed deployment (build + run the container) ---
         if registered_via == "registry" and deployer:
             if not assigned_port:
                 assigned_port = deployer.find_available_port()
                 server_registration.port = assigned_port
 
             if stream_output:
-                async def stream_generator():
-                    try:
-                        yield f"data: Starting server registration and deployment for '{server_name}'...\n\n"
-                        async for line in deployer.stream_deploy_server(
-                                server_name=server_name,
-                                source_url=server_registration.source,
-                                framework=getattr(server_registration, "framework", None),
-                                env=server_registration.env_vars or {},
-                                description=getattr(server_registration, "description", ""),
-                                tags=getattr(server_registration, "tags", []),
-                                port=assigned_port,
-                                current_version=getattr(server_registration, "current_version", None),
-                                refresh_repo=False,
-                        ):
-                            yield f"data: {line.strip()}\n\n"
-
-                        db_values = await self._get_merged_server_values(server_name, server_registration,
-                                                                         registered_via)
-                        if assigned_port:
-                            db_values['port'] = assigned_port
-                        server_config = ServerConfig(**db_values)
-                        self.config.servers[server_name] = server_config
-
-                        # Mount or update the proxy
-                        url = self._build_upstream_url(server_config)
-                        mcp = FastMCP.as_proxy(url, name=server_name)
-                        sub_app = mcp.http_app()
-                        # Stop old lifespan task if re-registering, then start fresh
-                        if server_name in self.sub_apps:
-                            await self.stop_sub_app(server_name)
-                        self.sub_apps[server_name] = sub_app
-                        await self.start_sub_app(server_name, sub_app)
-
-                        await self.db_logger.log_server_registration(
-                            server_name=server_name,
-                            endpoint_url=db_values['endpoint'],
-                            port=db_values['port'],
-                            source=db_values['source'],
-                            active=db_values['active'],
-                            registered_via=db_values['registered_via'],
-                            tags=db_values['tags'],
-                            description=db_values['description'],
-                            current_version=db_values['current_version'],
-                            available_versions=db_values['available_versions'],
-                            deployment_mode=db_values['deployment_mode'],
-                            env_vars=db_values.get('env_vars'),
-                            sensitive_vars=db_values.get('sensitive_vars'),
-                        )
-                        yield f"data: ✅ Server '{server_name}' registered successfully.\n\n"
-                    except Exception as e:
-                        yield f"data: ❌ Error during registration: {str(e)}\n\n"
-                        raise
-
-                return StreamingResponse(
-                    stream_generator(),
-                    media_type="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
-                )
+                return _sse(self._stream_register(server_name, server_registration, registered_via, deployer, assigned_port))
             else:
-                asyncio.create_task(
-                    deployer.deploy_server(
-                        server_name=server_name,
-                        source_url=server_registration.source,
-                        framework=getattr(server_registration, "framework", None),
-                        env=server_registration.env_vars or {},
-                        description=getattr(server_registration, "description", ""),
-                        tags=getattr(server_registration, "tags", []),
-                        port=assigned_port,
-                        current_version=getattr(server_registration, "current_version", None),
-                        refresh_repo=False,
-                    )
-                )
+                asyncio.create_task(deployer.deploy_server(
+                    server_name=server_name,
+                    source_url=server_registration.source,
+                    framework=getattr(server_registration, "framework", None),
+                    env=server_registration.env_vars or {},
+                    description=getattr(server_registration, "description", ""),
+                    tags=getattr(server_registration, "tags", []),
+                    port=assigned_port,
+                    current_version=getattr(server_registration, "current_version", None),
+                    refresh_repo=False,
+                ))
 
-        # Non-streaming or non-registry dynamic mode
+        # --- Register proxy + persist to DB (both streaming fallthrough and non-registry) ---
         db_values = await self._get_merged_server_values(server_name, server_registration, registered_via)
         if assigned_port:
-            db_values['port'] = assigned_port
+            db_values["port"] = assigned_port
 
         server_config = ServerConfig(**db_values)
         self.config.servers[server_name] = server_config
 
-        # Mount proxy if not already mounted; update endpoint if it is
         try:
             url = self._build_upstream_url(server_config)
             if url:
-                mcp = FastMCP.as_proxy(url, name=server_name)
-                sub_app = mcp.http_app()
-                # Always stop any existing lifespan task before starting fresh.
-                # sub_apps may have been cleared by deactivate_server, but a
-                # lifespan task can still be running — stop_sub_app handles both.
                 is_update = server_name in self.sub_apps
-                await self.stop_sub_app(server_name)
-                self.sub_apps[server_name] = sub_app
-                await self.start_sub_app(server_name, sub_app)
-                action_label = "Updated" if is_update else "Registered new"
-                logger.info(f"{action_label} proxy for server '{server_name}' -> {url}")
+                await self._mount_proxy(server_name, url)
+                logger.info("%s proxy for '%s' -> %s", "Updated" if is_update else "Registered", server_name, url)
         except Exception as e:
-            logger.error(f"Failed to mount/update sub app proxy for {server_name}: {e}")
+            logger.error("Failed to mount proxy for '%s': %s", server_name, e)
 
-        await self.db_logger.log_server_registration(
-            server_name=server_name,
-            endpoint_url=db_values['endpoint'],
-            port=db_values['port'],
-            source=db_values['source'],
-            active=db_values['active'],
-            registered_via=db_values['registered_via'],
-            tags=db_values['tags'],
-            description=db_values['description'],
-            current_version=db_values['current_version'],
-            available_versions=db_values['available_versions'],
-            deployment_mode=db_values['deployment_mode'],
-            env_vars=db_values.get('env_vars'),
-            sensitive_vars=db_values.get('sensitive_vars'),
-        )
-
+        await self._persist_server_to_db(server_name, server_config)
         return JSONResponse({"message": f"Server '{server_name}' registered successfully."})
 
-    async def deregister_server(self, server_deregistration: ServerDeregistration) -> JSONResponse:
-        """Deregisters an MCP server."""
-        server_name = server_deregistration.name
+    async def _stream_register(
+        self,
+        server_name: str,
+        reg: ServerRegistration,
+        registered_via: str,
+        deployer,
+        assigned_port: int,
+    ):
+        """Async generator: deploys, mounts proxy, persists to DB, yields SSE lines."""
+        try:
+            yield f"data: Starting deployment for '{server_name}'...\n\n"
+            async for line in deployer.stream_deploy_server(
+                server_name=server_name,
+                source_url=reg.source,
+                framework=getattr(reg, "framework", None),
+                env=reg.env_vars or {},
+                description=getattr(reg, "description", ""),
+                tags=getattr(reg, "tags", []),
+                port=assigned_port,
+                current_version=getattr(reg, "current_version", None),
+                refresh_repo=False,
+            ):
+                yield f"data: {line.strip()}\n\n"
 
+            db_values = await self._get_merged_server_values(server_name, reg, registered_via)
+            if assigned_port:
+                db_values["port"] = assigned_port
+            server_config = ServerConfig(**db_values)
+            self.config.servers[server_name] = server_config
+
+            url = self._build_upstream_url(server_config)
+            await self._mount_proxy(server_name, url)
+            await self._persist_server_to_db(server_name, server_config)
+            yield f"data: ✅ Server '{server_name}' registered successfully.\n\n"
+        except Exception as e:
+            yield f"data: ❌ Error during registration: {str(e)}\n\n"
+            raise
+
+    async def deregister_server(self, server_deregistration: ServerDeregistration) -> JSONResponse:
+        """Deactivates a server (stops the container, removes the proxy, marks inactive in DB)."""
+        server_name = server_deregistration.name
         if server_name not in self.config.servers:
-            logger.warning(f"Attempted to deregister server '{server_name}', but it was not found.")
             raise HTTPException(status_code=404, detail=f"Server '{server_name}' not found.")
 
         server_config = self.config.servers[server_name]
-        deployer = self._get_deployer(getattr(server_config, 'deployment_mode', 'docker'))
+        deployer = self._get_deployer(getattr(server_config, "deployment_mode", "docker"))
         if deployer:
             deployer.stop_server(server_name)
 
-        # Stop the lifespan task cleanly (also removes from sub_apps)
         if self.stop_sub_app:
             await self.stop_sub_app(server_name)
         elif server_name in self.sub_apps:
             del self.sub_apps[server_name]
 
-        self.config.servers[server_name].enabled = False
-        logger.info(f"Deactivating server '{server_name}'.")
-
+        server_config.enabled = False
+        logger.info("Deactivated server '%s'.", server_name)
         await self.db_logger.deregister_server(server_name=server_name)
-
         return JSONResponse({"message": f"Server '{server_name}' deactivated successfully."})
+
+    # ------------------------------------------------------------------
+    # Env-var update
+    # ------------------------------------------------------------------
 
     async def update_server_env_vars(
         self,
         server_name: str,
         env_vars: Dict[str, str],
         sensitive_vars: Optional[list] = None,
-    ) -> Union[JSONResponse, StreamingResponse]:
-        """Updates environment variables for a registered MCP server in-place."""
+    ) -> StreamingResponse:
+        """Saves updated env vars to memory + DB, then redeploys the container to apply them."""
         if server_name not in self.config.servers:
             raise HTTPException(status_code=404, detail=f"Server '{server_name}' not found.")
 
         server_config = self.config.servers[server_name]
-        server_config.env_vars = env_vars
+        server_config.env_vars       = env_vars
         server_config.sensitive_vars = sensitive_vars or []
 
-        # Persist to DB
         db_saved = False
         try:
-            await self.db_logger.log_server_registration(
-                server_name=server_name,
-                endpoint_url=server_config.endpoint or "",
-                port=server_config.port,
-                description=server_config.description,
-                active=server_config.enabled,
-                registered_via=server_config.registered_via,
-                source=getattr(server_config, "source", None),
-                tags=getattr(server_config, "tags", []),
-                current_version=getattr(server_config, "current_version", None),
-                available_versions=getattr(server_config, "available_versions", []),
-                deployment_mode=getattr(server_config, "deployment_mode", "docker"),
-                env_vars=env_vars,
-                sensitive_vars=sensitive_vars or [],
-            )
+            await self._persist_server_to_db(server_name, server_config)
             db_saved = True
-        except Exception as exc:
-            logger.warning("DB update for env_vars of '%s' failed: %s", server_name, exc)
+        except Exception as e:
+            logger.warning("DB update for env_vars of '%s' failed: %s", server_name, e)
 
-        logger.info("Updated env_vars for server '%s' (%d vars).", server_name, len(env_vars))
+        logger.info("Updated env_vars for '%s' (%d vars).", server_name, len(env_vars))
 
-        # Stream a restart so the caller can observe progress in real time.
-        # Using restart (not "update") so no version is required.
-        deployer = self._get_deployer(getattr(server_config, 'deployment_mode', 'docker'))
+        deployer = self._get_deployer(getattr(server_config, "deployment_mode", "docker"))
+        return _sse(self._stream_env_update(server_name, server_config, deployer, db_saved))
 
-        async def stream_generator():
-            saved_label = f"{len(env_vars)} variable(s)" if db_saved else f"{len(env_vars)} variable(s) (DB save failed)"
-            yield f"data: Saved {saved_label} for '{server_name}'.\n\n"
-            if deployer:
-                try:
-                    yield f"data: Redeploying '{server_name}' with updated environment variables...\n\n"
-                    # Use stream_deploy_server with no_build=True so the deployer:
-                    #   1. Re-adds the service to _dynamic_services with new env vars
-                    #   2. Rewrites the compose file with the new env block
-                    #   3. Restarts the container (no image rebuild)
-                    async for line in deployer.stream_deploy_server(
-                        server_name=server_name,
-                        source_url=getattr(server_config, 'source', '') or '',
-                        framework=getattr(server_config, 'framework', None),
-                        env=server_config.env_vars or {},
-                        description=getattr(server_config, 'description', '') or '',
-                        tags=getattr(server_config, 'tags', []) or [],
-                        port=server_config.port,
-                        current_version=getattr(server_config, 'current_version', None),
-                        no_build=True,
-                    ):
-                        yield f"data: {line.strip()}\n\n"
-                    self.config.servers[server_name].enabled = True
-                    current_version = getattr(server_config, 'current_version', None)
-                    await self.db_logger.log_server_action(server_name, "env-update", current_version)
-                    yield f"data: ✓ Server '{server_name}' redeployed with updated environment variables.\n\n"
-                except Exception as e:
-                    yield f"data: ✗ Error redeploying server: {str(e)}\n\n"
-            else:
-                yield "data: No deployer configured — env vars updated in registry memory only.\n\n"
-                yield "data: Restart the server manually to apply changes.\n\n"
+    async def _stream_env_update(self, server_name: str, server_config: ServerConfig, deployer, db_saved: bool):
+        """Async generator: streams redeployment progress after an env-var save."""
+        n = len(server_config.env_vars or {})
+        saved_note = "" if db_saved else " (DB save failed)"
+        yield f"data: Saved {n} variable(s){saved_note} for '{server_name}'.\n\n"
 
-        return StreamingResponse(stream_generator(), media_type="text/event-stream")
+        if not deployer:
+            yield "data: No deployer configured — env vars updated in memory only.\n\n"
+            yield "data: Restart the server manually to apply changes.\n\n"
+            return
 
-    async def execute_lifecycle_action(self, server_name: str, action: str, version: Optional[str] = None,
-                                       stream_output: bool = False) -> Union[JSONResponse, StreamingResponse]:
-        """Executes a lifecycle action on a server."""
+        try:
+            yield f"data: Redeploying '{server_name}' with updated environment variables...\n\n"
+            # no_build=True: rewrite compose file + restart container without rebuilding the image.
+            async for line in deployer.stream_deploy_server(
+                **self._server_deploy_kwargs(server_name, server_config, no_build=True)
+            ):
+                yield f"data: {line.strip()}\n\n"
+            self.config.servers[server_name].enabled = True
+            await self.db_logger.log_server_action(server_name, "env-update", server_config.current_version)
+            yield f"data: ✓ Server '{server_name}' redeployed with updated environment variables.\n\n"
+        except Exception as e:
+            yield f"data: ✗ Error redeploying server: {str(e)}\n\n"
+
+    # ------------------------------------------------------------------
+    # Lifecycle actions
+    # ------------------------------------------------------------------
+
+    async def execute_lifecycle_action(
+        self,
+        server_name: str,
+        action: str,
+        version: Optional[str] = None,
+        stream_output: bool = False,
+    ) -> Union[JSONResponse, StreamingResponse]:
+        """Dispatches a lifecycle action (start/stop/restart/rebuild/redeploy/update) on a server."""
         if server_name not in self.config.servers:
             raise HTTPException(status_code=404, detail=f"Server '{server_name}' not found.")
 
         server_config = self.config.servers[server_name]
-        deployer = self._get_deployer(getattr(server_config, 'deployment_mode', 'docker'))
+        deployer      = self._get_deployer(getattr(server_config, "deployment_mode", "docker"))
+        logger.info("Lifecycle action '%s' on '%s' (deployer: %s).",
+                    action, server_name, getattr(server_config, "deployment_mode", "docker"))
 
-        logger.info(
-            f"Executing lifecycle action '{action}' for server '{server_name}' using deployer '{getattr(server_config, 'deployment_mode', 'docker')}'")
+        if not deployer:
+            return self._lifecycle_json(server_name, action)
 
-        if deployer:
-            try:
-                if action in ["update", "upgrade", "downgrade"]:
-                    if not version:
-                        raise HTTPException(status_code=400,
-                                            detail="Version is required for update/upgrade/downgrade action.")
+        try:
+            if action in ("update", "upgrade", "downgrade"):
+                return await self._action_version_switch(server_name, server_config, deployer, action, version, stream_output)
 
-                    image_already_exists = deployer.image_exists(server_name, version)
+            if action == "stop":
+                return await self._action_stop(server_name, server_config, deployer)
 
-                    # Update version in memory
-                    server_config.current_version = version
-                    if server_config.available_versions is None:
-                        server_config.available_versions = []
-                    if version not in server_config.available_versions:
-                        server_config.available_versions.append(version)
+            if action == "start":
+                return await self._action_start(server_name, server_config, deployer)
 
-                    # Save to database
-                    await self.db_logger.log_server_registration(
-                        server_name=server_name,
-                        endpoint_url=server_config.endpoint,
-                        port=server_config.port,
-                        source=server_config.source,
-                        active=True,
-                        registered_via=server_config.registered_via,
-                        tags=server_config.tags,
-                        description=server_config.description,
-                        current_version=server_config.current_version,
-                        available_versions=server_config.available_versions,
-                        deployment_mode=server_config.deployment_mode,
-                        env_vars=getattr(server_config, 'env_vars', None),
-                        sensitive_vars=getattr(server_config, 'sensitive_vars', None),
-                    )
+            if action == "restart":
+                return await self._action_restart(server_name, server_config, deployer, stream_output)
 
-                    if stream_output:
-                        _no_build = image_already_exists
+            if action == "delete":
+                return await self._action_delete(server_name, server_config, deployer)
 
-                        async def stream_generator():
-                            try:
-                                yield f"data: Server '{server_name}' switching to version {version}...\n\n"
-                                async for line in deployer.stream_deploy_server(
-                                        server_name=server_name,
-                                        source_url=server_config.source,
-                                        framework=getattr(server_config, "framework", None),
-                                        env=server_config.env_vars or {},
-                                        description=server_config.description,
-                                        tags=server_config.tags,
-                                        port=server_config.port,
-                                        current_version=server_config.current_version,
-                                        refresh_repo=not _no_build,
-                                        no_build=_no_build,
-                                ):
-                                    yield f"data: {line.strip()}\n\n"
-                                self.config.servers[server_name].enabled = True
-                                await self.db_logger.log_server_action(server_name, action, version)
-                                yield f"data: Server '{server_name}' successfully switched to {version}!\n\n"
-                            except Exception as e:
-                                yield f"data: Error during version switch: {str(e)}\n\n"
-                                raise
+            if action == "rebuild":
+                return await self._action_rebuild(server_name, server_config, deployer, stream_output)
 
-                        return StreamingResponse(stream_generator(), media_type="text/event-stream")
-                    else:
-                        await deployer.deploy_server(
-                            server_name=server_name,
-                            source_url=server_config.source,
-                            framework=getattr(server_config, "framework", None),
-                            env=server_config.env_vars or {},
-                            description=server_config.description,
-                            tags=server_config.tags,
-                            port=server_config.port,
-                            current_version=server_config.current_version,
-                            refresh_repo=not image_already_exists,
-                            no_build=image_already_exists,
-                        )
-                        # Log the action after non-streaming deployment
-                        current_version = self._get_server_current_version(server_name)
-                        await self.db_logger.log_server_action(server_name, action, current_version)
+            if action == "redeploy":
+                return await self._action_redeploy(server_name, server_config, deployer, stream_output)
 
-                elif action == "stop":
-                    deployer.stop_server(server_name)
-                    self.config.servers[server_name].enabled = False
-                    # Log the stop action
-                    current_version = self._get_server_current_version(server_name)
-                    await self.db_logger.log_server_action(server_name, action, current_version)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown action '{action}'. Supported: start, stop, restart, rebuild, redeploy, update, upgrade, downgrade, delete.",
+            )
 
-                elif action == "start":
-                    deployer.start_server(server_name)
-                    self.config.servers[server_name].enabled = True
-                    # Log the start action
-                    current_version = self._get_server_current_version(server_name)
-                    await self.db_logger.log_server_action(server_name, action, current_version)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Lifecycle action '%s' failed for '%s': %s", action, server_name, e)
+            raise HTTPException(status_code=500, detail=str(e))
 
-                elif action == "restart":
-                    current_version = self._get_server_current_version(server_name)
-                    await self.db_logger.log_server_action(server_name, action, current_version)
-                    if stream_output:
-                        async def stream_generator():
-                            try:
-                                yield f"data: Restarting server '{server_name}'...\n\n"
-                                async for line in deployer.stream_deploy_server(
-                                        server_name=server_name,
-                                        source_url=server_config.source,
-                                        framework=getattr(server_config, "framework", None),
-                                        env=server_config.env_vars or {},
-                                        description=server_config.description,
-                                        tags=server_config.tags,
-                                        port=server_config.port,
-                                        current_version=server_config.current_version,
-                                        no_build=True,
-                                ):
-                                    yield f"data: {line.strip()}\n\n"
-                                self.config.servers[server_name].enabled = True
-                                yield f"data: Server '{server_name}' restarted successfully!\n\n"
-                            except Exception as e:
-                                yield f"data: Error during restart: {str(e)}\n\n"
-                                raise
-                        return StreamingResponse(stream_generator(), media_type="text/event-stream")
-                    else:
-                        async for _ in deployer.stream_deploy_server(
-                            server_name=server_name,
-                            source_url=server_config.source,
-                            framework=getattr(server_config, "framework", None),
-                            env=server_config.env_vars or {},
-                            description=server_config.description,
-                            tags=server_config.tags,
-                            port=server_config.port,
-                            current_version=server_config.current_version,
-                            no_build=True,
-                        ):
-                            pass
-                        self.config.servers[server_name].enabled = True
+    # ── Individual action handlers ────────────────────────────────────────
 
-                elif action == "delete":
-                    deployer.remove_server(server_name)
-                    if self.stop_sub_app:
-                        await self.stop_sub_app(server_name)
-                    elif server_name in self.sub_apps:
-                        del self.sub_apps[server_name]
-                    if server_name in self.config.servers:
-                        del self.config.servers[server_name]
-                    logger.info(f"Server '{server_name}' stopped and container removed.")
-                    await self.db_logger.delete_server(server_name)
+    async def _action_stop(self, server_name, server_config, deployer) -> JSONResponse:
+        deployer.stop_server(server_name)
+        server_config.enabled = False
+        await self.db_logger.log_server_action(server_name, "stop", server_config.current_version)
+        return self._lifecycle_json(server_name, "stop")
 
-                    # Log the delete action
-                    await self.db_logger.log_server_action(server_name, action, None)
+    async def _action_start(self, server_name, server_config, deployer) -> JSONResponse:
+        deployer.start_server(server_name)
+        server_config.enabled = True
+        await self.db_logger.log_server_action(server_name, "start", server_config.current_version)
+        return self._lifecycle_json(server_name, "start")
 
-                    # Ensure enabled property can't be fetched later
-                    return JSONResponse({
-                        "message": f"Lifecycle action '{action}' executed for server '{server_name}'.",
-                        "agent": server_name,
-                        "action": action,
-                        "status": "completed"
-                    })
+    async def _action_delete(self, server_name, server_config, deployer) -> JSONResponse:
+        deployer.remove_server(server_name)
+        if self.stop_sub_app:
+            await self.stop_sub_app(server_name)
+        elif server_name in self.sub_apps:
+            del self.sub_apps[server_name]
+        self.config.servers.pop(server_name, None)
+        await self.db_logger.delete_server(server_name)
+        await self.db_logger.log_server_action(server_name, "delete", None)
+        logger.info("Server '%s' deleted.", server_name)
+        return JSONResponse({"message": f"Server '{server_name}' deleted.", "action": "delete", "status": "completed"})
 
-                elif action == "rebuild":
-                    if stream_output:
-                        async def stream_generator():
-                            try:
-                                deployer.remove_server(server_name)
-                                yield f"data: Server '{server_name}' stopped. Rebuilding image...\n\n"
-                                async for line in deployer.stream_deploy_server(
-                                        server_name=server_name,
-                                        source_url=server_config.source,
-                                        framework=getattr(server_config, "framework", None),
-                                        env=server_config.env_vars or {},
-                                        description=server_config.description,
-                                        tags=server_config.tags,
-                                        port=server_config.port,
-                                        current_version=server_config.current_version,
-                                        refresh_repo=True,
-                                ):
-                                    yield f"data: {line.strip()}\n\n"
+    async def _action_version_switch(
+        self, server_name, server_config, deployer, action, version, stream_output
+    ) -> Union[JSONResponse, StreamingResponse]:
+        if not version:
+            raise HTTPException(status_code=400, detail="Version is required for update/upgrade/downgrade.")
 
-                                self.config.servers[server_name].enabled = True
-                                await self.db_logger.log_server_action(server_name, action, self._get_server_current_version(server_name))
-                                yield f"data: Server '{server_name}' rebuild completed successfully!\n\n"
-                            except Exception as e:
-                                yield f"data: Error during rebuild: {str(e)}\n\n"
-                                raise
+        no_build = deployer.image_exists(server_name, version)
 
-                        return StreamingResponse(stream_generator(), media_type="text/event-stream")
-                    else:
-                        deployer.remove_server(server_name)
-                        self.config.servers[server_name].enabled = False
-                        logger.info(f"Server '{server_name}' stopped. Rebuilding image...")
-                        await deployer.deploy_server(
-                            server_name=server_name,
-                            source_url=server_config.source,
-                            framework=getattr(server_config, "framework", None),
-                            env=server_config.env_vars or {},
-                            description=server_config.description,
-                            tags=server_config.tags,
-                            port=server_config.port,
-                            current_version=server_config.current_version,
-                            refresh_repo=True,
-                        )
-                        self.config.servers[server_name].enabled = True
-                        # Log the rebuild action after non-streaming rebuild
-                        current_version = self._get_server_current_version(server_name)
-                        await self.db_logger.log_server_action(server_name, action, current_version)
-
-                elif action == "redeploy":
-                    if stream_output:
-                        async def stream_generator():
-                            try:
-                                yield f"data: Starting async redeploy for server '{server_name}'...\n\n"
-                                asyncio.create_task(
-                                    deployer.deploy_server(
-                                        server_name=server_name,
-                                        source_url=server_config.source,
-                                        framework=getattr(server_config, "framework", None),
-                                        env=server_config.env_vars or {},
-                                        description=server_config.description,
-                                        tags=server_config.tags,
-                                        port=server_config.port,
-                                        current_version=server_config.current_version,
-                                        refresh_repo=True,
-                                    )
-                                )
-                                await self.db_logger.log_server_action(server_name, action, self._get_server_current_version(server_name))
-                                yield f"data: ✅ Redeploy task initiated for '{server_name}'\n\n"
-                            except Exception as e:
-                                yield f"data: Error initiating redeploy: {str(e)}\n\n"
-                                raise
-
-                        return StreamingResponse(stream_generator(), media_type="text/event-stream")
-                    else:
-                        asyncio.create_task(
-                            deployer.deploy_server(
-                                server_name=server_name,
-                                source_url=server_config.source,
-                                framework=getattr(server_config, "framework", None),
-                                env=server_config.env_vars or {},
-                                description=server_config.description,
-                                tags=server_config.tags,
-                                port=server_config.port,
-                                current_version=server_config.current_version,
-                                refresh_repo=True,
-                            )
-                        )
-                        await self.db_logger.log_server_action(server_name, action, self._get_server_current_version(server_name))
-                else:
-                    raise HTTPException(status_code=400, detail=f"Unknown action '{action}'")
-
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.error(f"Failed to execute lifecycle action '{action}' for server '{server_name}': {e}")
-                raise HTTPException(status_code=500, detail=str(e))
-
-        return JSONResponse({
-                "message": f"Lifecycle action '{action}' executed for server '{server_name}'.",
-                "agent": server_name,
-                "action": action,
-                "status": "completed" if action != "redeploy" else "initiated",
-                "enabled": self.config.servers[server_name].enabled if server_name in self.config.servers else False
-             }
+        # Update in memory + DB before deployment so the version is persisted even if
+        # the process is interrupted.
+        server_config.current_version = version
+        server_config.available_versions = list(
+            set(server_config.available_versions or []) | {version}
         )
+        await self._persist_server_to_db(server_name, server_config)
+
+        deploy_kwargs = self._server_deploy_kwargs(
+            server_name, server_config, refresh_repo=not no_build, no_build=no_build
+        )
+
+        if stream_output:
+            return _sse(self._stream_version_switch(server_name, server_config, deployer, action, version, deploy_kwargs))
+
+        await deployer.deploy_server(**deploy_kwargs)
+        server_config.enabled = True
+        await self.db_logger.log_server_action(server_name, action, version)
+        return self._lifecycle_json(server_name, action)
+
+    async def _stream_version_switch(self, server_name, server_config, deployer, action, version, deploy_kwargs):
+        try:
+            yield f"data: Switching '{server_name}' to version {version}...\n\n"
+            async for line in deployer.stream_deploy_server(**deploy_kwargs):
+                yield f"data: {line.strip()}\n\n"
+            self.config.servers[server_name].enabled = True
+            await self.db_logger.log_server_action(server_name, action, version)
+            yield f"data: ✓ '{server_name}' successfully switched to {version}!\n\n"
+        except Exception as e:
+            yield f"data: ✗ Error during version switch: {str(e)}\n\n"
+            raise
+
+    async def _action_restart(self, server_name, server_config, deployer, stream_output) -> Union[JSONResponse, StreamingResponse]:
+        await self.db_logger.log_server_action(server_name, "restart", server_config.current_version)
+        deploy_kwargs = self._server_deploy_kwargs(server_name, server_config, no_build=True)
+
+        if stream_output:
+            return _sse(self._stream_restart(server_name, server_config, deployer, deploy_kwargs))
+
+        async for _ in deployer.stream_deploy_server(**deploy_kwargs):
+            pass
+        server_config.enabled = True
+        return self._lifecycle_json(server_name, "restart")
+
+    async def _stream_restart(self, server_name, server_config, deployer, deploy_kwargs):
+        try:
+            yield f"data: Restarting '{server_name}'...\n\n"
+            async for line in deployer.stream_deploy_server(**deploy_kwargs):
+                yield f"data: {line.strip()}\n\n"
+            self.config.servers[server_name].enabled = True
+            yield f"data: ✓ '{server_name}' restarted successfully!\n\n"
+        except Exception as e:
+            yield f"data: ✗ Error during restart: {str(e)}\n\n"
+            raise
+
+    async def _action_rebuild(self, server_name, server_config, deployer, stream_output) -> Union[JSONResponse, StreamingResponse]:
+        deploy_kwargs = self._server_deploy_kwargs(server_name, server_config, refresh_repo=True)
+
+        if stream_output:
+            return _sse(self._stream_rebuild(server_name, server_config, deployer, deploy_kwargs))
+
+        deployer.remove_server(server_name)
+        server_config.enabled = False
+        logger.info("Server '%s' stopped for rebuild.", server_name)
+        await deployer.deploy_server(**deploy_kwargs)
+        server_config.enabled = True
+        await self.db_logger.log_server_action(server_name, "rebuild", server_config.current_version)
+        return self._lifecycle_json(server_name, "rebuild")
+
+    async def _stream_rebuild(self, server_name, server_config, deployer, deploy_kwargs):
+        try:
+            deployer.remove_server(server_name)
+            yield f"data: '{server_name}' stopped. Rebuilding image...\n\n"
+            async for line in deployer.stream_deploy_server(**deploy_kwargs):
+                yield f"data: {line.strip()}\n\n"
+            self.config.servers[server_name].enabled = True
+            await self.db_logger.log_server_action(server_name, "rebuild", self._get_server_current_version(server_name))
+            yield f"data: ✓ '{server_name}' rebuild completed successfully!\n\n"
+        except Exception as e:
+            yield f"data: ✗ Error during rebuild: {str(e)}\n\n"
+            raise
+
+    async def _action_redeploy(self, server_name, server_config, deployer, stream_output) -> Union[JSONResponse, StreamingResponse]:
+        """Fires an async (fire-and-forget) redeploy task."""
+        deploy_kwargs = self._server_deploy_kwargs(server_name, server_config, refresh_repo=True)
+
+        if stream_output:
+            return _sse(self._stream_redeploy(server_name, server_config, deployer, deploy_kwargs))
+
+        asyncio.create_task(deployer.deploy_server(**deploy_kwargs))
+        await self.db_logger.log_server_action(server_name, "redeploy", server_config.current_version)
+        return self._lifecycle_json(server_name, "redeploy", status="initiated")
+
+    async def _stream_redeploy(self, server_name, server_config, deployer, deploy_kwargs):
+        try:
+            asyncio.create_task(deployer.deploy_server(**deploy_kwargs))
+            await self.db_logger.log_server_action(server_name, "redeploy", self._get_server_current_version(server_name))
+            yield f"data: ✅ Redeploy task initiated for '{server_name}'.\n\n"
+        except Exception as e:
+            yield f"data: ✗ Error initiating redeploy: {str(e)}\n\n"
+            raise
+
+    # ------------------------------------------------------------------
+    # Response helpers
+    # ------------------------------------------------------------------
+
+    def _lifecycle_json(self, server_name: str, action: str, status: str = "completed") -> JSONResponse:
+        enabled = self.config.servers[server_name].enabled if server_name in self.config.servers else False
+        return JSONResponse({
+            "message": f"Lifecycle action '{action}' executed for server '{server_name}'.",
+            "server":  server_name,
+            "action":  action,
+            "status":  status,
+            "enabled": enabled,
+        })

@@ -12,8 +12,10 @@ from oai_skills_registry.dependencies import get_auth_user, get_registry, verify
 from oai_skills_registry.models import (
     BulkRegistrationRequest,
     BulkRegistrationResult,
+    GitVersionInfo,
     SkillDiscoveryResult,
     SkillImportConfig,
+    SkillVersionRefresh,
 )
 from oai_skills_registry.services.skills_registry import SkillsRegistry
 
@@ -67,7 +69,7 @@ async def discover_skills(
         )
 
 
-@router.post("/skills/preview-versions", response_model=Dict)
+@router.post("/skills/preview-versions", response_model=SkillVersionRefresh)
 async def preview_skill_versions(
     request_data: Dict,
     registry: SkillsRegistry = Depends(get_registry),
@@ -96,13 +98,14 @@ async def preview_skill_versions(
             skill_name=skill_name,
             git_repository_url=git_repository_url,
         )
+        version_objects = [GitVersionInfo(**v) for v in (versions or [])]
 
-        return {
-            "status": "success",
-            "skill": skill_name,
-            "versions": versions,
-            "versions_found": len(versions) if versions else 0,
-        }
+        return SkillVersionRefresh(
+            status="success",
+            skill=skill_name,
+            versions=version_objects,
+            versions_found=len(version_objects),
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -210,7 +213,7 @@ async def import_skill_from_git(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
-@router.post("/skills/{skill_name}/refresh-versions", response_model=Dict)
+@router.post("/skills/{skill_name}/refresh-versions", response_model=SkillVersionRefresh)
 async def refresh_skill_versions(
     skill_name: str,
     _auth: bool = Depends(verify_bearer_token),
@@ -236,13 +239,14 @@ async def refresh_skill_versions(
             skill_name=skill_name,
             git_repository_url=git_repository_url,
         )
+        version_objects = [GitVersionInfo(**v) for v in (versions or [])]
 
-        return {
-            "status": "success",
-            "skill": skill_name,
-            "versions": versions,
-            "versions_found": len(versions) if versions else 0,
-        }
+        return SkillVersionRefresh(
+            status="success",
+            skill=skill_name,
+            versions=version_objects,
+            versions_found=len(version_objects),
+        )
     except HTTPException:
         raise
     except Exception as exc:

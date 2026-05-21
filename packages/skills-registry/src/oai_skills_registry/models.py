@@ -148,12 +148,24 @@ class SkillDeprecateConfig(BaseModel):
 
 
 class GitVersionInfo(BaseModel):
-    """Information about a version available in Git."""
-    version: str
-    git_tag: str
-    commit_sha: str
-    commit_message: str
-    committed_at: datetime
+    """Information about a version available in a GitHub repository."""
+    version: Optional[str] = None           # semantic version from SKILL.md
+    git_tag: str                             # git tag name (e.g. v1.2.0)
+    commit_sha: Optional[str] = None        # 40-char commit SHA
+    message: Optional[str] = None           # tag / commit message
+    created_at: Optional[str] = None        # ISO-8601 timestamp from GitHub
+    author: Optional[str] = None            # tagger or SKILL.md author field
+    description: Optional[str] = None       # description from SKILL.md
+    category: Optional[str] = None          # category from SKILL.md
+    tags: Optional[List[str]] = None        # tags array from SKILL.md
+
+
+class SkillVersionRefresh(BaseModel):
+    """Response from the refresh-versions endpoint."""
+    status: str
+    skill: str
+    versions: List[GitVersionInfo]
+    versions_found: int
 
 
 class SkillImportPreview(BaseModel):
