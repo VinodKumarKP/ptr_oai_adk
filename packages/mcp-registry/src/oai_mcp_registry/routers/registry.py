@@ -101,7 +101,7 @@ async def register_server(request: Request, server_registration: ServerRegistrat
                           stream_output: bool = False,
                           registry: MCPRegistry = Depends(get_registry)):
     """Registers a new MCP server."""
-    return await registry.register_server(request.app, server_registration, stream_output=stream_output)
+    return await registry.register_server(server_registration, stream_output=stream_output)
 
 
 @router.post("/deregister")
@@ -219,7 +219,6 @@ def _build_server_registrations(
 
 
 async def _stream_bulk_mcp_deployment(
-    app,
     agents_to_deploy: List[Tuple[str, ServerRegistration]],
     pre_failed: List[Dict[str, str]],
     registry: MCPRegistry,
@@ -432,7 +431,7 @@ async def register_servers_bulk(
     # ── Streaming path ────────────────────────────────────────────────────────
     if stream_output:
         return StreamingResponse(
-            _stream_bulk_mcp_deployment(request.app, to_deploy, pre_failed, registry),
+            _stream_bulk_mcp_deployment(to_deploy, pre_failed, registry),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -447,7 +446,7 @@ async def register_servers_bulk(
 
     for server_name, server_reg in to_deploy:
         try:
-            await registry.register_server(request.app, server_reg, stream_output=False)
+            await registry.register_server(server_reg, stream_output=False)
             successful.append(server_name)
             logger.info("Bulk-registered MCP server '%s' (mode=%s)", server_name, server_reg.deployment_mode)
         except Exception as exc:
