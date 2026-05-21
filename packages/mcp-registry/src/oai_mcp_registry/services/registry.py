@@ -578,7 +578,7 @@ class MCPRegistry:
         server_name: str,
         env_vars: Dict[str, str],
         sensitive_vars: Optional[list] = None,
-    ) -> JSONResponse:
+    ) -> Union[JSONResponse, StreamingResponse]:
         """Updates environment variables for a registered MCP server in-place."""
         if server_name not in self.config.servers:
             raise HTTPException(status_code=404, detail=f"Server '{server_name}' not found.")
@@ -588,6 +588,7 @@ class MCPRegistry:
         server_config.sensitive_vars = sensitive_vars or []
 
         # Persist to DB
+        db_saved = False
         try:
             await self.db_logger.log_server_registration(
                 server_name=server_name,
@@ -604,16 +605,38 @@ class MCPRegistry:
                 env_vars=env_vars,
                 sensitive_vars=sensitive_vars or [],
             )
+            db_saved = True
         except Exception as exc:
             logger.warning("DB update for env_vars of '%s' failed: %s", server_name, exc)
 
         logger.info("Updated env_vars for server '%s' (%d vars).", server_name, len(env_vars))
-        return JSONResponse({
-            "message": f"Environment variables updated for '{server_name}'.",
-            "server_name": server_name,
-            "env_vars_count": len(env_vars),
-            "sensitive_vars": sensitive_vars or [],
-        })
+
+        # Stream a restart so the caller can observe progress in real time.
+        # Using restart (not "update") so no version is required.
+        deployer = self._get_deployer(getattr(server_config, 'deployment_mode', 'docker'))
+
+        async def stream_generator():
+            saved_label = f"{len(env_vars)} variable(s)" if db_saved else f"{len(env_vars)} variable(s) (DB save failed)"
+            yield f"data: Saved {saved_label} for '{server_name}'.\n\n"
+            if deployer:
+                try:
+                    yield f"data: Restarting '{server_name}' to apply new environment variables...\n\n"
+                    deployer.remove_server(server_name)
+                    self.config.servers[server_name].enabled = False
+                    yield "data: Server stopped. Starting with updated environment variables...\n\n"
+                    await asyncio.sleep(1)
+                    deployer.start_server(server_name)
+                    self.config.servers[server_name].enabled = True
+                    current_version = getattr(server_config, 'current_version', None)
+                    await self.db_logger.log_server_action(server_name, "env-update", current_version)
+                    yield f"data: ✓ Server '{server_name}' restarted with updated environment variables.\n\n"
+                except Exception as e:
+                    yield f"data: ✗ Error restarting server: {str(e)}\n\n"
+            else:
+                yield "data: No deployer configured — env vars updated in registry memory only.\n\n"
+                yield "data: Restart the server manually to apply changes.\n\n"
+
+        return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
     async def execute_lifecycle_action(self, server_name: str, action: str, version: Optional[str] = None,
                                        stream_output: bool = False) -> Union[JSONResponse, StreamingResponse]:
