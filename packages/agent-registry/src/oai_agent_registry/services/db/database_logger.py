@@ -24,8 +24,8 @@ class PostgresBackend(BasePostgresBackend):
 
     AGENT_REGISTRY_UPSERT = """
         INSERT INTO agent_registry
-            (agent_name, endpoint_url, port, source, active, registered_via, framework, prompts, tags, description, current_version, available_versions, deployment_mode, env_vars, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            (agent_name, endpoint_url, port, source, active, registered_via, framework, prompts, tags, description, current_version, available_versions, deployment_mode, env_vars, sensitive_vars, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         ON CONFLICT (agent_name) DO UPDATE SET
             endpoint_url       = EXCLUDED.endpoint_url,
             port               = EXCLUDED.port,
@@ -38,6 +38,7 @@ class PostgresBackend(BasePostgresBackend):
             available_versions = EXCLUDED.available_versions,
             deployment_mode    = EXCLUDED.deployment_mode,
             env_vars           = EXCLUDED.env_vars,
+            sensitive_vars     = EXCLUDED.sensitive_vars,
             updated_at         = EXCLUDED.updated_at
     """
     AGENT_REGISTRY_DEACTIVATE = "UPDATE agent_registry SET active = FALSE, updated_at = $2 WHERE agent_name = $1"
@@ -69,6 +70,7 @@ class PostgresBackend(BasePostgresBackend):
                 available_versions TEXT,
                 deployment_mode    VARCHAR(50) DEFAULT 'docker',
                 env_vars           TEXT,
+                sensitive_vars     TEXT,
                 created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
@@ -93,6 +95,7 @@ class PostgresBackend(BasePostgresBackend):
             "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS available_versions TEXT;",
             "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS deployment_mode VARCHAR(50) DEFAULT 'docker';",
             "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS env_vars TEXT;",
+            "ALTER TABLE agent_registry ADD COLUMN IF NOT EXISTS sensitive_vars TEXT;",
         ]
         async with self._pool.acquire() as conn:
             await conn.execute(agent_registry_ddl)
@@ -110,8 +113,8 @@ class SQLiteBackend(BaseSQLiteBackend):
 
     AGENT_REGISTRY_UPSERT = """
         INSERT INTO agent_registry
-            (agent_name, endpoint_url, port, source, active, registered_via, framework, prompts, tags, description, current_version, available_versions, deployment_mode, env_vars, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (agent_name, endpoint_url, port, source, active, registered_via, framework, prompts, tags, description, current_version, available_versions, deployment_mode, env_vars, sensitive_vars, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(agent_name) DO UPDATE SET
             endpoint_url       = EXCLUDED.endpoint_url,
             port               = EXCLUDED.port,
@@ -124,6 +127,7 @@ class SQLiteBackend(BaseSQLiteBackend):
             available_versions = EXCLUDED.available_versions,
             deployment_mode    = EXCLUDED.deployment_mode,
             env_vars           = EXCLUDED.env_vars,
+            sensitive_vars     = EXCLUDED.sensitive_vars,
             updated_at         = EXCLUDED.updated_at
     """
     AGENT_REGISTRY_DEACTIVATE = "UPDATE agent_registry SET active = 0, updated_at = ? WHERE agent_name = ?"
@@ -154,6 +158,7 @@ class SQLiteBackend(BaseSQLiteBackend):
                 available_versions TEXT,
                 deployment_mode    TEXT DEFAULT 'docker',
                 env_vars           TEXT,
+                sensitive_vars     TEXT,
                 created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP
             );
@@ -178,6 +183,7 @@ class SQLiteBackend(BaseSQLiteBackend):
             "ALTER TABLE agent_registry ADD COLUMN available_versions TEXT",
             "ALTER TABLE agent_registry ADD COLUMN deployment_mode TEXT DEFAULT 'docker'",
             "ALTER TABLE agent_registry ADD COLUMN env_vars TEXT",
+            "ALTER TABLE agent_registry ADD COLUMN sensitive_vars TEXT",
         ]
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON;")
@@ -240,6 +246,7 @@ class RegistryDatabaseLogger:
             available_versions: Optional[List[str]] = None,
             deployment_mode: str = "docker",
             env_vars: Optional[Dict[str, str]] = None,
+            sensitive_vars: Optional[List[str]] = None,
     ) -> None:
         if not self._ready(): return
         try:
@@ -248,7 +255,8 @@ class RegistryDatabaseLogger:
             tags_json = json.dumps(tags) if tags is not None else "[]"
             available_versions_json = json.dumps(available_versions) if available_versions is not None else "[]"
             env_vars_json = json.dumps(env_vars) if env_vars else "{}"
-            params = (agent_name, endpoint_url, port, source, active, registered_via, framework, prompts_json, tags_json, description, current_version, available_versions_json, deployment_mode, env_vars_json, now, now)
+            sensitive_vars_json = json.dumps(sensitive_vars) if sensitive_vars else "[]"
+            params = (agent_name, endpoint_url, port, source, active, registered_via, framework, prompts_json, tags_json, description, current_version, available_versions_json, deployment_mode, env_vars_json, sensitive_vars_json, now, now)
             await self._backend.execute(self._backend.AGENT_REGISTRY_UPSERT, params)
             if self.logger: self.logger.debug(f"Logged agent registration/update for: {agent_name}")
         except Exception as exc:
@@ -360,6 +368,14 @@ class RegistryDatabaseLogger:
                     row["env_vars"] = {}
             else:
                 row["env_vars"] = {}
+        if "sensitive_vars" in row:
+            if row["sensitive_vars"]:
+                try:
+                    row["sensitive_vars"] = json.loads(row["sensitive_vars"])
+                except Exception:
+                    row["sensitive_vars"] = []
+            else:
+                row["sensitive_vars"] = []
         return row
 
     @staticmethod

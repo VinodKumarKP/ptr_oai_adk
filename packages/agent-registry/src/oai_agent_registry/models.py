@@ -11,6 +11,7 @@ class EnvVarRequirement(BaseModel):
     name: str                        # e.g. "OPENAI_API_KEY"
     default: Optional[str] = None   # value from ${VAR:-default}, if any
     required: bool = True            # False when a default is available
+    sensitive: bool = False          # True → mask value in API responses and UI
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +78,7 @@ class AgentConfig(BaseModel):
     registered_via: Literal["config", "dynamic", "registry"] = "dynamic"
     deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
     env_vars: Optional[Dict[str, str]] = None
+    sensitive_vars: Optional[List[str]] = None  # names of env_vars that should be masked in responses
 
 
 class AgentRegistration(BaseModel):
@@ -94,7 +96,8 @@ class AgentRegistration(BaseModel):
     current_version: Optional[str] = None
     available_versions: Optional[List[str]] = Field(default_factory=list)
     deployment_mode: Literal["docker", "kubernetes", "python_package", "unknown"] = "unknown"
-    env_vars: Optional[Dict[str, str]] = None  # user-supplied runtime env var values
+    env_vars: Optional[Dict[str, str]] = None       # user-supplied runtime env var values
+    sensitive_vars: Optional[List[str]] = None      # names of env_vars that should be masked
 
 
 class AgentDeregistration(BaseModel):

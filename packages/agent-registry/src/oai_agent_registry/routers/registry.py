@@ -171,6 +171,9 @@ def _build_agent_registrations(
             continue
 
         framework = request.framework or agent_data.get("framework")
+        # Extract sensitive var names from the discovery required_env list
+        required_env = agent_data.get("required_env") or []
+        sensitive_vars = [e["name"] for e in required_env if e.get("sensitive")]
         to_deploy.append((
             agent_name,
             AgentRegistration(
@@ -188,6 +191,7 @@ def _build_agent_registrations(
                 available_versions=[],
                 deployment_mode=request.deployment_mode,
                 env_vars=request.env_vars or None,
+                sensitive_vars=sensitive_vars or None,
             ),
         ))
 
@@ -275,6 +279,7 @@ async def _stream_bulk_deployment(
                 available_versions=db_values["available_versions"],
                 deployment_mode=db_values["deployment_mode"],
                 env_vars=db_values.get("env_vars"),
+                sensitive_vars=db_values.get("sensitive_vars"),
             )
 
             successful.append(agent_name)

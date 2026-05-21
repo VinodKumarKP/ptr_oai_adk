@@ -19,6 +19,15 @@ from oai_agent_registry.services.deployers.factory import DeployerFactory
 
 logger = logging.getLogger(__name__)
 
+
+def _mask_sensitive_env(env_vars: dict, sensitive_vars: list) -> dict:
+    """Return env_vars with sensitive values replaced by '***'."""
+    if not env_vars:
+        return {}
+    mask = set(sensitive_vars or [])
+    return {k: "***" if k in mask else v for k, v in env_vars.items()}
+
+
 class AgentRegistry:
     def __init__(self, config_path: str = None):
         self.config_path = config_path or os.getenv('REGISTRY_CONFIG_PATH', '../config/registry_config.json')
@@ -196,6 +205,7 @@ class AgentRegistry:
                     available_versions=agent_config.available_versions,
                     deployment_mode=agent_config.deployment_mode,
                     env_vars=agent_config.env_vars,
+                    sensitive_vars=agent_config.sensitive_vars,
                 )
                 logger.debug(f"Synced config agent '{agent_name}' to DB.")
             except Exception as e:
@@ -232,6 +242,7 @@ class AgentRegistry:
                     registered_via=row.get("registered_via", 'dynamic'),
                     deployment_mode=row.get("deployment_mode", 'docker'),
                     env_vars=row.get("env_vars") or {},
+                    sensitive_vars=row.get("sensitive_vars") or [],
                 )
                 self.agents[agent_name] = agent_config
                 restored += 1
@@ -312,6 +323,7 @@ class AgentRegistry:
             'available_versions': agent_registration.available_versions if len(agent_registration.available_versions) > 0 and agent_registration.available_versions is not None else existing.get('available_versions', []),
             'deployment_mode': agent_registration.deployment_mode if agent_registration.deployment_mode is not None else existing.get('deployment_mode', 'docker'),
             'env_vars': agent_registration.env_vars if agent_registration.env_vars is not None else existing.get('env_vars', {}),
+            'sensitive_vars': agent_registration.sensitive_vars if agent_registration.sensitive_vars is not None else existing.get('sensitive_vars', []),
         }
 
         logger.debug(f"Merged values for agent '{agent_name}': {merged}")
@@ -393,7 +405,11 @@ class AgentRegistry:
                     "current_version": getattr(agent, "current_version", None),
                     "available_versions": getattr(agent, "available_versions", []),
                     "deployment_mode": getattr(agent, "deployment_mode", "docker"),
-                    "env_vars": getattr(agent, "env_vars", None) or {},
+                    "env_vars": _mask_sensitive_env(
+                        getattr(agent, "env_vars", None) or {},
+                        getattr(agent, "sensitive_vars", None) or [],
+                    ),
+                    "sensitive_vars": getattr(agent, "sensitive_vars", None) or [],
                     "available_actions": [
                         "start" if not agent.enabled else "stop",
                         "restart",
@@ -508,6 +524,7 @@ class AgentRegistry:
                             available_versions=db_values['available_versions'],
                             deployment_mode=db_values['deployment_mode'],
                             env_vars=db_values.get('env_vars'),
+                            sensitive_vars=db_values.get('sensitive_vars'),
                         )
                         yield f"data: ✅ Agent '{agent_name}' registered successfully.\n\n"
                     except Exception as e:
@@ -561,6 +578,7 @@ class AgentRegistry:
             available_versions=db_values['available_versions'],
             deployment_mode=db_values['deployment_mode'],
             env_vars=db_values.get('env_vars'),
+            sensitive_vars=db_values.get('sensitive_vars'),
         )
 
         return JSONResponse({"message": f"Agent '{agent_name}' registered successfully."})
@@ -637,6 +655,7 @@ class AgentRegistry:
                         available_versions=agent_config.available_versions,
                         deployment_mode=agent_config.deployment_mode,
                         env_vars=agent_config.env_vars,
+                        sensitive_vars=agent_config.sensitive_vars,
                     )
 
                     if stream_output:
@@ -851,6 +870,31 @@ class AgentRegistry:
 
         headers = dict(request.headers)
         headers.pop("host", None)
+
+        # ── Env var injection ──────────────────────────────────────────────
+        # 1. Start from the stored env vars for this agent.
+        #    - Normalise keys to UPPER_CASE so that override keys (which are
+        #      always uppercased from the HTTP header name) can overwrite them
+        #      reliably with a single dict assignment.
+        #    - Expand placeholder values like ${DB_PASSWORD} from the server's
+        #      own environment so that "use placeholder" values set at
+        #      registration time are resolved before reaching the agent.
+        env_to_inject: dict = {
+            k.upper(): os.path.expandvars(str(v)) if isinstance(v, str) else str(v)
+            for k, v in (agent_config.env_vars or {}).items()
+        }
+        # 2. Apply per-request overrides sent by the UI as X-Override-Env-{NAME}.
+        #    These are explicit user-typed values so they are used as-is (no
+        #    expandvars) and are applied AFTER stored values so they always win.
+        #    Consume them here so the agent never sees the raw override headers.
+        keys_to_remove = [k for k in headers if k.lower().startswith("x-override-env-")]
+        for key in keys_to_remove:
+            var_name = key[len("x-override-env-"):].upper()
+            env_to_inject[var_name] = headers.pop(key)
+        # 3. Inject the merged set as X-Agent-Env-{NAME} headers.
+        for var_name, value in env_to_inject.items():
+            headers[f"X-Agent-Env-{var_name}"] = str(value)
+        # ──────────────────────────────────────────────────────────────────
 
         body = await request.body()
 

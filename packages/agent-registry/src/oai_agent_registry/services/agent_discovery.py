@@ -37,6 +37,14 @@ import httpx
 # Matches ${VAR} and ${VAR:-default}
 _PLACEHOLDER_RE = re.compile(r'^\$\{([^}:]+)(?::-([^}]*))?\}$')
 
+# Heuristic: variable names containing these substrings are treated as sensitive
+# when the YAML does not provide an explicit `env_sensitive:` list.
+_SENSITIVE_PATTERNS = frozenset([
+    "password", "passwd", "pwd", "secret", "token", "apikey", "api_key",
+    "auth", "credential", "private", "cert", "key", "signature", "access_key",
+    "client_secret",
+])
+
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
@@ -84,7 +92,16 @@ def _normalize_agent_name(raw: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", raw.lower().strip()).strip("_")
 
 
-def _parse_env_requirements(env_section: Any) -> List[Dict[str, Any]]:
+def _is_sensitive_by_name(name: str) -> bool:
+    """Return True if the variable name suggests it holds a secret value."""
+    lower = name.lower()
+    return any(pat in lower for pat in _SENSITIVE_PATTERNS)
+
+
+def _parse_env_requirements(
+    env_section: Any,
+    explicit_sensitive: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
     """Extract env var requirements from the ``env:`` block of an agent YAML.
 
     Each entry in *env_section* is expected to be one of:
@@ -93,15 +110,24 @@ def _parse_env_requirements(env_section: Any) -> List[Dict[str, Any]]:
       - ``KEY: literal``           → name=KEY, default="literal", required=False
       - ``KEY: null / ""``         → name=KEY, default=None, required=True
 
+    Sensitivity is determined by (in priority order):
+      1. ``explicit_sensitive`` list from the YAML ``env_sensitive:`` key
+      2. Heuristic pattern matching on the variable name
+
     Returns a list of dicts suitable for constructing ``EnvVarRequirement`` models.
     """
     if not isinstance(env_section, dict):
         return []
 
+    explicit_set = {str(v).strip().upper() for v in (explicit_sensitive or [])}
+
     requirements = []
     for key, value in env_section.items():
         name = str(key).strip()
         str_val = str(value).strip() if value is not None else ""
+
+        # Determine sensitivity
+        sensitive = (name.upper() in explicit_set) or _is_sensitive_by_name(name)
 
         m = _PLACEHOLDER_RE.match(str_val)
         if m:
@@ -111,6 +137,7 @@ def _parse_env_requirements(env_section: Any) -> List[Dict[str, Any]]:
                 "name": name,
                 "default": default,
                 "required": default is None,
+                "sensitive": sensitive,
             })
         elif str_val:
             # Literal value — treat as optional with that value as default
@@ -118,6 +145,7 @@ def _parse_env_requirements(env_section: Any) -> List[Dict[str, Any]]:
                 "name": name,
                 "default": str_val,
                 "required": False,
+                "sensitive": sensitive,
             })
         else:
             # Empty / null value — required, no default
@@ -125,6 +153,7 @@ def _parse_env_requirements(env_section: Any) -> List[Dict[str, Any]]:
                 "name": name,
                 "default": None,
                 "required": True,
+                "sensitive": sensitive,
             })
 
     return requirements
@@ -339,9 +368,13 @@ class AgentDiscovery:
             if yaml_name and yaml_name != name_key:
                 description = f"{yaml_name} — {description}" if description else yaml_name
 
-            # Parse required environment variables from the `env:` section
+            # Parse required environment variables from the `env:` section.
+            # `env_sensitive:` is an optional list of var names that are explicitly
+            # flagged as sensitive (e.g. passwords, API keys). Names not in this
+            # list fall back to the heuristic pattern matcher.
             env_section = data.get("env") or {}
-            required_env = _parse_env_requirements(env_section)
+            env_sensitive_list = data.get("env_sensitive") or []
+            required_env = _parse_env_requirements(env_section, explicit_sensitive=env_sensitive_list)
 
             return {
                 "name": name_key,
