@@ -179,7 +179,12 @@ class MCPRegistry:
         return self.deployers.get(mode) or self.deployers.get("docker")
 
     async def _sync_servers_to_db(self):
-        """Synchronizes config-declared servers to the database, marking them as registered_via='config'."""
+        """Synchronizes config-declared servers to the database, marking them as registered_via='config'.
+
+        If a config server does not define env_vars, any previously-saved env_vars stored in the
+        database are preserved (and loaded back into the in-memory ServerConfig) rather than being
+        wiped. This ensures that env vars set via the UI survive a registry restart.
+        """
         if not self.db_logger.is_active:
             logger.warning("Database logger is not active, skipping server sync to DB.")
             return
@@ -188,19 +193,49 @@ class MCPRegistry:
             if getattr(server_config, 'registered_via', 'dynamic') != 'config':
                 continue
 
+            # Determine effective env_vars: prefer config-file values if explicitly set,
+            # otherwise fall back to whatever is already stored in the database so we
+            # don't wipe env vars that were configured through the UI.
+            config_env_vars = getattr(server_config, 'env_vars', None) or {}
+            config_sensitive_vars = getattr(server_config, 'sensitive_vars', None) or []
+
+            effective_env_vars = config_env_vars
+            effective_sensitive_vars = config_sensitive_vars
+
+            if not config_env_vars:
+                # Config doesn't define env_vars — try to restore from DB.
+                try:
+                    existing = await self.db_logger.get_server_details(server_name)
+                    if existing:
+                        db_env = existing.get('env_vars') or {}
+                        db_sensitive = existing.get('sensitive_vars') or []
+                        if db_env:
+                            effective_env_vars = db_env
+                            effective_sensitive_vars = db_sensitive
+                            # Also restore into in-memory config so /info reflects them immediately.
+                            server_config.env_vars = effective_env_vars
+                            server_config.sensitive_vars = effective_sensitive_vars
+                            logger.debug(
+                                f"Restored {len(db_env)} env_vars from DB for config server '{server_name}'."
+                            )
+                except Exception as e:
+                    logger.warning(f"Could not read existing env_vars for '{server_name}' from DB: {e}")
+
             try:
                 await self.db_logger.log_server_registration(
                     server_name=server_name,
                     endpoint_url=server_config.endpoint or "",
                     port=server_config.port,
                     description=server_config.description,
-                    active=True,  # Assuming config servers are meant to be active initially
+                    active=True,
                     registered_via="config",
                     source=server_config.source,
                     tags=server_config.tags,
                     current_version=server_config.current_version,
                     available_versions=server_config.available_versions,
-                    deployment_mode=server_config.deployment_mode
+                    deployment_mode=server_config.deployment_mode,
+                    env_vars=effective_env_vars or None,
+                    sensitive_vars=effective_sensitive_vars or None,
                 )
                 logger.debug(f"Synced config server '{server_name}' to DB.")
             except Exception as e:
@@ -236,7 +271,9 @@ class MCPRegistry:
                     tags=row.get("tags", []),
                     current_version=row.get("current_version"),
                     available_versions=row.get("available_versions", []),
-                    deployment_mode=row.get("deployment_mode", "docker")
+                    deployment_mode=row.get("deployment_mode", "docker"),
+                    env_vars=row.get("env_vars") or None,
+                    sensitive_vars=row.get("sensitive_vars") or [],
                 )
                 server_config.registered_via = 'dynamic'
                 self.config.servers[server_name] = server_config
@@ -347,6 +384,16 @@ class MCPRegistry:
         reg = server_registration
         new_versions = reg.available_versions if (reg.available_versions is not None and len(reg.available_versions) > 0) else None
 
+        # Merge env_vars: existing DB values overwritten by any new values supplied
+        existing_env = existing.get('env_vars') or {}
+        new_env = reg.env_vars or {}
+        merged_env = {**existing_env, **new_env} if new_env else (existing_env or None)
+
+        # Merge sensitive_vars: union of existing + new
+        existing_sensitive = existing.get('sensitive_vars') or []
+        new_sensitive = reg.sensitive_vars or []
+        merged_sensitive = list(set(existing_sensitive) | set(new_sensitive))
+
         return {
             'endpoint': reg.endpoint if reg.endpoint is not None else existing.get('endpoint', ''),
             'port': reg.port if reg.port is not None else existing.get('port'),
@@ -358,6 +405,8 @@ class MCPRegistry:
             'current_version': reg.current_version if reg.current_version is not None else existing.get('current_version'),
             'available_versions': new_versions if new_versions is not None else existing.get('available_versions', []),
             'deployment_mode': reg.deployment_mode if reg.deployment_mode is not None else existing.get('deployment_mode', 'docker'),
+            'env_vars': merged_env,
+            'sensitive_vars': merged_sensitive,
         }
 
     async def register_server(self, app: FastAPI, server_registration: ServerRegistration,
@@ -391,7 +440,7 @@ class MCPRegistry:
                                 server_name=server_name,
                                 source_url=server_registration.source,
                                 framework=getattr(server_registration, "framework", None),
-                                env={},
+                                env=server_config.env_vars or {},
                                 description=getattr(server_registration, "description", ""),
                                 tags=getattr(server_registration, "tags", []),
                                 port=assigned_port,
@@ -428,7 +477,9 @@ class MCPRegistry:
                             description=db_values['description'],
                             current_version=db_values['current_version'],
                             available_versions=db_values['available_versions'],
-                            deployment_mode=db_values['deployment_mode']
+                            deployment_mode=db_values['deployment_mode'],
+                            env_vars=db_values.get('env_vars'),
+                            sensitive_vars=db_values.get('sensitive_vars'),
                         )
                         yield f"data: ✅ Server '{server_name}' registered successfully.\n\n"
                     except Exception as e:
@@ -446,7 +497,7 @@ class MCPRegistry:
                         server_name=server_name,
                         source_url=server_registration.source,
                         framework=getattr(server_registration, "framework", None),
-                        env={},  # pass server-specific env if available
+                        env=server_config.env_vars or {},
                         description=getattr(server_registration, "description", ""),
                         tags=getattr(server_registration, "tags", []),
                         port=assigned_port,
@@ -491,7 +542,9 @@ class MCPRegistry:
             description=db_values['description'],
             current_version=db_values['current_version'],
             available_versions=db_values['available_versions'],
-            deployment_mode=db_values['deployment_mode']
+            deployment_mode=db_values['deployment_mode'],
+            env_vars=db_values.get('env_vars'),
+            sensitive_vars=db_values.get('sensitive_vars'),
         )
 
         return JSONResponse({"message": f"Server '{server_name}' registered successfully."})
@@ -519,6 +572,48 @@ class MCPRegistry:
         await self.db_logger.deregister_server(server_name=server_name)
 
         return JSONResponse({"message": f"Server '{server_name}' deactivated successfully."})
+
+    async def update_server_env_vars(
+        self,
+        server_name: str,
+        env_vars: Dict[str, str],
+        sensitive_vars: Optional[list] = None,
+    ) -> JSONResponse:
+        """Updates environment variables for a registered MCP server in-place."""
+        if server_name not in self.config.servers:
+            raise HTTPException(status_code=404, detail=f"Server '{server_name}' not found.")
+
+        server_config = self.config.servers[server_name]
+        server_config.env_vars = env_vars
+        server_config.sensitive_vars = sensitive_vars or []
+
+        # Persist to DB
+        try:
+            await self.db_logger.log_server_registration(
+                server_name=server_name,
+                endpoint_url=server_config.endpoint or "",
+                port=server_config.port,
+                description=server_config.description,
+                active=server_config.enabled,
+                registered_via=server_config.registered_via,
+                source=getattr(server_config, "source", None),
+                tags=getattr(server_config, "tags", []),
+                current_version=getattr(server_config, "current_version", None),
+                available_versions=getattr(server_config, "available_versions", []),
+                deployment_mode=getattr(server_config, "deployment_mode", "docker"),
+                env_vars=env_vars,
+                sensitive_vars=sensitive_vars or [],
+            )
+        except Exception as exc:
+            logger.warning("DB update for env_vars of '%s' failed: %s", server_name, exc)
+
+        logger.info("Updated env_vars for server '%s' (%d vars).", server_name, len(env_vars))
+        return JSONResponse({
+            "message": f"Environment variables updated for '{server_name}'.",
+            "server_name": server_name,
+            "env_vars_count": len(env_vars),
+            "sensitive_vars": sensitive_vars or [],
+        })
 
     async def execute_lifecycle_action(self, server_name: str, action: str, version: Optional[str] = None,
                                        stream_output: bool = False) -> Union[JSONResponse, StreamingResponse]:
@@ -560,7 +655,9 @@ class MCPRegistry:
                         description=server_config.description,
                         current_version=server_config.current_version,
                         available_versions=server_config.available_versions,
-                        deployment_mode=server_config.deployment_mode
+                        deployment_mode=server_config.deployment_mode,
+                        env_vars=getattr(server_config, 'env_vars', None),
+                        sensitive_vars=getattr(server_config, 'sensitive_vars', None),
                     )
 
                     if stream_output:
@@ -577,7 +674,7 @@ class MCPRegistry:
                                         server_name=server_name,
                                         source_url=server_config.source,
                                         framework=getattr(server_config, "framework", None),
-                                        env={},
+                                        env=server_config.env_vars or {},
                                         description=server_config.description,
                                         tags=server_config.tags,
                                         port=server_config.port,
@@ -598,7 +695,7 @@ class MCPRegistry:
                             server_name=server_name,
                             source_url=server_config.source,
                             framework=getattr(server_config, "framework", None),
-                            env={},
+                            env=server_config.env_vars or {},
                             description=server_config.description,
                             tags=server_config.tags,
                             port=server_config.port,
@@ -669,7 +766,7 @@ class MCPRegistry:
                                         server_name=server_name,
                                         source_url=server_config.source,
                                         framework=getattr(server_config, "framework", None),
-                                        env={},
+                                        env=server_config.env_vars or {},
                                         description=server_config.description,
                                         tags=server_config.tags,
                                         port=server_config.port,
@@ -693,7 +790,7 @@ class MCPRegistry:
                             server_name=server_name,
                             source_url=server_config.source,
                             framework=getattr(server_config, "framework", None),
-                            env={},
+                            env=server_config.env_vars or {},
                             description=server_config.description,
                             tags=server_config.tags,
                             port=server_config.port,
@@ -719,7 +816,7 @@ class MCPRegistry:
                                         server_name=server_name,
                                         source_url=server_config.source,
                                         framework=getattr(server_config, "framework", None),
-                                        env={},
+                                        env=server_config.env_vars or {},
                                         description=server_config.description,
                                         tags=server_config.tags,
                                         port=server_config.port,
@@ -739,7 +836,7 @@ class MCPRegistry:
                                 server_name=server_name,
                                 source_url=server_config.source,
                                 framework=getattr(server_config, "framework", None),
-                                env={},
+                                env=server_config.env_vars or {},
                                 description=server_config.description,
                                 tags=server_config.tags,
                                 port=server_config.port,

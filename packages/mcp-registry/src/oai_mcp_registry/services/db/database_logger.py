@@ -24,8 +24,8 @@ class PostgresBackend(BasePostgresBackend):
 
     MCP_REGISTRY_UPSERT = """
         INSERT INTO mcp_registry
-            (server_name, endpoint_url, port, description, active, registered_via, source, tags, current_version, available_versions, deployment_mode, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            (server_name, endpoint_url, port, description, active, registered_via, source, tags, current_version, available_versions, deployment_mode, env_vars, sensitive_vars, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         ON CONFLICT (server_name) DO UPDATE SET
             endpoint_url       = EXCLUDED.endpoint_url,
             port               = EXCLUDED.port,
@@ -36,6 +36,8 @@ class PostgresBackend(BasePostgresBackend):
             current_version    = EXCLUDED.current_version,
             available_versions = EXCLUDED.available_versions,
             deployment_mode    = EXCLUDED.deployment_mode,
+            env_vars           = EXCLUDED.env_vars,
+            sensitive_vars     = EXCLUDED.sensitive_vars,
             updated_at         = EXCLUDED.updated_at
     """
     MCP_REGISTRY_DEACTIVATE = "UPDATE mcp_registry SET active = FALSE, updated_at = $2 WHERE server_name = $1"
@@ -64,6 +66,8 @@ class PostgresBackend(BasePostgresBackend):
                 current_version    VARCHAR(255),
                 available_versions TEXT,
                 deployment_mode    VARCHAR(50) DEFAULT 'docker',
+                env_vars           TEXT,
+                sensitive_vars     TEXT,
                 created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
@@ -83,6 +87,8 @@ class PostgresBackend(BasePostgresBackend):
             "ALTER TABLE mcp_registry ADD COLUMN IF NOT EXISTS current_version VARCHAR(255);",
             "ALTER TABLE mcp_registry ADD COLUMN IF NOT EXISTS available_versions TEXT;",
             "ALTER TABLE mcp_registry ADD COLUMN IF NOT EXISTS deployment_mode VARCHAR(50) DEFAULT 'docker';",
+            "ALTER TABLE mcp_registry ADD COLUMN IF NOT EXISTS env_vars TEXT;",
+            "ALTER TABLE mcp_registry ADD COLUMN IF NOT EXISTS sensitive_vars TEXT;",
         ]
         async with self._pool.acquire() as conn:
             await conn.execute(mcp_registry_ddl)
@@ -100,8 +106,8 @@ class SQLiteBackend(BaseSQLiteBackend):
 
     MCP_REGISTRY_UPSERT = """
         INSERT INTO mcp_registry
-            (server_name, endpoint_url, port, description, active, registered_via, source, tags, current_version, available_versions, deployment_mode, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (server_name, endpoint_url, port, description, active, registered_via, source, tags, current_version, available_versions, deployment_mode, env_vars, sensitive_vars, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(server_name) DO UPDATE SET
             endpoint_url       = EXCLUDED.endpoint_url,
             port               = EXCLUDED.port,
@@ -112,6 +118,8 @@ class SQLiteBackend(BaseSQLiteBackend):
             current_version    = EXCLUDED.current_version,
             available_versions = EXCLUDED.available_versions,
             deployment_mode    = EXCLUDED.deployment_mode,
+            env_vars           = EXCLUDED.env_vars,
+            sensitive_vars     = EXCLUDED.sensitive_vars,
             updated_at         = EXCLUDED.updated_at
     """
     MCP_REGISTRY_DEACTIVATE = "UPDATE mcp_registry SET active = 0, updated_at = ? WHERE server_name = ?"
@@ -139,6 +147,8 @@ class SQLiteBackend(BaseSQLiteBackend):
                 current_version    TEXT,
                 available_versions TEXT,
                 deployment_mode    TEXT DEFAULT 'docker',
+                env_vars           TEXT,
+                sensitive_vars     TEXT,
                 created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP
             );
@@ -158,6 +168,8 @@ class SQLiteBackend(BaseSQLiteBackend):
             "ALTER TABLE mcp_registry ADD COLUMN current_version TEXT;",
             "ALTER TABLE mcp_registry ADD COLUMN available_versions TEXT;",
             "ALTER TABLE mcp_registry ADD COLUMN deployment_mode TEXT DEFAULT 'docker';",
+            "ALTER TABLE mcp_registry ADD COLUMN env_vars TEXT;",
+            "ALTER TABLE mcp_registry ADD COLUMN sensitive_vars TEXT;",
         ]
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON;")
@@ -205,14 +217,22 @@ class RegistryDatabaseLogger:
             tags: Optional[List[str]] = None,
             current_version: Optional[str] = None,
             available_versions: Optional[List[str]] = None,
-            deployment_mode: str = "docker"
+            deployment_mode: str = "docker",
+            env_vars: Optional[Dict[str, Any]] = None,
+            sensitive_vars: Optional[List[str]] = None,
     ) -> None:
         if not self._ready(): return
         try:
             now = datetime.now(timezone.utc)
             tags_json = json.dumps(tags) if tags is not None else "[]"
             available_versions_json = json.dumps(available_versions) if available_versions is not None else "[]"
-            params = (server_name, endpoint_url, port, description, active, registered_via, source, tags_json, current_version, available_versions_json, deployment_mode, now, now)
+            env_vars_json = json.dumps(env_vars) if env_vars else "{}"
+            sensitive_vars_json = json.dumps(sensitive_vars) if sensitive_vars else "[]"
+            params = (
+                server_name, endpoint_url, port, description, active, registered_via,
+                source, tags_json, current_version, available_versions_json, deployment_mode,
+                env_vars_json, sensitive_vars_json, now, now,
+            )
             await self._backend.execute(self._backend.MCP_REGISTRY_UPSERT, params)
             if self.logger: self.logger.debug(f"Logged MCP server registration/update for: {server_name}")
         except Exception as exc:
@@ -327,6 +347,17 @@ class RegistryDatabaseLogger:
                     row[key] = json.loads(row[key])
                 except Exception:
                     row[key] = []
+        # Deserialize env_vars (dict) and sensitive_vars (list)
+        if "env_vars" in row:
+            try:
+                row["env_vars"] = json.loads(row["env_vars"]) if row["env_vars"] else {}
+            except Exception:
+                row["env_vars"] = {}
+        if "sensitive_vars" in row:
+            try:
+                row["sensitive_vars"] = json.loads(row["sensitive_vars"]) if row["sensitive_vars"] else []
+            except Exception:
+                row["sensitive_vars"] = []
         return row
 
     @staticmethod

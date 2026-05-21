@@ -11,6 +11,7 @@ from oai_mcp_registry.dependencies import get_registry
 from oai_mcp_registry.models import (
     ServerRegistration,
     ServerDeregistration,
+    UpdateServerEnvVarsRequest,
     McpServerLifecycleAction,
     ServerAction,
     ServerActionHistory,
@@ -64,6 +65,10 @@ async def get_config(registry: MCPRegistry = Depends(get_registry)):
                 "current_version": getattr(config, "current_version", None),
                 "available_versions": getattr(config, "available_versions", []),
                 "deployment_mode": getattr(config, "deployment_mode", "docker"),
+                "source": getattr(config, "source", None),
+                "tags": getattr(config, "tags", []),
+                "env_vars": getattr(config, "env_vars", None) or {},
+                "sensitive_vars": getattr(config, "sensitive_vars", []) or [],
                 "available_actions": [
                     "start" if not config.enabled else "stop",
                     "restart",
@@ -103,6 +108,16 @@ async def register_server(request: Request, server_registration: ServerRegistrat
 async def deregister_server(server_deregistration: ServerDeregistration, registry: MCPRegistry = Depends(get_registry)):
     """Deregisters an MCP server."""
     return await registry.deregister_server(server_deregistration)
+
+
+@router.patch("/servers/{mcp_server_name}/env-vars")
+async def update_server_env_vars(
+    mcp_server_name: str,
+    payload: UpdateServerEnvVarsRequest,
+    registry: MCPRegistry = Depends(get_registry),
+):
+    """Update environment variables for a registered MCP server."""
+    return await registry.update_server_env_vars(mcp_server_name, payload.env_vars, payload.sensitive_vars)
 
 
 @router.post("/lifecycle/{mcp_server_name}")
@@ -164,6 +179,8 @@ def _build_server_registrations(
     to_deploy: List[Tuple[str, ServerRegistration]] = []
     pre_failed: List[Dict[str, str]] = []
 
+    user_overrides: Dict[str, Dict] = request.server_env_overrides or {}
+
     for server_name in request.server_names:
         server_data = servers_by_name.get(server_name)
         if server_data is None:
@@ -172,6 +189,12 @@ def _build_server_registrations(
         if server_data.get("error"):
             pre_failed.append({"server_name": server_name, "error": server_data["error"]})
             continue
+
+        # Merge YAML-discovered env vars with any user-supplied overrides.
+        # User overrides take precedence so real secret values replace placeholders.
+        base_env: Dict = server_data.get("env_vars") or {}
+        per_server_overrides: Dict = user_overrides.get(server_name, {})
+        merged_env: Optional[Dict] = {**base_env, **per_server_overrides} if (base_env or per_server_overrides) else None
 
         to_deploy.append((
             server_name,
@@ -187,6 +210,8 @@ def _build_server_registrations(
                 current_version=None,
                 available_versions=[],
                 deployment_mode=request.deployment_mode,
+                env_vars=merged_env,
+                sensitive_vars=server_data.get("sensitive_vars") or [],
             ),
         ))
 
@@ -240,7 +265,7 @@ async def _stream_bulk_mcp_deployment(
                 server_name=server_name,
                 source_url=server_reg.source,
                 framework=None,
-                env={},
+                env=server_reg.env_vars or {},
                 description=server_reg.description or "",
                 tags=server_reg.tags or [],
                 port=server_reg.port,
@@ -284,6 +309,8 @@ async def _stream_bulk_mcp_deployment(
                 current_version=db_values["current_version"],
                 available_versions=db_values["available_versions"],
                 deployment_mode=db_values["deployment_mode"],
+                env_vars=db_values.get("env_vars"),
+                sensitive_vars=db_values.get("sensitive_vars"),
             )
 
             successful.append(server_name)

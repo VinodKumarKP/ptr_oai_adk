@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import warnings
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, Depends
@@ -212,10 +213,47 @@ class DynamicMCPDispatcher:
             await self.inner_app(scope, receive, send)
             return
 
+        # ── Env var injection ────────────────────────────────────────────────
+        # 1. Parse incoming headers into a lowercase-keyed dict.
+        raw_headers: list = scope.get("headers", [])
+        headers_dict: dict[str, str] = {
+            k.decode(errors="replace").lower(): v.decode(errors="replace")
+            for k, v in raw_headers
+        }
+
+        # 2. Build the merged env set for this server.
+        server_config = registry_instance.config.servers.get(server_name) if registry_instance.config else None
+        env_to_inject: dict[str, str] = {}
+        if server_config:
+            # Start from stored env vars, expanding any ${VAR} placeholders.
+            for k, v in (server_config.env_vars or {}).items():
+                env_to_inject[k.upper()] = os.path.expandvars(str(v)) if isinstance(v, str) else str(v)
+
+        # 3. Apply per-request overrides (X-Override-Env-{NAME}).
+        #    These override stored values and are consumed here — the sub-app
+        #    never sees the raw override headers.
+        override_keys = [k for k in headers_dict if k.startswith("x-override-env-")]
+        for k in override_keys:
+            var_name = k[len("x-override-env-"):].upper()
+            env_to_inject[var_name] = headers_dict[k]
+
+        # 4. Re-build the header list: strip override headers, add merged env.
+        clean_headers = [
+            (k, v) for k, v in raw_headers
+            if not k.decode(errors="replace").lower().startswith("x-override-env-")
+        ]
+        for var_name, value in env_to_inject.items():
+            clean_headers.append((
+                f"{var_name.lower()}".encode(),
+                value.encode(errors="replace"),
+            ))
+        # ────────────────────────────────────────────────────────────────────
+
         # Rewrite scope so the sub-app sees itself rooted at /
         child_scope = dict(scope)
         child_scope["path"] = remaining
         child_scope["root_path"] = scope.get("root_path", "") + f"/{server_name}"
+        child_scope["headers"] = clean_headers
 
         logger.debug(f"[Dispatcher] {server_name}{remaining} -> sub_app_id={id(sub_app)}")
         await sub_app(child_scope, receive, send)

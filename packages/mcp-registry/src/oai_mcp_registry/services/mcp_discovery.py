@@ -36,6 +36,18 @@ _CONFIG_DIRS = [
 
 _GITHUB_CONTENTS_API = "https://api.github.com/repos/{repo}/contents/{path}"
 
+# Heuristic patterns that mark a variable name as sensitive
+_SENSITIVE_PATTERNS = frozenset([
+    "password", "passwd", "pwd", "secret", "token", "key", "apikey",
+    "api_key", "auth", "credential", "private", "cert", "certificate",
+])
+
+
+def _is_sensitive_by_name(name: str) -> bool:
+    """Return True if the variable name looks like it holds a secret."""
+    lower = name.lower()
+    return any(pat in lower for pat in _SENSITIVE_PATTERNS)
+
 
 # --------------------------------------------------------------------------- #
 # Helpers
@@ -242,6 +254,31 @@ class MCPDiscovery:
             if yaml_name and yaml_name != name_key:
                 description = f"{yaml_name} — {description}" if description else yaml_name
 
+            # ── Env vars ──────────────────────────────────────────────────
+            # Accept both dict ({VAR: value}) and list ([{name: VAR, default: x}])
+            raw_env = data.get("env") or data.get("env_vars") or {}
+            env_vars: Dict[str, str] = {}
+            if isinstance(raw_env, dict):
+                env_vars = {str(k).upper(): str(v) for k, v in raw_env.items()}
+            elif isinstance(raw_env, list):
+                for item in raw_env:
+                    if isinstance(item, dict):
+                        k = str(item.get("name") or "").upper()
+                        v = str(item.get("default") or item.get("value") or "")
+                        if k:
+                            env_vars[k] = v
+
+            # Explicit sensitive list from YAML, supplemented by heuristic
+            explicit_sensitive = [
+                str(n).upper()
+                for n in (data.get("env_sensitive") or data.get("sensitive_vars") or [])
+            ]
+            sensitive_vars: List[str] = list({
+                name
+                for name in env_vars
+                if name in explicit_sensitive or _is_sensitive_by_name(name)
+            })
+
             return {
                 "name": name_key,
                 "description": description,
@@ -249,6 +286,8 @@ class MCPDiscovery:
                 "port": int(port_raw) if port_raw else None,
                 "source": source,
                 "config_file": config_file,
+                "env_vars": env_vars,
+                "sensitive_vars": sensitive_vars,
                 "error": None,
             }
 

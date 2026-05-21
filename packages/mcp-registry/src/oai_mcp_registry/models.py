@@ -3,6 +3,19 @@ from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
+# Env-var requirement (single variable declared in server config)
+# ---------------------------------------------------------------------------
+
+class EnvVarRequirement(BaseModel):
+    """Describes one environment variable required by an MCP server."""
+    name: str
+    description: Optional[str] = None
+    default: Optional[str] = None
+    required: bool = False
+    sensitive: bool = False
+
+
+# ---------------------------------------------------------------------------
 # Bulk / Discovery models
 # ---------------------------------------------------------------------------
 
@@ -16,6 +29,8 @@ class MCPServerDiscoveryItem(BaseModel):
     status: str = "available"       # "available" | "already_registered" | "invalid"
     config_file: Optional[str] = None
     error: Optional[str] = None
+    env_vars: Optional[Dict[str, str]] = None
+    sensitive_vars: Optional[List[str]] = Field(default_factory=list)
 
 
 class MCPServerDiscoveryResult(BaseModel):
@@ -35,6 +50,9 @@ class BulkMCPServerRegistrationRequest(BaseModel):
     deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
     auth_token: Optional[str] = None    # GitHub PAT for private repos
     config_path: Optional[str] = None  # Custom path to server config YAMLs in the repo
+    # Per-server env var overrides supplied by the user at registration time.
+    # Values here take precedence over whatever was parsed from the server's YAML.
+    server_env_overrides: Optional[Dict[str, Dict[str, str]]] = None
 
 
 class BulkMCPServerRegistrationResult(BaseModel):
@@ -56,6 +74,8 @@ class ServerConfig(BaseModel):
     current_version: Optional[str] = None
     available_versions: Optional[List[str]] = Field(default_factory=list)
     deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
+    env_vars: Optional[Dict[str, str]] = None
+    sensitive_vars: Optional[List[str]] = Field(default_factory=list)
 
 class ServerRegistration(BaseModel):
     """Payload for registering an MCP server."""
@@ -70,10 +90,17 @@ class ServerRegistration(BaseModel):
     current_version: Optional[str] = None
     available_versions: Optional[List[str]] = Field(default_factory=list)
     deployment_mode: Literal["docker", "kubernetes", "python_package", "unknown"] = "unknown"
+    env_vars: Optional[Dict[str, str]] = None
+    sensitive_vars: Optional[List[str]] = Field(default_factory=list)
 
 class ServerDeregistration(BaseModel):
     """Payload for deregistering an MCP server."""
     name: str
+
+class UpdateServerEnvVarsRequest(BaseModel):
+    """Payload for updating environment variables on a registered MCP server."""
+    env_vars: Dict[str, str] = Field(default_factory=dict)
+    sensitive_vars: Optional[List[str]] = Field(default_factory=list)
 
 class RegistryConfig(BaseModel):
     """Configuration for the registry server."""
