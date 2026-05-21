@@ -1031,39 +1031,73 @@ class AgentRegistry:
         agent_name: str,
         env_vars: Dict[str, str],
         sensitive_vars: Optional[list] = None,
-    ) -> JSONResponse:
-        """Updates environment variables for a registered MCP server in-place."""
+    ) -> Union[JSONResponse, StreamingResponse]:
+        """Updates environment variables for a registered agent in-place, then streams a restart."""
         if agent_name not in self.agents:
             raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
 
-        server_config = self.agents.get(agent_name)
-        server_config.env_vars = env_vars
-        server_config.sensitive_vars = sensitive_vars or []
+        agent_config = self.agents.get(agent_name)
+        agent_config.env_vars = env_vars
+        agent_config.sensitive_vars = sensitive_vars or []
 
         # Persist to DB
+        db_saved = False
         try:
             await self.db_logger.log_agent_registration(
                 agent_name=agent_name,
-                endpoint_url=server_config.endpoint or "",
-                port=server_config.port,
-                description=server_config.description,
-                active=server_config.enabled,
-                registered_via=server_config.registered_via,
-                source=getattr(server_config, "source", None),
-                tags=getattr(server_config, "tags", []),
-                current_version=getattr(server_config, "current_version", None),
-                available_versions=getattr(server_config, "available_versions", []),
-                deployment_mode=getattr(server_config, "deployment_mode", "docker"),
+                endpoint_url=agent_config.endpoint or "",
+                port=agent_config.port,
+                description=agent_config.description,
+                active=agent_config.enabled,
+                registered_via=agent_config.registered_via,
+                source=getattr(agent_config, "source", None),
+                tags=getattr(agent_config, "tags", []),
+                current_version=getattr(agent_config, "current_version", None),
+                available_versions=getattr(agent_config, "available_versions", []),
+                deployment_mode=getattr(agent_config, "deployment_mode", "docker"),
                 env_vars=env_vars,
                 sensitive_vars=sensitive_vars or [],
             )
+            db_saved = True
         except Exception as exc:
             logger.warning("DB update for env_vars of '%s' failed: %s", agent_name, exc)
 
-        logger.info("Updated env_vars for server '%s' (%d vars).", agent_name, len(env_vars))
-        return JSONResponse({
-            "message": f"Environment variables updated for '{agent_name}'.",
-            "server_name": agent_name,
-            "env_vars_count": len(env_vars),
-            "sensitive_vars": sensitive_vars or [],
-        })
+        logger.info("Updated env_vars for agent '%s' (%d vars).", agent_name, len(env_vars))
+
+        # Stream a restart so the caller can observe progress in real time.
+        # Using restart (not "update") so no version is required.
+        deployer = self._get_deployer(getattr(agent_config, 'deployment_mode', 'docker'))
+
+        async def stream_generator():
+            saved_label = f"{len(env_vars)} variable(s)" if db_saved else f"{len(env_vars)} variable(s) (DB save failed)"
+            yield f"data: Saved {saved_label} for '{agent_name}'.\n\n"
+            if deployer:
+                try:
+                    yield f"data: Redeploying '{agent_name}' with updated environment variables...\n\n"
+                    # Use stream_deploy_agent with no_build=True so the deployer:
+                    #   1. Re-adds the service to _dynamic_services with new env vars
+                    #   2. Rewrites the compose file with the new env block
+                    #   3. Restarts the container (no image rebuild)
+                    async for line in deployer.stream_deploy_agent(
+                        agent_name=agent_name,
+                        source_url=getattr(agent_config, 'source', '') or '',
+                        framework=getattr(agent_config, 'framework', None),
+                        env=agent_config.env_vars or {},
+                        description=getattr(agent_config, 'description', '') or '',
+                        tags=getattr(agent_config, 'tags', []) or [],
+                        port=agent_config.port,
+                        current_version=getattr(agent_config, 'current_version', None),
+                        no_build=True,
+                    ):
+                        yield f"data: {line.strip()}\n\n"
+                    self.agents[agent_name].enabled = True
+                    current_version = getattr(agent_config, 'current_version', None)
+                    await self.db_logger.log_agent_action(agent_name, "env-update", current_version)
+                    yield f"data: ✓ Agent '{agent_name}' redeployed with updated environment variables.\n\n"
+                except Exception as e:
+                    yield f"data: ✗ Error redeploying agent: {str(e)}\n\n"
+            else:
+                yield "data: No deployer configured — env vars updated in registry memory only.\n\n"
+                yield "data: Restart the agent manually to apply changes.\n\n"
+
+        return StreamingResponse(stream_generator(), media_type="text/event-stream")

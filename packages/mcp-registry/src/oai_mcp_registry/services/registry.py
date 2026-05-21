@@ -620,18 +620,29 @@ class MCPRegistry:
             yield f"data: Saved {saved_label} for '{server_name}'.\n\n"
             if deployer:
                 try:
-                    yield f"data: Restarting '{server_name}' to apply new environment variables...\n\n"
-                    deployer.remove_server(server_name)
-                    self.config.servers[server_name].enabled = False
-                    yield "data: Server stopped. Starting with updated environment variables...\n\n"
-                    await asyncio.sleep(1)
-                    deployer.start_server(server_name)
+                    yield f"data: Redeploying '{server_name}' with updated environment variables...\n\n"
+                    # Use stream_deploy_server with no_build=True so the deployer:
+                    #   1. Re-adds the service to _dynamic_services with new env vars
+                    #   2. Rewrites the compose file with the new env block
+                    #   3. Restarts the container (no image rebuild)
+                    async for line in deployer.stream_deploy_server(
+                        server_name=server_name,
+                        source_url=getattr(server_config, 'source', '') or '',
+                        framework=getattr(server_config, 'framework', None),
+                        env=server_config.env_vars or {},
+                        description=getattr(server_config, 'description', '') or '',
+                        tags=getattr(server_config, 'tags', []) or [],
+                        port=server_config.port,
+                        current_version=getattr(server_config, 'current_version', None),
+                        no_build=True,
+                    ):
+                        yield f"data: {line.strip()}\n\n"
                     self.config.servers[server_name].enabled = True
                     current_version = getattr(server_config, 'current_version', None)
                     await self.db_logger.log_server_action(server_name, "env-update", current_version)
-                    yield f"data: ✓ Server '{server_name}' restarted with updated environment variables.\n\n"
+                    yield f"data: ✓ Server '{server_name}' redeployed with updated environment variables.\n\n"
                 except Exception as e:
-                    yield f"data: ✗ Error restarting server: {str(e)}\n\n"
+                    yield f"data: ✗ Error redeploying server: {str(e)}\n\n"
             else:
                 yield "data: No deployer configured — env vars updated in registry memory only.\n\n"
                 yield "data: Restart the server manually to apply changes.\n\n"
