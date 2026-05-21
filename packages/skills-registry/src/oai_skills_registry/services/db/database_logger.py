@@ -47,7 +47,9 @@ class PostgresBackend(BasePostgresBackend):
 
     SKILL_VERSION_SELECT = "SELECT id, skill_id, version, git_source_id, git_branch, git_commit_sha, git_tag, content, config, dependencies, breaking_changes, status, published_by, published_at, deprecated_at, created_at FROM skill_versions WHERE skill_id = $1 AND version = $2"
     SKILL_VERSIONS_SELECT_ALL = "SELECT id, skill_id, version, git_source_id, git_branch, git_commit_sha, git_tag, content, config, dependencies, breaking_changes, status, published_by, published_at, deprecated_at, created_at FROM skill_versions WHERE skill_id = $1 ORDER BY created_at DESC"
-    SKILL_VERSION_UPDATE_STATUS = "UPDATE skill_versions SET status = $1, published_by = $2, published_at = $3, deprecated_at = CASE WHEN $1 = 'deprecated' THEN $4 ELSE deprecated_at END WHERE id = $5"
+    # params order: (status, published_by, published_at, status_again, deprecated_at, version_id)
+    # $4 = status repeated so CASE WHEN comparison uses a dedicated placeholder like SQLite does.
+    SKILL_VERSION_UPDATE_STATUS = "UPDATE skill_versions SET status = $1, published_by = $2, published_at = $3, deprecated_at = CASE WHEN $4 = 'deprecated' THEN $5 ELSE deprecated_at END WHERE id = $6"
 
     SKILL_ACTION_INSERT = "INSERT INTO skill_actions (skill_id, action, from_version, to_version, performed_by, message, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)"
     SKILL_ACTIONS_SELECT_ALL = "SELECT id, skill_id, action, from_version, to_version, performed_by, message, created_at FROM skill_actions WHERE skill_id = $1 ORDER BY created_at DESC"
