@@ -71,7 +71,7 @@ class MCPRegistry:
                 "source": server_config.source or "",
                 "framework": getattr(server_config, "framework", ""),
                 "tags": server_config.tags or [],
-                "env": {},  # env vars come from the config file; expand here if needed
+                "env": server_config.env_vars,  # env vars come from the config file; expand here if needed
                 "description": server_config.description or "",
                 "current_version": server_config.current_version,
             }
