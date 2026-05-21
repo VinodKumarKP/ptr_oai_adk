@@ -194,7 +194,8 @@ class AgentRegistry:
                     description=agent_config.description,
                     current_version=agent_config.current_version,
                     available_versions=agent_config.available_versions,
-                    deployment_mode=agent_config.deployment_mode
+                    deployment_mode=agent_config.deployment_mode,
+                    env_vars=agent_config.env_vars,
                 )
                 logger.debug(f"Synced config agent '{agent_name}' to DB.")
             except Exception as e:
@@ -229,7 +230,8 @@ class AgentRegistry:
                     current_version=row.get("current_version"),
                     available_versions=row.get("available_versions", []),
                     registered_via=row.get("registered_via", 'dynamic'),
-                    deployment_mode=row.get("deployment_mode", 'docker')
+                    deployment_mode=row.get("deployment_mode", 'docker'),
+                    env_vars=row.get("env_vars") or {},
                 )
                 self.agents[agent_name] = agent_config
                 restored += 1
@@ -308,7 +310,8 @@ class AgentRegistry:
             'description': agent_registration.description if agent_registration.description is not None else existing.get('description', ''),
             'current_version': agent_registration.current_version if agent_registration.current_version is not None else existing.get('current_version'),
             'available_versions': agent_registration.available_versions if len(agent_registration.available_versions) > 0 and agent_registration.available_versions is not None else existing.get('available_versions', []),
-            'deployment_mode': agent_registration.deployment_mode if agent_registration.deployment_mode is not None else existing.get('deployment_mode', 'docker')
+            'deployment_mode': agent_registration.deployment_mode if agent_registration.deployment_mode is not None else existing.get('deployment_mode', 'docker'),
+            'env_vars': agent_registration.env_vars if agent_registration.env_vars is not None else existing.get('env_vars', {}),
         }
 
         logger.debug(f"Merged values for agent '{agent_name}': {merged}")
@@ -363,7 +366,7 @@ class AgentRegistry:
                             description=agent_info.get("description"),
                             current_version=agent_info.get("current_version"),
                             available_versions=agent_info.get("available_versions", []),
-                            deployment_mode=agent_info.get("deployment_mode", "docker")
+                            deployment_mode=agent_info.get("deployment_mode", "docker"),
                         )
             except (httpx.RequestError, json.JSONDecodeError) as e:
                 pass
@@ -390,6 +393,7 @@ class AgentRegistry:
                     "current_version": getattr(agent, "current_version", None),
                     "available_versions": getattr(agent, "available_versions", []),
                     "deployment_mode": getattr(agent, "deployment_mode", "docker"),
+                    "env_vars": getattr(agent, "env_vars", None) or {},
                     "available_actions": [
                         "start" if not agent.enabled else "stop",
                         "restart",
@@ -472,7 +476,7 @@ class AgentRegistry:
                                 agent_name=agent_name,
                                 source_url=agent_registration.source,
                                 framework=agent_registration.framework,
-                                env={},
+                                env=agent_registration.env_vars or {},
                                 description=getattr(agent_registration, "description", ""),
                                 tags=getattr(agent_registration, "tags", []),
                                 port=assigned_port,
@@ -502,7 +506,8 @@ class AgentRegistry:
                             description=db_values['description'],
                             current_version=db_values['current_version'],
                             available_versions=db_values['available_versions'],
-                            deployment_mode=db_values['deployment_mode']
+                            deployment_mode=db_values['deployment_mode'],
+                            env_vars=db_values.get('env_vars'),
                         )
                         yield f"data: ✅ Agent '{agent_name}' registered successfully.\n\n"
                     except Exception as e:
@@ -520,7 +525,7 @@ class AgentRegistry:
                         agent_name=agent_name,
                         source_url=agent_registration.source,
                         framework=agent_registration.framework,
-                        env={},  # pass agent-specific env if available
+                        env=agent_registration.env_vars or {},
                         description=getattr(agent_registration, "description", ""),
                         tags=getattr(agent_registration, "tags", []),
                         port=assigned_port,
@@ -554,7 +559,8 @@ class AgentRegistry:
             description=db_values['description'],
             current_version=db_values['current_version'],
             available_versions=db_values['available_versions'],
-            deployment_mode=db_values['deployment_mode']
+            deployment_mode=db_values['deployment_mode'],
+            env_vars=db_values.get('env_vars'),
         )
 
         return JSONResponse({"message": f"Agent '{agent_name}' registered successfully."})
@@ -629,7 +635,8 @@ class AgentRegistry:
                         description=agent_config.description,
                         current_version=agent_config.current_version,
                         available_versions=agent_config.available_versions,
-                        deployment_mode=agent_config.deployment_mode
+                        deployment_mode=agent_config.deployment_mode,
+                        env_vars=agent_config.env_vars,
                     )
 
                     if stream_output:
@@ -647,7 +654,7 @@ class AgentRegistry:
                                         agent_name=agent_name,
                                         source_url=agent_config.source,
                                         framework=agent_config.framework,
-                                        env={},
+                                        env=agent_config.env_vars or {},
                                         description=agent_config.description,
                                         tags=agent_config.tags,
                                         port=agent_config.port,
@@ -673,7 +680,7 @@ class AgentRegistry:
                             agent_name=agent_name,
                             source_url=agent_config.source,
                             framework=agent_config.framework,
-                            env={},
+                            env=agent_config.env_vars or {},
                             description=agent_config.description,
                             tags=agent_config.tags,
                             port=agent_config.port,
@@ -725,7 +732,7 @@ class AgentRegistry:
                                         agent_name=agent_name,
                                         source_url=agent_config.source,
                                         framework=agent_config.framework,
-                                        env={},
+                                        env=agent_config.env_vars or {},
                                         description=agent_config.description,
                                         tags=agent_config.tags,
                                         port=agent_config.port,
@@ -754,7 +761,7 @@ class AgentRegistry:
                             agent_name=agent_name,
                             source_url=agent_config.source,
                             framework=agent_config.framework,
-                            env={},
+                            env=agent_config.env_vars or {},
                             description=agent_config.description,
                             tags=agent_config.tags,
                             port=agent_config.port,
@@ -774,7 +781,7 @@ class AgentRegistry:
                                         agent_name=agent_name,
                                         source_url=agent_config.source,
                                         framework=agent_config.framework,
-                                        env={},
+                                        env=agent_config.env_vars or {},
                                         description=agent_config.description,
                                         tags=agent_config.tags,
                                         port=agent_config.port,
@@ -801,7 +808,7 @@ class AgentRegistry:
                                 agent_name=agent_name,
                                 source_url=agent_config.source,
                                 framework=agent_config.framework,
-                                env={},
+                                env=agent_config.env_vars or {},
                                 description=agent_config.description,
                                 tags=agent_config.tags,
                                 port=agent_config.port,
@@ -969,7 +976,7 @@ class AgentRegistry:
                 "source": agent_config.source or "",
                 "framework": agent_config.framework or "",
                 "tags": [agent_config.framework.lower()] if agent_config.framework else [],
-                "env": {},  # env vars come from the config file; expand here if needed
+                "env": agent_config.env_vars or {},
                 "description": "",
                 "current_version": agent_config.current_version,
             }

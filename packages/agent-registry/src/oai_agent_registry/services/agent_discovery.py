@@ -34,6 +34,9 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+# Matches ${VAR} and ${VAR:-default}
+_PLACEHOLDER_RE = re.compile(r'^\$\{([^}:]+)(?::-([^}]*))?\}$')
+
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
@@ -79,6 +82,52 @@ def _parse_github_repo(git_url: str) -> Optional[str]:
 def _normalize_agent_name(raw: str) -> str:
     """Lower-case, strip non-identifier chars, collapse to underscores."""
     return re.sub(r"[^a-z0-9]+", "_", raw.lower().strip()).strip("_")
+
+
+def _parse_env_requirements(env_section: Any) -> List[Dict[str, Any]]:
+    """Extract env var requirements from the ``env:`` block of an agent YAML.
+
+    Each entry in *env_section* is expected to be one of:
+      - ``KEY: ${KEY}``            → name=KEY, default=None, required=True
+      - ``KEY: ${KEY:-fallback}``  → name=KEY, default="fallback", required=False
+      - ``KEY: literal``           → name=KEY, default="literal", required=False
+      - ``KEY: null / ""``         → name=KEY, default=None, required=True
+
+    Returns a list of dicts suitable for constructing ``EnvVarRequirement`` models.
+    """
+    if not isinstance(env_section, dict):
+        return []
+
+    requirements = []
+    for key, value in env_section.items():
+        name = str(key).strip()
+        str_val = str(value).strip() if value is not None else ""
+
+        m = _PLACEHOLDER_RE.match(str_val)
+        if m:
+            # group(1) = var name inside ${}, group(2) = default after :-
+            default = m.group(2)  # None when no :- was present
+            requirements.append({
+                "name": name,
+                "default": default,
+                "required": default is None,
+            })
+        elif str_val:
+            # Literal value — treat as optional with that value as default
+            requirements.append({
+                "name": name,
+                "default": str_val,
+                "required": False,
+            })
+        else:
+            # Empty / null value — required, no default
+            requirements.append({
+                "name": name,
+                "default": None,
+                "required": True,
+            })
+
+    return requirements
 
 
 def _load_yaml(text: str) -> Optional[Dict]:
@@ -290,6 +339,10 @@ class AgentDiscovery:
             if yaml_name and yaml_name != name_key:
                 description = f"{yaml_name} — {description}" if description else yaml_name
 
+            # Parse required environment variables from the `env:` section
+            env_section = data.get("env") or {}
+            required_env = _parse_env_requirements(env_section)
+
             return {
                 "name": name_key,
                 "description": description,
@@ -301,6 +354,7 @@ class AgentDiscovery:
                 "source": source,
                 "config_file": config_file,
                 "error": None,
+                "required_env": required_env,
             }
 
         except Exception as exc:

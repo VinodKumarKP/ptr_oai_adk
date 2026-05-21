@@ -187,6 +187,7 @@ def _build_agent_registrations(
                 current_version=None,
                 available_versions=[],
                 deployment_mode=request.deployment_mode,
+                env_vars=request.env_vars or None,
             ),
         ))
 
@@ -241,7 +242,7 @@ async def _stream_bulk_deployment(
                 agent_name=agent_name,
                 source_url=agent_reg.source,
                 framework=agent_reg.framework,
-                env={},
+                env=agent_reg.env_vars or {},
                 description=agent_reg.description or "",
                 tags=agent_reg.tags or [],
                 port=agent_reg.port,
@@ -273,6 +274,7 @@ async def _stream_bulk_deployment(
                 current_version=db_values["current_version"],
                 available_versions=db_values["available_versions"],
                 deployment_mode=db_values["deployment_mode"],
+                env_vars=db_values.get("env_vars"),
             )
 
             successful.append(agent_name)

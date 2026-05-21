@@ -3,6 +3,17 @@ from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
+# Environment variable models
+# ---------------------------------------------------------------------------
+
+class EnvVarRequirement(BaseModel):
+    """A single environment variable required by an agent at runtime."""
+    name: str                        # e.g. "OPENAI_API_KEY"
+    default: Optional[str] = None   # value from ${VAR:-default}, if any
+    required: bool = True            # False when a default is available
+
+
+# ---------------------------------------------------------------------------
 # Bulk / Discovery models
 # ---------------------------------------------------------------------------
 
@@ -19,6 +30,7 @@ class AgentDiscoveryItem(BaseModel):
     status: str = "available"             # "available" | "already_registered" | "invalid"
     config_file: Optional[str] = None    # filename of the YAML in the repo
     error: Optional[str] = None
+    required_env: List[EnvVarRequirement] = Field(default_factory=list)  # env vars from YAML `env:` section
 
 
 class AgentDiscoveryResult(BaseModel):
@@ -39,6 +51,7 @@ class BulkAgentRegistrationRequest(BaseModel):
     deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
     auth_token: Optional[str] = None     # GitHub PAT for private repos
     config_path: Optional[str] = None   # Custom path to agent config YAMLs in the repo
+    env_vars: Optional[Dict[str, str]] = None  # user-supplied runtime env var values
 
 
 class BulkAgentRegistrationResult(BaseModel):
@@ -63,6 +76,7 @@ class AgentConfig(BaseModel):
     available_versions: Optional[List[str]] = Field(default_factory=list)
     registered_via: Literal["config", "dynamic", "registry"] = "dynamic"
     deployment_mode: Literal["docker", "kubernetes", "python_package"] = "docker"
+    env_vars: Optional[Dict[str, str]] = None
 
 
 class AgentRegistration(BaseModel):
@@ -80,6 +94,7 @@ class AgentRegistration(BaseModel):
     current_version: Optional[str] = None
     available_versions: Optional[List[str]] = Field(default_factory=list)
     deployment_mode: Literal["docker", "kubernetes", "python_package", "unknown"] = "unknown"
+    env_vars: Optional[Dict[str, str]] = None  # user-supplied runtime env var values
 
 
 class AgentDeregistration(BaseModel):
