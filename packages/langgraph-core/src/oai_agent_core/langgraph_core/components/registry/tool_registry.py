@@ -166,16 +166,16 @@ class LangChainToolRegistry(BaseToolRegistry):
                 if self.enable_lazy_loading:
                     if tool_name not in self.available_mcp_tools:
                         self.available_mcp_tools[tool_name] = {}
-                        client = MultiServerMCPClient({tool_name: mcp_configs[tool_name]})
-                        list_of_tools = await client.get_tools()
-                        for tool in list_of_tools:
-                            self.available_mcp_tools[tool.name] = tool_name
-                            self.available_mcp_tools[tool_name][tool.name] = {
-                                'tool': tool,
-                                'type': 'mcp',
-                                'mcp_client': mcp_configs[tool_name],
-                                'input_schema': tool.tool_call_schema['properties']
-                            }
+                    client = MultiServerMCPClient({tool_name: mcp_configs[tool_name]})
+                    list_of_tools = await client.get_tools()
+                    for tool in list_of_tools:
+                        self.available_mcp_tools[tool.name] = tool_name
+                        self.available_mcp_tools[tool_name][tool.name] = {
+                            'tool': tool,
+                            'type': 'mcp',
+                            'mcp_client': mcp_configs[tool_name],
+                            'input_schema': tool.tool_call_schema['properties']
+                        }
 
             if not self.enable_lazy_loading:
                 client = MultiServerMCPClient(mcp_configs)

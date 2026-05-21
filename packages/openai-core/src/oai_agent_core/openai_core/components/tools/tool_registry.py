@@ -162,15 +162,15 @@ class OpenAIToolRegistry(BaseToolRegistry):
                     if self.enable_lazy_loading:
                         if tool_name not in self.available_mcp_tools:
                             self.available_mcp_tools[tool_name] = {}
-                            async with client:
-                                list_of_tools = await client.list_tools()
-                                for tool in list_of_tools:
-                                    self.available_mcp_tools[tool.name] = tool_name
-                                    self.available_mcp_tools[tool_name][tool.name] = {
-                                        'type': 'mcp',
-                                        'mcp_client': client,
-                                        'input_schema': tool.inputSchema
-                                    }
+                        async with client:
+                            list_of_tools = await client.list_tools()
+                            for tool in list_of_tools:
+                                self.available_mcp_tools[tool.name] = tool_name
+                                self.available_mcp_tools[tool_name][tool.name] = {
+                                    'type': 'mcp',
+                                    'mcp_client': client,
+                                    'input_schema': tool.inputSchema
+                                }
 
                 else:
                     self.logger.warning(f"⚠️  No valid MCP configuration for '{tool_name}'")
