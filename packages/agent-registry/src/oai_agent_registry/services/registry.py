@@ -893,7 +893,7 @@ class AgentRegistry:
             env_to_inject[var_name] = headers.pop(key)
         # 3. Inject the merged set as X-Agent-Env-{NAME} headers.
         for var_name, value in env_to_inject.items():
-            headers[f"X-Agent-Env-{var_name}"] = str(value)
+            headers[f"{var_name}"] = str(value)
         # ──────────────────────────────────────────────────────────────────
 
         body = await request.body()
