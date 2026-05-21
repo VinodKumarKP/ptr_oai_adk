@@ -206,15 +206,15 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
                     if self.enable_lazy_loading:
                         if tool_name not in self.available_mcp_tools:
                             self.available_mcp_tools[tool_name] = {}
-                            with client:
-                                list_of_tools = client.list_tools_sync()
-                                for tool in list_of_tools:
-                                    self.available_mcp_tools[tool.tool_name] = tool_name
-                                    self.available_mcp_tools[tool_name][tool.tool_name] = {
-                                        'type': 'mcp',
-                                        'mcp_client': client,
-                                        'input_schema': tool.tool_spec['inputSchema']
-                                    }
+                        with client:
+                            list_of_tools = client.list_tools_sync()
+                            for tool in list_of_tools:
+                                self.available_mcp_tools[tool.tool_name] = tool_name
+                                self.available_mcp_tools[tool_name][tool.tool_name] = {
+                                    'type': 'mcp',
+                                    'mcp_client': client,
+                                    'input_schema': tool.tool_spec['inputSchema']
+                                }
 
 
                 else:
