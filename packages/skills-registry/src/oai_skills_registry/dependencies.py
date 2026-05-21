@@ -41,6 +41,14 @@ _auto_start_infra: Optional[bool] = None      # cli --auto-start-infra
 _infra_compose_file: Optional[str] = None     # cli --infra-compose-file
 _infra_startup_timeout: Optional[int] = None  # cli --infra-startup-timeout
 
+# ---------------------------------------------------------------------------
+# Infra shutdown tracking — populated during initialize_registry() so that
+# close_registry() can mirror the exact compose file + project used at startup.
+# ---------------------------------------------------------------------------
+
+_infra_started: bool = False               # True only when we actually brought infra up
+_infra_compose_file_used: Optional[Path] = None   # the resolved compose path used at startup
+
 security = HTTPBearer(auto_error=False)
 
 
@@ -55,7 +63,7 @@ async def initialize_registry(logger: Optional[logging.Logger] = None) -> Skills
     Precedence for each setting:
         module-level variable  >  environment variable  >  built-in default
     """
-    global _skills_registry, _db_logger, _logger
+    global _skills_registry, _db_logger, _logger, _infra_started, _infra_compose_file_used
 
     _logger = logger or logging.getLogger(__name__)
 
@@ -113,6 +121,9 @@ async def initialize_registry(logger: Optional[logging.Logger] = None) -> Skills
             try:
                 InfraManager.start_services(compose_file=compose_file)
                 _logger.info("auto_start_infra: docker compose up completed successfully")
+                # Record that WE started infra so close_registry() can shut it down.
+                _infra_started = True
+                _infra_compose_file_used = compose_file
             except Exception as exc:
                 _logger.error("auto_start_infra: docker compose startup failed: %s", exc)
 
@@ -182,7 +193,31 @@ async def get_auth_user(
 
 
 async def close_registry() -> None:
-    """Close the skills registry."""
-    global _skills_registry
+    """Close the skills registry and tear down any infra we started.
+
+    Mirrors the agent-registry / mcp-registry pattern: if this process brought
+    up the Docker Compose infra on startup (``_infra_started`` is ``True``),
+    it is responsible for bringing it back down on shutdown.
+    """
+    global _skills_registry, _infra_started, _infra_compose_file_used
+
+    # 1. Close the registry (and its DB connection) first.
     if _skills_registry:
         await _skills_registry.close()
+
+    # 2. Shut down Docker Compose infra only if this process started it.
+    if _infra_started:
+        try:
+            from oai_skills_registry.services.infra_manager import InfraManager
+            _log = _logger or logging.getLogger(__name__)
+            _log.info(
+                "auto_stop_infra: shutting down infra docker compose project "
+                "(compose file: %s)",
+                _infra_compose_file_used,
+            )
+            InfraManager.stop_services(compose_file=_infra_compose_file_used)
+            _infra_started = False
+            _infra_compose_file_used = None
+        except Exception as exc:
+            _log = _logger or logging.getLogger(__name__)
+            _log.error("auto_stop_infra: failed to stop infra services: %s", exc)

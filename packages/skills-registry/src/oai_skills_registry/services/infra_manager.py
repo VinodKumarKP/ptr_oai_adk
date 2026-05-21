@@ -150,6 +150,70 @@ class InfraManager:
             )
 
     @classmethod
+    def stop_services(
+        cls,
+        compose_file: Optional[Path] = None,
+        project_name: str = "skills-registry",
+        services: Optional[List[str]] = None,
+    ) -> None:
+        """Stop infra services synchronously (docker compose stop / down).
+
+        Mirrors :meth:`start_services` — no event loop needed, safe to call
+        from the FastAPI lifespan shutdown hook.
+
+        If *services* is given, only those containers are stopped (``docker
+        compose stop <svc> …``).  If *services* is ``None`` the entire Compose
+        project is torn down (``docker compose down``).
+
+        A non-zero exit code is logged as a warning rather than raising an
+        exception so that an infra teardown failure never prevents the rest of
+        the application shutdown sequence from running.
+
+        Args:
+            compose_file:  Path to the docker-compose file; defaults to the
+                           bundled file shipped with this package.
+            project_name:  Docker Compose project name (must match what was
+                           passed to :meth:`start_services`).
+            services:      Optional list of service names to stop individually.
+                           Pass ``None`` (the default) to bring down the whole
+                           project.
+        """
+        target_file = compose_file or _BUNDLED_COMPOSE
+
+        if services:
+            cmd = [
+                "docker", "compose",
+                "-f", str(target_file),
+                "-p", project_name,
+                "stop",
+            ] + list(services)
+            action = "stop"
+        else:
+            cmd = [
+                "docker", "compose",
+                "-f", str(target_file),
+                "-p", project_name,
+                "down",
+            ]
+            action = "down"
+
+        logger.info("auto_stop_infra: running: %s", " ".join(cmd))
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        combined = (result.stdout + result.stderr).strip()
+
+        if result.returncode == 0:
+            if combined:
+                logger.debug("docker compose %s output:\n%s", action, combined)
+            logger.info("auto_stop_infra: infra services stopped successfully.")
+            return
+
+        # Non-zero exit is a warning — never crash during shutdown.
+        logger.warning(
+            "auto_stop_infra: docker compose %s returned exit %d:\n%s",
+            action, result.returncode, combined,
+        )
+
+    @classmethod
     async def wait_for_postgres(
         cls,
         host: Optional[str] = None,
