@@ -31,14 +31,24 @@ Authentication behaviour is controlled by three environment variables:
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Optional
 
 from fastapi import HTTPException, Request
 from fastapi.security import APIKeyHeader
 
-from oai_platform_core.security import TokenManager, is_saml_token, extract_bearer_token
+from oai_platform_core.security import (
+    TokenManager,
+    is_saml_token,
+    extract_bearer_token,
+    is_trusted_peer,
+    TRUSTED_PEER_NAMES,
+    trusted_subnets,
+)
 from oai_platform_core.security.saml_token_validation import TokenValidator, TokenValidationError
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["verify_api_key", "_validate_token"]
 
@@ -55,6 +65,8 @@ def _get_token_manager() -> TokenManager:
     if _token_manager is None:
         _token_manager = TokenManager(db_path_name="skills_registry_tokens.db")
     return _token_manager
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -93,16 +105,31 @@ def _validate_token(request: Request) -> None:
     if not auth_enabled:
         return
 
-    # 3. Trusted-peer bypass (loopback / docker internal) unless FORCE_AUTH=true
-    _LOCAL_PEERS = {"127.0.0.1", "::1", "localhost", "0.0.0.0", "host.docker.internal"}
+    # 3. Trusted-peer bypass (loopback / Docker bridge) unless FORCE_AUTH=true
     peer = request.client.host if request.client else ""
-    if peer in _LOCAL_PEERS and os.environ.get("FORCE_AUTH", "false").lower() != "true":
+    force_auth = os.environ.get("FORCE_AUTH", "false").lower() == "true"
+
+    if is_trusted_peer(peer) and not force_auth:
+        logger.debug("Auth skipped — peer %s is a trusted local/Docker address", peer)
         return
+
+    if not is_trusted_peer(peer):
+        logger.info(
+            "Auth required — peer %s is not a trusted address  "
+            "(trusted names: %s; trusted subnets: %s)  "
+            "Set SKILLS_AUTH_ENABLED=false to disable auth, or "
+            "add extra CIDRs via TRUSTED_SUBNETS env var.",
+            peer, sorted(TRUSTED_PEER_NAMES), [str(n) for n in trusted_subnets()],
+        )
 
     # 4. Extract token from request headers (supports api-token, api_token,
     #    x-api-key, and Authorization: Bearer …)
     token = extract_bearer_token(dict(request.headers))
     if not token:
+        logger.warning(
+            "Auth rejected — no Bearer token  method=%s path=%s client=%s  headers=%s",
+            request.method, request.url.path, peer, list(request.headers.keys()),
+        )
         raise HTTPException(status_code=401, detail="API token required")
 
     # 5a. SAML token path
@@ -111,19 +138,23 @@ def _validate_token(request: Request) -> None:
             validator = TokenValidator(os.environ.get("SAML_PUBLIC_KEY_PATH"))
             result = validator.validate_token_and_get_role(token)
             if result.is_valid:
+                logger.info("Auth OK (SAML) — user=%s role=%s client=%s", result.email, result.role, peer)
                 request.state.user_role = result.role
                 request.state.user_email = result.email
                 request.state.user_id = result.email   # normalise to user_id
                 return
+            logger.warning("Auth rejected (SAML) — %s  client=%s", result.error_message, peer)
             raise HTTPException(
                 status_code=401,
                 detail=result.error_message or "Invalid SAML token",
             )
         except TokenValidationError as exc:
+            logger.warning("Auth rejected (SAML TokenValidationError) — %s  client=%s", exc, peer)
             raise HTTPException(status_code=401, detail=str(exc)) from exc
         except HTTPException:
             raise
         except Exception as exc:                       # noqa: BLE001
+            logger.error("SAML validation service unavailable — %s  client=%s", exc, peer)
             raise HTTPException(
                 status_code=500,
                 detail="SAML token validation service unavailable",
@@ -133,7 +164,10 @@ def _validate_token(request: Request) -> None:
     token_manager = _get_token_manager()
     user_info = token_manager.validate_token("skills-registry", token)
     if not user_info:
+        logger.warning("Auth rejected (API key) — invalid/expired  client=%s", peer)
         raise HTTPException(status_code=401, detail="Invalid or expired API token")
+    logger.info("Auth OK (API key) — user_id=%s role=%s client=%s",
+                user_info.get("user_id"), user_info.get("role_id"), peer)
     request.state.user_id = user_info.get("user_id")
     request.state.user_role = user_info.get("role_id")
 

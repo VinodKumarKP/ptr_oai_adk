@@ -9,20 +9,31 @@ FastAPI-specific parts (HTTPException, request.state mutation) stay here.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Optional
 
 from fastapi import HTTPException, Request
 from fastapi.security import APIKeyHeader
 
-from oai_platform_core.security import TokenManager, is_saml_token, extract_bearer_token
+from oai_platform_core.security import (
+    TokenManager,
+    is_saml_token,
+    extract_bearer_token,
+    is_trusted_peer,
+    TRUSTED_PEER_NAMES,
+    trusted_subnets,
+)
 from oai_platform_core.security.saml_token_validation import TokenValidator, TokenValidationError
+
+logger = logging.getLogger(__name__)
 
 # Define the API key security scheme
 api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
 
 # Shared TokenManager — one connection pool for the process lifetime.
 _token_manager: Optional[TokenManager] = None
+
 
 
 def _get_token_manager() -> TokenManager:
@@ -51,13 +62,28 @@ def _validate_token(request: Request, server_name: str) -> None:
     if not auth_enabled:
         return
 
-    _LOCAL_PEERS = {"127.0.0.1", "::1", "localhost", "0.0.0.0", "host.docker.internal"}
     peer = request.client.host if request.client else ""
-    if peer in _LOCAL_PEERS and os.environ.get("FORCE_AUTH", "false").lower() == "false":
+    force_auth = os.environ.get("FORCE_AUTH", "false").lower() != "false"
+
+    if is_trusted_peer(peer) and not force_auth:
+        logger.debug("Auth skipped — peer %s is a trusted local/Docker address", peer)
         return
+
+    if not is_trusted_peer(peer):
+        logger.info(
+            "Auth required — peer %s is not a trusted address  "
+            "(trusted names: %s; trusted subnets: %s)  "
+            "Set MCP_AUTH_ENABLED=false to disable auth, or "
+            "add extra CIDRs via TRUSTED_SUBNETS env var.",
+            peer, sorted(TRUSTED_PEER_NAMES), [str(n) for n in trusted_subnets()],
+        )
 
     token = extract_bearer_token(request.headers)
     if not token:
+        logger.warning(
+            "Auth rejected — no Bearer token  method=%s path=%s client=%s  headers=%s",
+            request.method, request.url.path, peer, list(request.headers.keys()),
+        )
         raise HTTPException(status_code=401, detail="API token required")
 
     if is_saml_token(token):
@@ -65,25 +91,32 @@ def _validate_token(request: Request, server_name: str) -> None:
             validator = TokenValidator(os.environ.get("SAML_PUBLIC_KEY_PATH"))
             result = validator.validate_token_and_get_role(token)
             if result.is_valid:
+                logger.info("Auth OK (SAML) — user=%s role=%s client=%s", result.email, result.role, peer)
                 request.state.user_role = result.role
                 request.state.user_email = result.email
                 return
+            logger.warning("Auth rejected (SAML) — %s  client=%s", result.error_message, peer)
             raise HTTPException(
                 status_code=401,
                 detail=result.error_message or "Invalid SAML token",
             )
         except TokenValidationError as exc:
+            logger.warning("Auth rejected (SAML TokenValidationError) — %s  client=%s", exc, peer)
             raise HTTPException(status_code=401, detail=str(exc))
         except HTTPException:
             raise
-        except Exception:
+        except Exception as exc:
+            logger.error("SAML validation service unavailable — %s  client=%s", exc, peer)
             raise HTTPException(
                 status_code=500, detail="SAML token validation service unavailable"
             )
     else:
         user_info = _get_token_manager().validate_token(server_name, token)
         if not user_info:
+            logger.warning("Auth rejected (API key) — invalid/expired  server=%s client=%s", server_name, peer)
             raise HTTPException(status_code=401, detail="Invalid or expired API token")
+        logger.info("Auth OK (API key) — user_id=%s role=%s server=%s client=%s",
+                    user_info.get("user_id"), user_info.get("role_id"), server_name, peer)
         request.state.user_id = user_info.get("user_id")
         request.state.user_role = user_info.get("role_id")
 

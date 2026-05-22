@@ -9,8 +9,6 @@ FastAPI-specific parts (HTTPException, request.state mutation) stay here.
 
 from __future__ import annotations
 
-import functools
-import ipaddress
 import logging
 import os
 from typing import Optional
@@ -18,7 +16,14 @@ from typing import Optional
 from fastapi import HTTPException, Request
 from fastapi.security import APIKeyHeader
 
-from oai_platform_core.security import TokenManager, is_saml_token, extract_bearer_token
+from oai_platform_core.security import (
+    TokenManager,
+    is_saml_token,
+    extract_bearer_token,
+    is_trusted_peer,
+    TRUSTED_PEER_NAMES,
+    trusted_subnets,
+)
 from oai_platform_core.security.saml_token_validation import TokenValidator, TokenValidationError
 
 logger = logging.getLogger(__name__)
@@ -29,54 +34,6 @@ api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
 # Shared TokenManager — one connection pool for the process lifetime.
 _token_manager: Optional[TokenManager] = None
 
-# ---------------------------------------------------------------------------
-# Trusted-peer detection
-# ---------------------------------------------------------------------------
-# Exact hostnames / IPs that are always trusted (no token required).
-_TRUSTED_PEER_NAMES: frozenset = frozenset({
-    "127.0.0.1", "::1", "localhost", "0.0.0.0", "host.docker.internal",
-})
-
-# Docker containers calling the host via host.docker.internal arrive with the
-# container's bridge IP as the *source*, not "host.docker.internal".  We trust
-# the standard Docker bridge / overlay ranges by default.  Add more via the
-# TRUSTED_SUBNETS env var (comma-separated CIDRs, e.g. "10.8.0.0/24").
-_DEFAULT_TRUSTED_CIDRS = (
-    "172.16.0.0/12",    # Docker default bridge: 172.17-31.x.x
-    "192.168.65.0/24",  # Docker Desktop gateway on macOS / Windows
-)
-
-
-@functools.lru_cache(maxsize=1)
-def _trusted_subnets() -> tuple:
-    """Build and cache the list of trusted IP networks (evaluated once)."""
-    cidrs = list(_DEFAULT_TRUSTED_CIDRS)
-    extra = os.environ.get("TRUSTED_SUBNETS", "").strip()
-    if extra:
-        cidrs.extend(c.strip() for c in extra.split(",") if c.strip())
-    nets = []
-    for cidr in cidrs:
-        try:
-            nets.append(ipaddress.ip_network(cidr, strict=False))
-        except ValueError:
-            logger.warning("Ignoring invalid TRUSTED_SUBNETS entry: %r", cidr)
-    logger.debug("Trusted subnets: %s", [str(n) for n in nets])
-    return tuple(nets)
-
-
-def _is_trusted_peer(peer: str) -> bool:
-    """Return True if *peer* is a trusted loopback, hostname, or Docker-bridge address."""
-    if peer in _TRUSTED_PEER_NAMES:
-        return True
-    try:
-        addr = ipaddress.ip_address(peer)
-        matched = next((n for n in _trusted_subnets() if addr in n), None)
-        if matched:
-            logger.debug("Peer %s matched trusted subnet %s", peer, matched)
-            return True
-    except ValueError:
-        pass  # peer is a hostname we don't recognise — fall through to auth
-    return False
 
 
 def _get_token_manager() -> TokenManager:
@@ -115,19 +72,19 @@ def _validate_token(request: Request, agent_name: str) -> None:
 
     force_auth = os.environ.get("FORCE_AUTH", "false").lower() != "false"
 
-    if _is_trusted_peer(peer) and not force_auth:
+    if is_trusted_peer(peer) and not force_auth:
         logger.debug("Auth skipped — peer %s is a trusted local/Docker address", peer)
         return
 
-    if not _is_trusted_peer(peer):
+    if not is_trusted_peer(peer):
         logger.info(
             "Auth required — peer %s is not a trusted address  "
             "(trusted names: %s; trusted subnets: %s)  "
             "Set AGENT_AUTH_ENABLED=false to disable auth, or "
             "add extra CIDRs via TRUSTED_SUBNETS env var.",
             peer,
-            sorted(_TRUSTED_PEER_NAMES),
-            [str(n) for n in _trusted_subnets()],
+            sorted(TRUSTED_PEER_NAMES),
+            [str(n) for n in trusted_subnets()],
         )
 
     token = extract_bearer_token(request.headers)
