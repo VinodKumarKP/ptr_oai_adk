@@ -31,12 +31,13 @@ dependencies = [
 
 [project.optional-dependencies]
 # Install when Redis/Valkey is not available (dev / demo mode)
-redislite = ["redislite"]
+# DiskCache is Windows-compatible alternative to redislite
+diskcache = ["diskcache>=5.6"]
 # Async database drivers — used by the db.base backend classes
 postgres = ["asyncpg>=0.29"]
 sqlite   = ["aiosqlite>=0.19"]
 # All optional extras bundled
-all = ["oai-platform-core[redislite,postgres,sqlite]"]
+all = ["oai-platform-core[diskcache,postgres,sqlite]"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
