@@ -61,7 +61,7 @@ def main():
     if os.environ.get('MCP_REGISTRY_URL', None):
         parsed = urlparse(os.environ.get('MCP_REGISTRY_URL'))
         port = parsed.port
-        os.environ['MCP_BASE_URL'] = parsed.netloc.split(':')[0]
+        os.environ['MCP_BASE_URL'] = f"{parsed.scheme}://{parsed.netloc.split(':')[0]}"
         os.environ['MCP_BASE_URL_PORT'] = str(port)
     elif os.environ.get('MCP_BASE_URL', None):
         port = os.environ.get('MCP_BASE_URL_PORT')
