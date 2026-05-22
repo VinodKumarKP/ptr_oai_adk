@@ -224,12 +224,12 @@ class AgentDiscovery:
         headers = {"Accept": "application/vnd.github.v3+json"}
         if resolved_token:
             headers["Authorization"] = f"token {resolved_token}"
-            self.logger.debug(
+            self.logger.info(
                 "GitHub auth: using %s",
                 "explicit token" if auth_token else "GITHUB_TOKEN env var",
             )
         else:
-            self.logger.debug("GitHub auth: unauthenticated (public repo only)")
+            self.logger.info("GitHub auth: unauthenticated (public repo only)")
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             yaml_entries = await self._find_yaml_entries(
