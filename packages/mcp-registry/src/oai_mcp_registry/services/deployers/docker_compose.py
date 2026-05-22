@@ -102,6 +102,7 @@ class DockerComposeManager(BaseDockerComposeManager, BaseDeployer):  # type: ign
             "command": f"--port {port} --transport streamable-http",
             "restart": "unless-stopped",
             "networks": [self._network_name],
+            "extra_hosts": ["host.docker.internal:host-gateway"],
             "healthcheck": {
                 "test": ["CMD", "curl", "-f", f"http://localhost:{port}/health"],
                 "interval": "30s",
@@ -136,6 +137,7 @@ class DockerComposeManager(BaseDockerComposeManager, BaseDeployer):  # type: ign
             "container_name": "mcp-valkey",
             "environment": {"REDIS_PASSWORD": "admin"},
             "networks": {self._network_name: {"ipv4_address": "172.26.0.11"}},
+            "extra_hosts": ["host.docker.internal:host-gateway"],
             "command": "valkey-server --appendonly yes",
             "ports": ["6380:6379"],
             "volumes": ["valkey-mcp-data:/data"],
@@ -163,6 +165,7 @@ class DockerComposeManager(BaseDockerComposeManager, BaseDeployer):  # type: ign
                 "-c", "effective_io_concurrency=200",
             ],
             "networks": {self._network_name: {"ipv4_address": "172.26.0.10"}},
+            "extra_hosts": ["host.docker.internal:host-gateway"],
             "ports": ["5433:5432"],
             "volumes": ["mcp_postgres_data:/var/lib/postgresql/data"],
             "restart": "unless-stopped",
