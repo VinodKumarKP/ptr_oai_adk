@@ -54,7 +54,7 @@ def main():
     if os.environ.get('AGENT_REGISTRY_URL', None):
         parsed = urlparse(os.environ.get('AGENT_REGISTRY_URL'))
         port = parsed.port
-        os.environ['AGENT_BASE_URL'] = parsed.netloc.split(':')[0]
+        os.environ['AGENT_BASE_URL'] = f"{parsed.scheme}://{parsed.netloc.split(':')[0]}"
         os.environ['AGENT_BASE_URL_PORT'] = str(port)
     elif os.environ.get('AGENT_BASE_URL', None):
         port = os.environ.get('AGENT_BASE_URL_PORT')
