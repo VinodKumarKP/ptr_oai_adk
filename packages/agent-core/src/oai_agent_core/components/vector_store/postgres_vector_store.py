@@ -81,20 +81,33 @@ class PostgresVectorStore(BaseVectorStore):
             raise ValueError(f"Failed to initialize Postgres vector store: {str(e)}")
 
     def _get_connection(self):
-        """Get a database connection."""
+        """Get a database connection with the vector type registered."""
         conn = psycopg2.connect(self.connection_string)
         register_vector(conn)
         return conn
 
     def _initialize_database(self):
-        """Initialize database: create extension and tables."""
+        """Initialize database: create extension, tables, and indexes.
+
+        Uses a plain connection (without register_vector) to create the
+        pgvector extension first, then registers the type on a fresh
+        connection so that subsequent calls to _get_connection() succeed.
+        """
+        # Step 1 — plain connection: CREATE EXTENSION before register_vector
+        # is called, because register_vector looks up the vector OID in
+        # pg_type and will fail on a database where the extension is absent.
+        init_conn = psycopg2.connect(self.connection_string)
+        try:
+            with init_conn.cursor() as cur:
+                cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            init_conn.commit()
+        finally:
+            init_conn.close()
+
+        # Step 2 — vector type now exists, get a fully registered connection
         conn = self._get_connection()
         try:
             with conn.cursor() as cur:
-                # Create pgvector extension if not exists
-                cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
-                conn.commit()
-
                 # Detect vector dimensions if not provided
                 if self.vector_dimensions is None:
                     self.logger.info("Auto-detecting vector dimensions from embedding function...")
@@ -113,24 +126,24 @@ class PostgresVectorStore(BaseVectorStore):
                 """
                 cur.execute(create_table_query)
 
-                # Create index for vector similarity search (using HNSW or IVFFlat)
-                # HNSW is generally better for most use cases
+                # Create HNSW index (fall back to IVFFlat for older pgvector)
                 index_name = f"{self.table_name}_embedding_idx"
                 try:
                     cur.execute(f"""
                         CREATE INDEX IF NOT EXISTS {index_name}
-                        ON {self.table_name} 
+                        ON {self.table_name}
                         USING hnsw (embedding vector_cosine_ops)
                     """)
                 except Exception as e:
-                    # If HNSW fails, try IVFFlat
                     self.logger.warning(f"HNSW index creation failed, trying IVFFlat: {e}")
-                    cur.execute(f"""
-                        CREATE INDEX IF NOT EXISTS {index_name}
-                        ON {self.table_name} 
-                        USING ivfflat (embedding vector_cosine_ops)
-                        WITH (lists = 100)
-                    """)
+                    conn.rollback()
+                    with conn.cursor() as cur2:
+                        cur2.execute(f"""
+                            CREATE INDEX IF NOT EXISTS {index_name}
+                            ON {self.table_name}
+                            USING ivfflat (embedding vector_cosine_ops)
+                            WITH (lists = 100)
+                        """)
 
                 conn.commit()
                 self.logger.debug(f"Database tables and indexes created for {self.table_name}")

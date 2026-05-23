@@ -1,0 +1,100 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "oai-kb-registry"
+version = "1.0.0"
+description = "A FastAPI-based Knowledge Base Registry for managing vector stores with document ingestion, embedding, and semantic search."
+authors = [{ name = "Vinod Kumar KP", email = "vinod.kunnum-purath@capgemini.com" }]
+maintainers = [{ name = "Development Team" }]
+license = { text = "Proprietary" }
+readme = "README.md"
+requires-python = ">=3.9"
+keywords = [
+    "knowledge-base",
+    "vector-store",
+    "embeddings",
+    "semantic-search",
+    "fastapi",
+    "rag",
+    "agent",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: Other/Proprietary License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "fastapi>=0.104.1",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.5.0",
+    "python-multipart>=0.0.6",
+    "aiohttp>=3.9.1",
+    "httpx>=0.25.0",
+    "oai-platform-core",
+    "oai-agent-core",
+    # Document parsing
+    "pypdf>=4.0.0",
+    "python-docx>=1.1.0",
+    # Chunking / embedding (LiteLLM for all providers — no provider-specific packages needed)
+    "langchain-core>=0.1.0",
+    "langchain-text-splitters>=0.0.1",
+    "litellm>=1.0.0",
+    # S3 source support
+    "boto3>=1.34.0",
+]
+
+[project.optional-dependencies]
+postgres = [
+    "asyncpg>=0.29.0",
+    "pgvector>=0.2.0",
+    "psycopg2-binary>=2.9.0",
+]
+sqlite = [
+    "aiosqlite>=0.19.0",
+]
+chroma = [
+    "chromadb>=0.4.0",
+    "langchain-chroma>=0.1.0",
+]
+dev = [
+    "pytest>=7.4.3",
+    "pytest-asyncio>=0.21.1",
+    "pytest-cov>=4.1.0",
+    "black>=23.12.0",
+    "isort>=5.13.0",
+    "mypy>=1.7.0",
+]
+all = [
+    "oai-kb-registry[postgres,sqlite,chroma,dev]",
+]
+
+[project.scripts]
+oai-kb-registry = "oai_kb_registry.cli:main"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oai_kb_registry"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]
+asyncio_mode = "strict"
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311", "py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
