@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -19,6 +19,7 @@ class VectorDBType(str, Enum):
     CHROMA = "chroma"
     POSTGRES = "postgres"
     S3 = "s3"
+    PINECONE = "pinecone"
 
 
 class DeploymentMode(str, Enum):
@@ -68,6 +69,12 @@ class VectorDBConfig(BaseModel):
     s3_region: Optional[str] = "us-east-1"
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
+    # Pinecone (always external — no builtin container)
+    pinecone_api_key: Optional[str] = None
+    pinecone_index_name: Optional[str] = None
+    pinecone_namespace: Optional[str] = None
+    pinecone_cloud: Optional[str] = "aws"
+    pinecone_region: Optional[str] = "us-east-1"
 
 
 class EmbeddingConfig(BaseModel):
@@ -115,6 +122,13 @@ class KBRegistration(BaseModel):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     # Chunking settings
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
+
+    @model_validator(mode="after")
+    def pinecone_is_always_external(self) -> "KBRegistration":
+        """Pinecone has no builtin container — force deployment_mode to external."""
+        if self.vector_db_type == VectorDBType.PINECONE:
+            self.deployment_mode = DeploymentMode.EXTERNAL
+        return self
 
 
 class KBDetails(BaseModel):

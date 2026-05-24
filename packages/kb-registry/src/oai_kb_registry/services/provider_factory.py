@@ -167,12 +167,35 @@ class VectorStoreProviderFactory:
 
         configs = configs or {}
 
+        vdb = vector_db_type.lower()
+
+        # ---- Pinecone — must be handled BEFORE embedding_fn is created ----
+        # Pinecone uses integrated server-side inference; no local embeddings.
+        if vdb == "pinecone":
+            api_key    = configs.get("pinecone_api_key")
+            index_name = configs.get("pinecone_index_name")
+            namespace  = configs.get("pinecone_namespace") or kb_name
+            if not api_key:
+                raise ValueError(
+                    "pinecone_api_key is required in vector_db_config for Pinecone"
+                )
+            if not index_name:
+                raise ValueError(
+                    "pinecone_index_name is required in vector_db_config for Pinecone"
+                )
+            return VectorStoreFactory.create_vector_store(
+                "pinecone",
+                collection_name=kb_name,
+                api_key=api_key,
+                index_name=index_name,
+                namespace=namespace,
+            )
+
+        # For all other backends, create the LiteLLM embedding function first.
         embedding_fn = _make_litellm_embeddings(
             model_id=embedding_model_id,
             region_name=embedding_region,
         )
-
-        vdb = vector_db_type.lower()
 
         # ---- Chroma -------------------------------------------------------
         if vdb == "chroma":

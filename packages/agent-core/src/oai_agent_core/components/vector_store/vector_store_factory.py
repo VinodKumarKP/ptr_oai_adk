@@ -37,5 +37,8 @@ class VectorStoreFactory:
         elif vector_store_type == 's3':
             from oai_agent_core.components.vector_store.s3_vector_store import S3VectorStore
             return S3VectorStore(**kwargs)
+        elif vector_store_type == 'pinecone':
+            from oai_agent_core.components.vector_store.pinecone_vector_store import PineconeVectorStore
+            return PineconeVectorStore(**kwargs)
         else:
             raise ValueError(f"Unknown vector store type: {vector_store_type}")
