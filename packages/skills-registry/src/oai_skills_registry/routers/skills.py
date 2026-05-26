@@ -4,6 +4,7 @@ Skills catalog routes — list, get, register, and template download.
 
 import io
 import logging
+import os
 import zipfile
 from typing import Dict, List
 
@@ -11,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from oai_skills_registry.dependencies import get_registry, verify_bearer_token
+from oai_platform_core.readme_fetcher import fetch_readme, read_local_readme, invalidate_readme_cache, readme_cache_stats
 from oai_skills_registry.models import (
     BulkRegistrationRequest,
     BulkRegistrationResult,
@@ -249,6 +251,90 @@ async def register_skill(
     except Exception as exc:
         logger.error("Failed to register skill: %s", exc)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# README endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/skills/{skill_name}/readme")
+async def get_skill_readme(
+    skill_name: str,
+    registry: SkillsRegistry = Depends(get_registry),
+):
+    """Return the skill's README or SKILL.md.
+
+    Resolution order:
+    1. Local filesystem: ``SKILLS_LOCAL_DIR/{skill_name}/README.md``
+       then ``SKILLS_LOCAL_DIR/{skill_name}/SKILL.md``
+    2. GitHub: ``git_repository_url`` field, fetched via raw.githubusercontent.com
+    """
+    skill = await registry.db_logger.get_skill(skill_name)
+    if not skill:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Skill '{skill_name}' not found")
+
+    # ── 1. Local filesystem (preferred) ──────────────────────────────────────
+    local_dir = os.getenv("SKILLS_LOCAL_DIR")
+    if local_dir:
+        content, meta = read_local_readme(
+            local_dir, skill_name,
+            filenames=["README.md", "SKILL.md", "readme.md"],
+        )
+        if content is not None:
+            return {
+                "skill_name": skill_name,
+                "content":    content,
+                "cached":     meta.get("cached", False),
+                "local":      True,
+                "file_path":  meta.get("file_path"),
+            }
+
+    # ── 2. GitHub fallback ────────────────────────────────────────────────────
+    repo_url = skill.get("git_repository_url")
+    if not repo_url:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No README found: configure SKILLS_LOCAL_DIR or add a 'git_repository_url'",
+        )
+
+    content, meta = await fetch_readme(
+        repo_url=repo_url,
+        cache_key=f"skill:{skill_name}",
+        github_token=os.getenv("GITHUB_TOKEN"),
+        filenames=[f"{skill_name}/README.md", f"{skill_name}/SKILL.md", f"{skill_name}/readme.md"],
+    )
+    if content is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=meta.get("error", "README not found"))
+
+    return {
+        "skill_name": skill_name,
+        "content":    content,
+        "cached":     meta.get("cached", False),
+        "branch":     meta.get("branch"),
+        "source_url": meta.get("url"),
+    }
+
+
+@router.post("/skills/{skill_name}/readme/invalidate-cache")
+async def invalidate_skill_readme_cache(
+    skill_name: str,
+    _auth: bool = Depends(verify_bearer_token),
+    registry: SkillsRegistry = Depends(get_registry),
+):
+    """Evict the cached README for this skill."""
+    local_dir = os.getenv("SKILLS_LOCAL_DIR")
+    if local_dir:
+        invalidate_readme_cache(f"local:{local_dir}:{skill_name}")
+    invalidate_readme_cache(f"skill:{skill_name}")
+    return {"skill_name": skill_name, "cache_cleared": True}
+
+
+@router.get("/readme/cache-stats")
+async def skill_readme_cache_stats():
+    """Return cache statistics for all skill README entries."""
+    stats = readme_cache_stats()
+    stats["entries"] = [e for e in stats["entries"] if e["key"].startswith("skill:")]
+    return stats
 
 
 # ---------------------------------------------------------------------------

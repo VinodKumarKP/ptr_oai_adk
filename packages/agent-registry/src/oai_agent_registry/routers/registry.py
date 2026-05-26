@@ -1,12 +1,14 @@
 import asyncio
 import json
 import logging
+import os
 from typing import AsyncGenerator, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.responses import StreamingResponse
 
 from oai_agent_registry.dependencies import get_registry
+from oai_platform_core.readme_fetcher import fetch_readme, read_local_readme, invalidate_readme_cache, readme_cache_stats
 from oai_agent_registry.models import (
     AgentAction,
     AgentActionHistory,
@@ -416,6 +418,79 @@ async def update_server_env_vars(
 ):
     """Update environment variables for a registered agent server."""
     return await registry.update_server_env_vars(agent_name, payload.env_vars, payload.sensitive_vars)
+
+
+@router.get("/agents/{agent_name}/readme")
+async def get_agent_readme(
+    agent_name: str,
+    registry: AgentRegistry = Depends(get_registry),
+):
+    """Return the agent's README.
+
+    Resolution order:
+    1. Local filesystem: ``AGENT_LOCAL_DIR/{agent_name}/README.md``
+    2. GitHub: ``source`` field URL, fetched via raw.githubusercontent.com
+    """
+    agent = await registry.db_logger.get_agent_details(agent_name)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
+    # ── 1. Local filesystem (preferred) ──────────────────────────────────────
+    local_dir = os.getenv("AGENT_LOCAL_DIR")
+    if local_dir:
+        content, meta = read_local_readme(local_dir, agent_name)
+        if content is not None:
+            return {
+                "agent_name": agent_name,
+                "content":    content,
+                "cached":     meta.get("cached", False),
+                "local":      True,
+                "file_path":  meta.get("file_path"),
+            }
+
+    # ── 2. GitHub fallback ────────────────────────────────────────────────────
+    repo_url = agent.get("source")
+    if not repo_url:
+        raise HTTPException(status_code=404, detail=f"No README found: configure AGENT_LOCAL_DIR or add a 'source' URL")
+
+    content, meta = await fetch_readme(
+        repo_url=repo_url,
+        cache_key=f"agent:{agent_name}",
+        github_token=os.getenv("GITHUB_TOKEN"),
+        filenames=[f"agentic_registry_agents/agents/{agent_name}/README.md"]
+    )
+    if content is None:
+        raise HTTPException(status_code=404, detail=meta.get("error", "README not found"))
+
+    return {
+        "agent_name": agent_name,
+        "content":    content,
+        "cached":     meta.get("cached", False),
+        "branch":     meta.get("branch"),
+        "source_url": meta.get("url"),
+    }
+
+
+@router.post("/agents/{agent_name}/readme/invalidate-cache")
+async def invalidate_agent_readme_cache(
+    agent_name: str,
+    registry: AgentRegistry = Depends(get_registry),
+):
+    """Evict the cached README for this agent."""
+    # Invalidate both possible cache key forms
+    local_dir = os.getenv("AGENT_LOCAL_DIR")
+    if local_dir:
+        invalidate_readme_cache(f"local:{local_dir}:{agent_name}")
+    invalidate_readme_cache(f"agent:{agent_name}")
+    return {"agent_name": agent_name, "cache_cleared": True}
+
+
+@router.get("/readme/cache-stats")
+async def agent_readme_cache_stats():
+    """Return cache statistics for all agent README entries."""
+    stats = readme_cache_stats()
+    stats["entries"] = [e for e in stats["entries"] if e["key"].startswith("agent:")]
+    return stats
 
 
 @router.api_route("/{agent_name}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])

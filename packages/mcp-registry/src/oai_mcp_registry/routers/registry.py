@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 from typing import AsyncGenerator, Dict, List, Optional, Tuple
 
@@ -8,6 +9,9 @@ from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
 from oai_mcp_registry.dependencies import get_registry
+from oai_platform_core.readme_fetcher import fetch_readme, read_local_readme, invalidate_readme_cache, readme_cache_stats
+
+logger = logging.getLogger(__name__)
 from oai_mcp_registry.models import (
     ServerRegistration,
     ServerDeregistration,
@@ -458,3 +462,80 @@ async def register_servers_bulk(
         successful=successful,
         failed=failed,
     )
+
+
+# ---------------------------------------------------------------------------
+# README endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/servers/{server_name}/readme")
+async def get_server_readme(
+    server_name: str,
+    registry: MCPRegistry = Depends(get_registry),
+):
+    """Return the MCP server's README.
+
+    Resolution order:
+    1. Local filesystem: ``MCP_LOCAL_DIR/{server_name}/README.md``
+       (matches the convention: mcp_registry_servers/servers/{server_name}/README.md)
+    2. GitHub: ``source`` field URL, fetched via raw.githubusercontent.com
+    """
+    server = await registry.db_logger.get_server_details(server_name)
+    if not server:
+        raise HTTPException(status_code=404, detail=f"Server '{server_name}' not found")
+
+    # ── 1. Local filesystem (preferred) ──────────────────────────────────────
+    local_dir = os.getenv("MCP_LOCAL_DIR")
+    if local_dir:
+        content, meta = read_local_readme(local_dir, server_name)
+        if content is not None:
+            return {
+                "server_name": server_name,
+                "content":     content,
+                "cached":      meta.get("cached", False),
+                "local":       True,
+                "file_path":   meta.get("file_path"),
+            }
+
+    # ── 2. GitHub fallback ────────────────────────────────────────────────────
+    repo_url = server.get("source")
+    if not repo_url:
+        raise HTTPException(status_code=404, detail=f"No README found: configure MCP_LOCAL_DIR or add a 'source' URL")
+
+    content, meta = await fetch_readme(
+        repo_url=repo_url,
+        cache_key=f"mcp:{server_name}",
+        github_token=os.getenv("GITHUB_TOKEN"),
+        filenames=[f"mcp_registry_servers/servers/{server_name}/README.md"]
+    )
+    if content is None:
+        raise HTTPException(status_code=404, detail=meta.get("error", "README not found"))
+
+    return {
+        "server_name": server_name,
+        "content":     content,
+        "cached":      meta.get("cached", False),
+        "branch":      meta.get("branch"),
+        "source_url":  meta.get("url"),
+    }
+
+
+@router.post("/servers/{server_name}/readme/invalidate-cache")
+async def invalidate_server_readme_cache(
+    server_name: str,
+    registry: MCPRegistry = Depends(get_registry),
+):
+    """Evict the cached README for this MCP server."""
+    local_dir = os.getenv("MCP_LOCAL_DIR")
+    if local_dir:
+        invalidate_readme_cache(f"local:{local_dir}:{server_name}")
+    invalidate_readme_cache(f"mcp:{server_name}")
+    return {"server_name": server_name, "cache_cleared": True}
+
+
+@router.get("/readme/cache-stats")
+async def mcp_readme_cache_stats():
+    """Return cache statistics for all MCP server README entries."""
+    stats = readme_cache_stats()
+    stats["entries"] = [e for e in stats["entries"] if e["key"].startswith("mcp:")]
+    return stats
