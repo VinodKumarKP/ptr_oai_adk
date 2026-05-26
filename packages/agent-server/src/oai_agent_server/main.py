@@ -43,6 +43,7 @@ from oai_agent_server.routers.tokens import create_token_router
 from oai_agent_server.routers.a2a import create_a2a_router
 from oai_agent_server.routers.scheduler import create_schedule_router
 from oai_agent_server.routers.admin import create_admin_router
+from oai_agent_server.routers.readme import create_readme_router # Import the new router
 from oai_agent_server.security.dependencies import verify_api_key, api_key_header
 from oai_agent_server.services.agent_service import AgentService
 from oai_agent_server.services.chat_service import ChatService
@@ -154,7 +155,7 @@ class AgentHTTPServer:
       /a2a                                     — A2A protocol (via a2a-sdk)
     """
 
-    ALWAYS_ACTIVE_MODES = {"health", "agent", "chat", "logs", "a2a", "monitoring", "token"}
+    ALWAYS_ACTIVE_MODES = {"health", "agent", "chat", "logs", "a2a", "monitoring", "token", "readme"}
 
     def __init__(
         self,
@@ -320,6 +321,7 @@ class AgentHTTPServer:
         )
         self.app.include_router(
             create_agent_router(
+                self.config_root, self.agent_name,
                 self.agent_service, self.enable_request_isolation, self.allowed_modes
             )
         )
@@ -335,6 +337,7 @@ class AgentHTTPServer:
         self.app.include_router(
             create_token_router(self.token_service, self.allowed_modes)
         )
+
         a2a_router, agent_card = create_a2a_router(
             agent=self.agent,
             agent_name=self.agent_name,
