@@ -189,7 +189,7 @@ class BasePostgresBackend(DatabaseBackend):
             return True
         except Exception as exc:
             if logger:
-                logger.warning(f"PostgreSQL backend unavailable at {host}:{port}/{name}: {exc}")
+                logger.warning(f"PostgreSQL backend unavailable at {dsn}: {exc}")
             await self._cleanup()
             return False
 
