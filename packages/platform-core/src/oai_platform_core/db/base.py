@@ -179,7 +179,7 @@ class BasePostgresBackend(DatabaseBackend):
                 min_size=min_size,
                 max_size=max_size,
                 command_timeout=timeout,
-                timeout=5,
+                timeout=10,
             )
             async with self._pool.acquire() as conn:
                 await conn.execute("SELECT 1")
@@ -189,7 +189,7 @@ class BasePostgresBackend(DatabaseBackend):
             return True
         except Exception as exc:
             if logger:
-                logger.warning(f"PostgreSQL backend unavailable at {dsn}: {exc}")
+                logger.warning(f"PostgreSQL backend unavailable at {host}:{port}/{name}: {exc}")
             await self._cleanup()
             return False
 
