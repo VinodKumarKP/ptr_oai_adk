@@ -49,6 +49,7 @@ class BaseMCPServer(ABC):
         """
         self.server_name = server_name
         self.logger = get_logger()
+        self.source_file = source_file
         self.server_config: MCPServerConfig = get_server_config(server_name, source_file)
         self.mcp = FastMCP(server_name)
         
@@ -90,6 +91,7 @@ class BaseMCPServer(ABC):
     def _register_routes(self):
         """Register system routes."""
         register_server_routes(
+            os.path.dirname(os.path.dirname(os.path.dirname(self.source_file))),
             self.mcp,
             self.server_name,
             self.server_config,

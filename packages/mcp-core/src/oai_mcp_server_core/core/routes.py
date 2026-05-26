@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import Query
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, JSONResponse
+from starlette.exceptions import HTTPException
 
 from oai_mcp_server_core.core.context import RequestAwareEnviron, request_env
 
@@ -11,7 +12,7 @@ from oai_mcp_server_core.core.context import RequestAwareEnviron, request_env
 MAX_TOKENS_PER_SERVER = 10
 
 
-def register_server_routes(mcp_app, server_name: str, server_config, enable_request_isolation: bool, token_manager):
+def register_server_routes(config_root, mcp_app, server_name: str, server_config, enable_request_isolation: bool, token_manager):
     """Register system and token routes for the MCP server."""
 
     @mcp_app.custom_route("/health", methods=["GET"])
@@ -50,6 +51,7 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
                 "GET /info": "Get MCP Server information",
                 "GET /debug/env": "Debug request environment (if enabled)",
                 "GET /docs": "Swagger UI documentation",
+                "GET /readme: Get the MCP Server readme"
                 "POST /token/custom": "Generate a token with custom TTL",
                 "POST /token/short-term": "Generate a short-term token (5 min)",
                 "POST /token/long-term": "Generate a long-term token (30 days)",
@@ -93,6 +95,27 @@ def register_server_routes(mcp_app, server_name: str, server_config, enable_requ
             "request_env": sanitized,
             "isolation_enabled": enable_request_isolation
         })
+
+    @mcp_app.custom_route("/readme", methods=["GET"])
+    async def get_agent_readme(request: Request) -> JSONResponse:
+        """
+        Reads and returns the content of the agent's README.md file.
+        """
+
+        readme_path = os.path.join(config_root, "servers", server_name, "README.md")
+
+        if not os.path.exists(readme_path):
+            raise HTTPException(status_code=404, detail=f"No README found at {readme_path}")
+
+        try:
+            with open(readme_path, "r") as f:
+                content = f.read()
+            return JSONResponse({
+                "server_name": server_name,
+                "content": content
+            })
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error reading README.md: {e}")
 
     def _token_response(token: str, user_id: Optional[str], role_id: Optional[str], ttl_seconds: Optional[int]) -> dict:
         """Build the HTTP response dict for a freshly generated token.
