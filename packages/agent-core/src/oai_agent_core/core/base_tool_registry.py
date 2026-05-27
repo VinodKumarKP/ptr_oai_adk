@@ -5,12 +5,11 @@ import logging
 import os.path
 import shutil
 import subprocess
+import sys
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
-
-import sys
-from cyclopts.utils import is_iterable
 
 from oai_agent_core.utils.dynamic_class_loader import DynamicClassLoader
 
@@ -51,6 +50,11 @@ class BaseToolRegistry(ABC):
         self.enable_lazy_loading = enable_lazy_loading
         self.available_mcp_tools = {}
         self.tools["shell"] = self.shell
+
+    def is_iterable(self, obj) -> bool:
+        if isinstance(obj, list | tuple | set | dict):  # Fast path for common types
+            return True
+        return not isinstance(obj, str) and isinstance(obj, Iterable)
 
     def shell(self, command: str) -> Dict[str, Any]:
         """
@@ -595,7 +599,7 @@ class BaseToolRegistry(ABC):
         for tool_name in tool_names:
             if tool_name in self.custom_modules:
                 functions = self.custom_modules[tool_name]
-                if is_iterable(functions):
+                if self.is_iterable(functions):
                     agent_tools.extend(functions)
                 else:
                     agent_tools.append(functions)
