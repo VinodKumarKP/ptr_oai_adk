@@ -43,7 +43,6 @@ from oai_agent_server.routers.tokens import create_token_router
 from oai_agent_server.routers.a2a import create_a2a_router
 from oai_agent_server.routers.scheduler import create_schedule_router
 from oai_agent_server.routers.admin import create_admin_router
-from oai_agent_server.routers.readme import create_readme_router # Import the new router
 from oai_agent_server.security.dependencies import verify_api_key, api_key_header
 from oai_agent_server.services.agent_service import AgentService
 from oai_agent_server.services.chat_service import ChatService

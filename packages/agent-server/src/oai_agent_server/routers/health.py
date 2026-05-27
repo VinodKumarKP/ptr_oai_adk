@@ -126,10 +126,10 @@ def create_health_router(agent_name, server_state, enable_request_isolation, all
             req_env = request_env.get()
 
             # Sanitize sensitive values
-            sanitized = sanitize_for_logging(req_env)
+            sanitized = sanitize_for_logging(req_env) if req_env is not None else {}
 
             return JSONResponse({
-                "request_env_count": len(req_env),
+                "request_env_count": len(req_env) if req_env is not None else 0,
                 "request_env": sanitized,
                 "isolation_enabled": enable_request_isolation
             })

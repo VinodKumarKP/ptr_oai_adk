@@ -21,7 +21,7 @@ def agent_router_app(mock_agent):
     agent_service.get_agent_info = AsyncMock(return_value={"name": "test"})
     agent_service.get_prompts = AsyncMock(return_value={"prompts": []})
     
-    router = create_agent_router(agent_service, enable_request_isolation=True)
+    router = create_agent_router("config_root", "test_agent", agent_service, enable_request_isolation=True)
     app = FastAPI()
     app.include_router(router)
     
@@ -141,7 +141,7 @@ def test_debug_env(health_router_app, monkeypatch):
     monkeypatch.setenv("DEBUG_MODE", "true")
     app, _ = health_router_app
     client = TestClient(app)
-    response = client.get("/debug/env")
+    response = client.get("/debug/env", headers={})
     assert response.status_code == 200
 
 
@@ -149,7 +149,7 @@ def test_debug_env_returns_404_when_debug_mode_unset(health_router_app, monkeypa
     monkeypatch.delenv("DEBUG_MODE", raising=False)
     app, _ = health_router_app
     client = TestClient(app)
-    response = client.get("/debug/env")
+    response = client.get("/debug/env", headers={})
     assert response.status_code == 404
     assert response.json()["detail"] == "Not Found"
 
