@@ -15,7 +15,6 @@ knowledge_base:
       region_name: "us-west-2"
     data_sources:
       - path: "docs/sample_policy.pdf"
-        filter: "*.pdf"
     text_splitter:
       type: "recursive_character"
       chunk_size: 1000

@@ -1,0 +1,50 @@
+# =============================================================================
+# Registry-referenced global KB (context augmentation) — new skills-like style
+# (registry equivalent of knowledge_base_agent.yaml)
+#
+# The top-level "knowledge_base" block mirrors the "skills" pattern:
+#
+#   knowledge_base:
+#     registry:          ← connection details defined ONCE (like skills.registry)
+#       url: ...
+#       token: ...
+#     sources:           ← flat list of KBs for global context augmentation
+#       - name: insurance
+#         ...
+#
+# Documents are retrieved and injected into the agent's prompt before it
+# responds (context augmentation), rather than being exposed as callable tools.
+#
+# Connection details priority (highest wins):
+#   1. Per-entry "registry_url" / "auth_token" keys (backward-compat override)
+#   2. "knowledge_base.registry.url" / ".token" in this YAML
+#   3. KB_REGISTRY_URL / AUTH_TOKEN environment variables
+# =============================================================================
+
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+knowledge_base:
+  # ── Registry connection (defined once, shared by all sources) ────────────
+  registry:
+    url: http://localhost:8085   # overrides KB_REGISTRY_URL env var
+    token: dummy-token           # overrides AUTH_TOKEN env var
+
+  # ── Global KB sources for context augmentation ───────────────────────────
+  # No registry_url / auth_token per entry — inherited from registry above.
+  sources:
+    - name: insurance
+      description: "Search insurance policy documents"
+      # Optional: override registry retrieval defaults for this KB
+      retrieval_settings:
+        top_k: 5
+        score_threshold: 0.4
+
+agent_list:
+  - rag_assistant:
+      system_prompt: |
+        You are a helpful assistant who can answer questions using knowledge base
+
+crew_config:
+  pattern: single

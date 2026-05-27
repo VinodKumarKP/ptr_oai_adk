@@ -29,34 +29,22 @@ agent_list:
         - name: leave_policies
           description: "Search company leave policy"
           vector_store:
-            type: postgres
+            type: chroma
             settings:
               collection_name: "leave_policies"
-              persist_directory1: "./rag_db1"
-              db_host: capgemini-vinodkumar-a89b.e.aivencloud.com
-              db_user: avnadmin
-              db_port: 18940
-              db_name: accounts_db
+              persist_directory: "./rag_db1"
           embedding:
             model_id: "bedrock/amazon.titan-embed-text-v1"
             region_name: "us-west-2"
           data_sources:
             - path: "docs/leave_policy.pdf"
-            - type: "s3"
-              bucket: "vkp-s3-kb"
-              region: 'us-east-2'
-          loader:
-            pdf:
-              class: langchain_community.document_loaders.PyPDFLoader
-              settings:
-                path: "docs/leave_policy.pdf"
           text_splitter:
             type: "recursive_character"
             chunk_size: 1000
             chunk_overlap: 200
           retrieval_settings:
             top_k: 5
-            score_threshold: 0.6
+            score_threshold: 0.7
 
 crew_config:
   pattern: single

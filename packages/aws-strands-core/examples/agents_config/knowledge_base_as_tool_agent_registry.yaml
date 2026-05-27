@@ -1,0 +1,65 @@
+# =============================================================================
+# Registry-referenced KB as agent tools — new skills-like style
+# (registry equivalent of knowledge_base_as_tool_agent.yaml)
+#
+# Registry connection details are defined ONCE at the top level, mirroring
+# how "skills" handles its registry block:
+#
+#   skills:
+#     registry:
+#       url: http://localhost:8083/api/v1/skills-registry
+#       token: ""
+#
+#   knowledge_base:
+#     registry:
+#       url: http://localhost:8085
+#       token: dummy-token
+#
+# Agent-level "knowledge_base" entries are a flat list — no registry_url or
+# auth_token per entry.  Credentials are inherited from the top-level block.
+#
+# Connection details priority (highest wins):
+#   1. Per-entry "registry_url" / "auth_token" keys (backward-compat override)
+#   2. "knowledge_base.registry.url" / ".token" in this YAML
+#   3. KB_REGISTRY_URL / AUTH_TOKEN environment variables
+# =============================================================================
+
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+# ── Top-level registry connection (shared across all agents) ─────────────────
+knowledge_base:
+  registry:
+    url: http://localhost:8085   # overrides KB_REGISTRY_URL
+    token: dummy-token           # overrides AUTH_TOKEN
+
+agent_list:
+  - rag_assistant:
+      system_prompt: |
+        You are a helpful assistant who can answer questions using the available
+        knowledge base tools. Use the insurance knowledge base to answer
+        questions about insurance coverage, premiums, and claims. Use the
+        leave_policies knowledge base to answer questions about employee leave
+        entitlements, procedures, and approval workflows.
+        Always cite the document source when answering.
+
+      # ── Agent-level KB tools — flat list, credentials inherited from above ──
+      knowledge_base:
+        - name: insurance
+          description: >
+            Search insurance policy documents for coverage details, premium
+            information, claim procedures, and policy terms.
+          # Optional: override registry defaults for this KB
+          retrieval_settings:
+            top_k: 3
+            score_threshold: 0.4
+
+        - name: hr
+          description: >
+            Search company leave policy documents for entitlements, approval
+            workflows, carry-forward rules, and emergency leave procedures.
+          # No retrieval_settings → uses registry defaults
+
+crew_config:
+  pattern: single

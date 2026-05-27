@@ -1,0 +1,66 @@
+# =============================================================================
+# KB Registry Integration Example
+#
+# Demonstrates how to reference a Knowledge Base by its registry name instead
+# of inlining the full vector-store configuration.
+#
+# Prerequisites:
+#   - KB Registry running at KB_REGISTRY_URL (e.g. http://localhost:8083)
+#   - AUTH_TOKEN env var set (same token used by all registries)
+#   - The KB "insurance_policies" already registered and indexed in the registry
+#
+# How it works at runtime:
+#   1. Agent startup: calls GET /api/v1/kb-registry/knowledge-bases/{name}
+#      to fetch description and retrieval defaults (no DB credentials exposed)
+#   2. Each search query: calls POST /api/v1/kb-registry/knowledge-bases/{name}/query
+#      via RegistryProxyVectorStore — the registry handles the actual vector search
+#
+# Benefits over inline config:
+#   - No vector-store credentials (connection strings, API keys) in agent YAML
+#   - Single source of truth — update KB in registry, all agents benefit instantly
+#   - Centralized query logging and monitoring via the KB Registry
+#   - Works across machines (agent and vector DB can run on separate hosts)
+# =============================================================================
+
+agent_list:
+  - rag_assistant:
+      system_prompt: |
+        You are a helpful insurance assistant. Use the knowledge base tools
+        to search policy documents and answer questions accurately.
+        Always cite the relevant policy section when answering.
+
+      # ── Registry-referenced KB (recommended for shared KBs) ──────────────
+      # The runtime calls GET /api/v1/kb-registry/knowledge-bases/{registry_name}/config
+      # to fetch the full vector-store config, then passes it to BaseKnowledgeBaseFactory.
+      knowledge_base:
+        - registry_name: insurance_policies       # must match a registered KB name
+          # Optional overrides (merged on top of registry config):
+          description: "Search insurance policy documents for coverage details"
+          retrieval_settings:
+            top_k: 5          # override registry default
+            score_threshold: 0.7
+
+        - registry_name: leave_policies
+          description: "Search employee leave policy documents"
+          # No retrieval_settings → use registry defaults
+
+      # ── Inline KB config (backward-compatible, no registry needed) ────────
+      # Uncomment and use this format if you want to define the KB entirely
+      # in the YAML without using the registry:
+      #
+      # knowledge_base:
+      #   - name: insurance_policies
+      #     description: "Search insurance policy documents"
+      #     vector_store:
+      #       type: chroma
+      #       settings:
+      #         collection_name: insurance_policies
+      #         persist_directory: ./rag_db
+      #     embedding:
+      #       model_id: "bedrock/amazon.titan-embed-text-v1"
+      #       region_name: "us-west-2"
+      #     data_sources:
+      #       - path: "docs/sample_policy.pdf"
+      #     retrieval_settings:
+      #       top_k: 5
+      #       score_threshold: 0.7

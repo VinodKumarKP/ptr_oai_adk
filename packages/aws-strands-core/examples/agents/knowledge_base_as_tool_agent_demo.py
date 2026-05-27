@@ -14,7 +14,7 @@ async def run_kb_tool_agent():
     print("Example: Agent with Knowledge Base as Tool")
     print("=" * 60)
 
-    config_path = os.path.join(CONFIG_DIR, 'knowledge_base_as_tool_agent_registry.yaml')
+    config_path = os.path.join(CONFIG_DIR, 'knowledge_base_as_tool_agent.yaml')
     
     # Load configuration
     with open(config_path) as f:
