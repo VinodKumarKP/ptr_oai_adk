@@ -14,8 +14,10 @@ A powerful, YAML-based configuration system for building multi-agent AI workflow
 - [Agents Configuration](#agents-configuration)
 - [Tools System](#tools-system)
 - [Agent Skills](#agent-skills)
+- [Skills Registry](#skills-registry)
 - [Structured Output](#structured-output)
 - [Knowledge Base Integration](#knowledge-base-integration)
+- [KB Registry Integration](#kb-registry-integration)
 - [Data Sources](#data-sources)
 - [Memory Management](#memory-management)
 - [MCP Integration](#mcp-integration)
@@ -344,64 +346,100 @@ tools:
 This template shows all the possible configuration options available. You can mix and match sections based on your needs.
 
 ```yaml
-# 1. Model Configuration: Defines the LLM to be used.
+# 1. Model Configuration
 model:
-  model_id: "anthropic.claude-3-sonnet-20240229-v1:0"
-  cloud_provider: "aws" # Options: openai, anthropic, aws, etc.
-  params:  # Optional: Override default model parameters
+  model_id: "bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+  region_name: "us-west-2"
+  params:                          # Optional: override model defaults
     temperature: 0.7
     max_tokens: 4096
 
-# 2. Architecture Configuration: Defines the multi-agent pattern.
+# 2. Architecture Configuration
 crew_config:
-  pattern: "graph" # Options: graph, swarm, sequential, agents-as-tools
-  structured_output_model: "SupervisorOutputModel" # Optional: Pydantic model for the supervisor's final output.
+  pattern: "graph"                 # Options: graph, swarm, sequential, agent-as-tool
+  entry_agent: "researcher"        # Required for graph / swarm
+  structured_output_model: "FinalReport"  # Optional: supervisor-level output model
 
-# 3. Tools Definition: A global registry of tools available to agents.
+# 3. Tools — global registry available to all agents
 tools:
-  my_tool:
-    module: "my_tool_module"
-    class: "MyToolClass"
+  web_search:
+    module: langchain_community.tools
+    class: DuckDuckGoSearchRun
+  file_read:
+    module: strands_tools
+  shell:
+    module: strands_tools
 
-# 4. Skills Definition: A global registry of skills available to agents.
+# 4. Skills — local directory + optional Skills Registry
 skills:
   skill_dir: "./skills"
+  registry:
+    url: "http://localhost:8083/api/v1/skills-registry"  # overrides SKILLS_REGISTRY_URL
+    token: ""                                             # overrides SKILLS_REGISTRY_AUTH_TOKEN
 
-# 5. Structured Output: Defines the Pydantic models for structured responses.
+# 5. Structured Output — directory of Pydantic model files
 structured_output:
   script_dir: "./structured_output"
 
-# 6. Knowledge Base: Provides documents for Retrieval-Augmented Generation (RAG).
+# 6. Knowledge Base — registry style (recommended) or inline
+#
+#   Registry style: credentials defined once, agents reference KBs by name.
 knowledge_base:
-  - name: "company_docs"
-    description: "Search company policies and internal procedures."
-    vector_store:
-      type: "chroma"
-      settings:
-        collection_name: "company_docs_collection"
-        persist_directory: "./rag_db"
-    data_sources:
-      - type: "file"
-        path: "docs/policy.pdf"
+  registry:
+    url: "http://localhost:8085"   # overrides KB_REGISTRY_URL
+    token: ""                      # overrides KB_REGISTRY_AUTH_TOKEN
+  sources:                         # optional: global context-augmentation KBs
+    - name: "company_docs"
+      description: "Search company policies and procedures."
+      retrieval_settings:
+        top_k: 5
+        score_threshold: 0.4
 
-# 7. Memory: Enables the agent to remember past conversations.
+#   Inline style (no registry needed — local vector store):
+# knowledge_base:
+#   - name: "company_docs"
+#     description: "Search company policies."
+#     vector_store:
+#       type: chroma
+#       settings:
+#         collection_name: company_docs
+#         persist_directory: ./rag_db
+#     embedding:
+#       model_id: "bedrock/amazon.titan-embed-text-v1"
+#       region_name: "us-west-2"
+#     data_sources:
+#       - type: file
+#         path: docs/policy.pdf
+#     retrieval_settings:
+#       top_k: 5
+#       score_threshold: 0.7
+
+# 7. Memory
 memory:
   vector_store:
     type: "chroma"
     settings:
       collection_name: "chat_memory"
       persist_directory: "./memory_db"
+  embedding:
+    model_id: "bedrock/amazon.titan-embed-text-v1"
+    region_name: "us-west-2"
   settings:
     max_recent_turns: 5
     max_relevant_turns: 3
+    similarity_threshold: 0.6
 
-# 8. MCP Servers: Connects to external tools via the Model Context Protocol.
+# 8. MCP Servers — global, available to all agents
 mcps:
   filesystem_server:
     command: "mcp-server-filesystem"
     args: ["/data"]
+  remote_api:
+    url: "http://api.internal.example.com/mcp"
+    headers:
+      Authorization: "Bearer ${API_KEY}"
 
-# 9. Guardrails: Adds input and output validation.
+# 9. Guardrails
 guardrails:
   validators:
     - name: "profanity_check"
@@ -411,17 +449,27 @@ guardrails:
     validators:
       - ref: "profanity_check"
 
-# 10. Agent Definitions: The list of agents in the system.
+# 10. Agent Definitions
 agent_list:
   - researcher:
-      system_prompt: "You are a research assistant."
-      tools: ["my_tool"] # Assign tools from the global registry.
-      skills: ["my_skill"] # Assign skills from the global registry.
-      knowledge_base: ["company_docs"] # Assign a knowledge base.
-      structured_output_model: "MyOutputModel" # Optional: Specify a Pydantic model for structured output.
+      system_prompt: "You are a research assistant. Use web_search to gather information."
+      tools:
+        - web_search
+      skills:
+        - research-skill          # resolved from Skills Registry or skill_dir
+      knowledge_base:             # flat list — credentials from knowledge_base.registry
+        - name: company_docs
+          description: "Search company documents"
+      structured_output_model: "ResearchFindings"
 
-# 11. Entry Agent (for Graph/Swarm patterns)
-entry_agent: "researcher"
+  - analyst:
+      system_prompt: "Analyse the researcher's findings and produce a report."
+      context:
+        - researcher              # can read researcher's output
+      structured_output_model: "AnalysisReport"
+
+# 11. Global system prompt (supervisor / orchestrator)
+system_prompt: "You are the editor. Coordinate research and analysis to produce a final report."
 ```
 
 ## Orchestration Patterns
@@ -509,32 +557,231 @@ agent_list:
 
 ## Agents Configuration
 
-### Agent Properties
+### Agent Properties Reference
+
+Every agent entry under `agent_list` supports the following properties:
+
+| Property | Required | Description |
+|---|---|---|
+| `system_prompt` | ✅ Yes | Instructions that define the agent's role and behaviour |
+| `tools` | No | List of tool names from the global `tools` registry |
+| `skills` | No | List of skill names — resolved from `skills.skill_dir` or the Skills Registry |
+| `knowledge_base` | No | Flat list of KB entries for this agent's search tools (registry-inherited or inline) |
+| `mcps` | No | Agent-level MCP servers (merged with any global `mcps`) |
+| `context` | No | Other agent names whose output this agent can read (Graph/Swarm patterns) |
+| `structured_output_model` | No | Pydantic class name for structured JSON output |
+| `description` | No | Used as the tool description when this agent is wrapped as a sub-agent tool |
+| `model` | No | Per-agent model override (inherits global `model` if omitted) |
+
+### Full Agent Example
 
 ```yaml
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+# ── Global tool registry ──────────────────────────────────────────────────────
+tools:
+  web_search:
+    module: langchain_community.tools
+    class: DuckDuckGoSearchRun
+  file_read:
+    module: strands_tools
+  shell:
+    module: strands_tools
+
+# ── Skills (local + registry) ─────────────────────────────────────────────────
+skills:
+  skill_dir: ./skills
+  registry:
+    url: http://localhost:8083/api/v1/skills-registry
+    token: your-bearer-token
+
+# ── KB Registry connection ─────────────────────────────────────────────────────
+knowledge_base:
+  registry:
+    url: http://localhost:8085
+    token: your-bearer-token
+
+# ── Structured output models ──────────────────────────────────────────────────
+structured_output:
+  script_dir: ./structured_output
+
 agent_list:
-  - agent_key:
-      system_prompt: "Detailed instructions"  # Required
-      tools: [tool_name]  # Optional: tools available to agent
-      skills: [skill_name] # Optional: list of skills available to the agent
-      context: [other_agent_key] # Optional: agents this agent can see
-      structured_output_model: "MyOutputModel" # Optional: Pydantic model for structured output
+  - policy_expert:
+      # Role definition
+      system_prompt: |
+        You are an expert on company policies. Search the knowledge base before
+        answering and always cite the relevant document section.
+
+      # Tools from the global registry
+      tools:
+        - web_search
+        - file_read
+
+      # Skills — resolved from skill_dir or Skills Registry
+      skills:
+        - insurance-qa-skill
+        - claim-processing-skill
+
+      # KB as agent tools — credentials inherited from knowledge_base.registry
+      knowledge_base:
+        - name: insurance
+          description: "Search insurance policy documents"
+          retrieval_settings:
+            top_k: 5
+            score_threshold: 0.4
+        - name: hr_policies
+          description: "Search HR and leave policy documents"
+
+      # Agent-level MCP server (optional)
+      mcps:
+        internal_api:
+          url: http://api.internal.example.com/mcp
+          headers:
+            Authorization: "Bearer ${INTERNAL_API_KEY}"
+
+      # Structured output for this agent
+      structured_output_model: "PolicyAnswer"
+
+  - analyst:
+      system_prompt: |
+        You analyse findings from the policy expert and produce a structured report.
+      # Can read output from policy_expert
+      context:
+        - policy_expert
+      structured_output_model: "AnalysisReport"
+
+crew_config:
+  pattern: graph
+  entry_agent: policy_expert
 ```
 
 ### System Prompt Best Practices
 
 ```yaml
-# ✅ Good - Clear role and instructions
+# ✅ Good — specific role, clear responsibilities, tool guidance
 system_prompt: |
   You are a research analyst who gathers information from reliable sources.
-  
-  Your responsibilities:
-  - Search for relevant information on the given topic
-  - Verify source credibility
-  - Summarize key findings
 
-# ❌ Bad - Vague instructions
+  Your responsibilities:
+  - Search for relevant information on the given topic using the web_search tool
+  - Verify source credibility before including findings
+  - Summarize key findings in bullet points
+  - Hand off to the analyst agent when you have at least 3 verified findings
+
+# ❌ Bad — vague, no tool guidance, no handoff instructions
 system_prompt: You help with research.
+```
+
+### Knowledge Base — Agent Level
+
+Agent-level KB entries are a flat list. When a top-level `knowledge_base.registry` block is defined, credentials are automatically injected — no need to repeat them per entry:
+
+```yaml
+# Top-level registry (defined once)
+knowledge_base:
+  registry:
+    url: http://localhost:8085
+    token: your-bearer-token
+
+agent_list:
+  - rag_assistant:
+      # Flat list — no registry_url / auth_token per entry
+      knowledge_base:
+        - name: insurance
+          description: "Search insurance policy documents"
+          retrieval_settings:
+            top_k: 3
+            score_threshold: 0.4
+        - name: hr_policies
+          description: "Search HR policy documents"
+```
+
+For inline (local) KB without a registry, provide the full config directly on the agent:
+
+```yaml
+agent_list:
+  - local_expert:
+      knowledge_base:
+        - name: local_docs
+          description: "Search local documentation"
+          vector_store:
+            type: chroma
+            settings:
+              collection_name: local_docs
+              persist_directory: ./rag_db
+          embedding:
+            model_id: bedrock/amazon.titan-embed-text-v1
+            region_name: us-west-2
+          data_sources:
+            - type: file
+              path: docs/
+          retrieval_settings:
+            top_k: 5
+            score_threshold: 0.6
+```
+
+### Skills — Agent Level
+
+Skills listed on an agent are resolved first from the Skills Registry (if configured), then from the local `skill_dir` as a fallback:
+
+```yaml
+skills:
+  skill_dir: ./skills               # local fallback
+  registry:
+    url: http://localhost:8083/api/v1/skills-registry
+    token: your-bearer-token
+
+agent_list:
+  - assistant:
+      skills:
+        - pdf-processing      # fetched from registry
+        - data-validator      # fetched from registry
+        - local-only-skill    # falls back to skill_dir if not in registry
+```
+
+### Context Dependencies (Multi-Agent)
+
+Use `context` to give an agent visibility into another agent's output. This is used in `graph` and `swarm` patterns:
+
+```yaml
+agent_list:
+  - researcher:
+      system_prompt: Gather information and hand off to the analyst.
+
+  - analyst:
+      system_prompt: Analyse the researcher's findings.
+      context:
+        - researcher   # analyst can read researcher's output
+
+  - writer:
+      system_prompt: Write the final report based on the analysis.
+      context:
+        - researcher
+        - analyst
+```
+
+### Per-Agent Model Override
+
+By default all agents share the global `model`. Override for a specific agent when needed:
+
+```yaml
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+agent_list:
+  - fast_classifier:
+      # Use a lighter model for simple classification
+      model:
+        model_id: bedrock/anthropic.claude-haiku-3-5-20241022-v1:0
+        region_name: us-west-2
+      system_prompt: Classify the user's intent quickly.
+
+  - deep_analyst:
+      # Inherits the global model (no override needed)
+      system_prompt: Perform deep analysis on the classified input.
 ```
 
 ## Tools System
@@ -687,6 +934,116 @@ agent_list:
 ```
 
 When the `data_assistant` agent runs, it will now have all the knowledge and instructions defined in `skills/file-processing/SKILL.md` added to its prompt.
+
+## Skills Registry
+
+The **Skills Registry** is a centralized service that manages skills as versioned, shared assets. Instead of bundling `SKILL.md` files inside every project, you register skills once in the registry and reference them by name across all your agents. This is the recommended approach for teams and production deployments.
+
+### Why Use the Skills Registry?
+
+| Local Skills | Skills Registry |
+|---|---|
+| Skills live inside each project | Single source of truth — update once, all agents benefit |
+| No versioning | Semantic versioning with rollback support |
+| Manual distribution | HTTP API — accessible from any host |
+| No governance | Central logging and audit trail |
+
+### How It Works
+
+1. **Register a skill** once in the Skills Registry (typically from a Git repository that follows the standard `skills/{skill_name}/SKILL.md` structure).
+2. **Reference the skill** in your agent YAML by its registry name.
+3. At **agent startup**, the framework fetches the skill content from the registry and injects it into the agent's prompt, exactly like a local skill — but without needing the files on disk.
+
+### Prerequisites
+
+- Skills Registry service running (e.g., `http://localhost:8083`).
+- `SKILLS_REGISTRY_URL` and `SKILLS_REGISTRY_AUTH_TOKEN` environment variables set, **or** the values provided explicitly in the YAML.
+
+```bash
+export SKILLS_REGISTRY_URL=http://localhost:8083
+export SKILLS_REGISTRY_AUTH_TOKEN=your-bearer-token
+```
+
+### Configuration
+
+Connection details live under `skills.registry` (mirroring the `knowledge_base.registry` block).  A local `skill_dir` can coexist as a fallback for skills that aren't yet in the registry.
+
+```yaml
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+skills:
+  skill_dir: ./skills   # optional local fallback
+  registry:
+    url: http://localhost:8083/api/v1/skills-registry   # overrides SKILLS_REGISTRY_URL
+    token: your-bearer-token                             # overrides SKILLS_REGISTRY_AUTH_TOKEN
+
+agent_list:
+  - rag_assistant:
+      system_prompt: |
+        You are a helpful insurance assistant. Use your knowledge base tools
+        to answer questions accurately and always cite the relevant policy section.
+      # Reference skills by their registry name — no URL/token per skill
+      skills:
+        - insurance-qa-skill
+        - claim-processing-skill
+```
+
+### Registering a Skill
+
+Skills are typically registered from a Git repository. The expected repository layout is:
+
+```
+skills/
+  insurance-qa-skill/
+    SKILL.md
+    skill_config.yaml
+  claim-processing-skill/
+    SKILL.md
+    skill_config.yaml
+```
+
+Each `SKILL.md` must include YAML frontmatter:
+
+```markdown
+---
+name: insurance-qa-skill
+version: 1.2.0
+description: Guides the agent through answering insurance policy questions.
+allowed-tools:
+  - search_insurance_kb
+---
+
+# Insurance Q&A Skill
+
+## Purpose
+Answer questions about insurance coverage, premiums, and claims procedures.
+
+## Instructions
+1. Always search the knowledge base before answering.
+2. Cite the specific policy section in your response.
+3. If the information is not found, tell the user clearly.
+```
+
+### Environment Variables vs. YAML Config
+
+Connection details are resolved with the following priority (highest wins):
+
+| Priority | Source |
+|---|---|
+| 1 (highest) | `skills.registry.url` / `.token` in the YAML |
+| 2 | `SKILLS_REGISTRY_URL` / `SKILLS_REGISTRY_AUTH_TOKEN` environment variables |
+
+Explicit YAML values are useful when an agent should always talk to a specific registry instance, regardless of the environment:
+
+```yaml
+skills:
+  skill_dir: ./skills   # local fallback still available
+  registry:
+    url: http://registry.internal.example.com   # overrides SKILLS_REGISTRY_URL
+    token: my-token                              # overrides SKILLS_REGISTRY_AUTH_TOKEN
+```
 
 ## Structured Output
 
@@ -883,6 +1240,168 @@ agent_list:
           description: "Search for company policies and procedures."
           # ... other settings ...
 ```
+
+## KB Registry Integration
+
+The **KB Registry** is a shared service that pre-indexes documents and exposes a search API. All agents call the registry over HTTP instead of opening their own database connections. This is the recommended approach for multi-agent systems and production deployments.
+
+### Why Use the KB Registry?
+
+| Local Knowledge Base | KB Registry |
+|---|---|
+| Each agent opens its own DB connection | All agents share one pre-indexed store |
+| Credentials (DB passwords, API keys) in agent config | No DB credentials in agent config — only a bearer token |
+| Agent must index documents on first run | Indexing happens once in the registry |
+| No centralized query logging | All queries logged and monitored centrally |
+| Harder to scale across machines | Works across machines — agent and vector DB on separate hosts |
+
+### How It Works
+
+1. **Documents are indexed once** in the KB Registry (either at registration time or via its indexing API).
+2. **At agent startup**, the framework detects `registry_url` in the KB config and creates an HTTP proxy for the knowledge base — no local vector store is opened.
+3. **At query time**, every `search_knowledge_base` call issues `POST /api/v1/kb-registry/knowledge-bases/{kb_name}/query` to the registry and returns the results to the agent.
+
+### Prerequisites
+
+- KB Registry service running (e.g., `http://localhost:8085`).
+- The knowledge base already registered and indexed in the registry.
+- `KB_REGISTRY_URL` and `KB_REGISTRY_AUTH_TOKEN` environment variables set, **or** the values provided explicitly in the YAML.
+
+```bash
+export KB_REGISTRY_URL=http://localhost:8085
+export KB_REGISTRY_AUTH_TOKEN=your-bearer-token
+```
+
+### Configuration — Skills-like style (Recommended)
+
+The KB Registry config mirrors the `skills` pattern: connection details are defined **once** under `knowledge_base.registry`, and KB entries are a clean flat list — no credentials repeated per entry.
+
+#### Global KB (context augmentation — injected into every agent's prompt)
+
+```yaml
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+knowledge_base:
+  # ── Registry connection defined once (like skills.registry) ───────────────
+  registry:
+    url: http://localhost:8085    # overrides KB_REGISTRY_URL env var
+    token: dummy-token            # overrides KB_REGISTRY_AUTH_TOKEN env var
+
+  # ── Flat list of sources for context augmentation ─────────────────────────
+  sources:
+    - name: insurance
+      description: "Search insurance policy documents"
+      retrieval_settings:         # optional: override registry defaults
+        top_k: 5
+        score_threshold: 0.4
+
+agent_list:
+  - rag_assistant:
+      system_prompt: |
+        You are a helpful assistant. Answer questions using the knowledge base.
+        Always cite the source document in your response.
+
+crew_config:
+  pattern: single
+```
+
+#### Agent-specific KB as tools
+
+```yaml
+knowledge_base:
+  registry:
+    url: http://localhost:8085
+    token: dummy-token
+
+agent_list:
+  - rag_assistant:
+      system_prompt: |
+        You are a helpful assistant who can answer questions using the available
+        knowledge base tools. Use the insurance knowledge base for coverage questions
+        and the leave_policies knowledge base for HR questions.
+        Always cite the document source when answering.
+
+      # ── Flat list — credentials inherited from top-level registry ──────────
+      knowledge_base:
+        - name: insurance
+          description: >
+            Search insurance policy documents for coverage details, premium
+            information, claim procedures, and policy terms.
+          retrieval_settings:
+            top_k: 3
+            score_threshold: 0.4
+
+        - name: leave_policies
+          description: >
+            Search leave policy documents for entitlements, approval workflows,
+            carry-forward rules, and emergency leave procedures.
+          # No retrieval_settings → uses registry defaults
+```
+
+### Pattern 2 — `registry_name` with Metadata Fetch
+
+Use `registry_name` when you want the framework to **fetch the KB description and default retrieval settings** from the registry at startup (one extra HTTP call to `GET /api/v1/kb-registry/knowledge-bases/{name}`). You can still override any settings locally.
+
+```yaml
+agent_list:
+  - rag_assistant:
+      system_prompt: |
+        You are a helpful insurance assistant. Use the knowledge base tools
+        to search policy documents and answer questions accurately.
+        Always cite the relevant policy section when answering.
+
+      knowledge_base:
+        - registry_name: insurance_policies        # fetches metadata from registry
+          description: "Search insurance policy documents for coverage details"
+          retrieval_settings:
+            top_k: 5
+            score_threshold: 0.7
+
+        - registry_name: leave_policies
+          # No retrieval_settings → uses registry defaults
+```
+
+> **When to use `sources` flat list vs `registry_name`**
+> - Use the `sources` flat list (with top-level `registry`) when the config is self-contained — no extra network call at startup. Recommended for most setups.
+> - Use `registry_name` when you want the agent to inherit the description and retrieval defaults that are managed centrally in the registry.
+
+### Environment Variables vs. YAML Config
+
+Connection details are resolved with the following priority (highest wins):
+
+| Priority | Source |
+|---|---|
+| 1 (highest) | Per-entry `registry_url` / `auth_token` keys (backward-compat) |
+| 2 | `knowledge_base.registry.url` / `.token` in the YAML |
+| 3 | `KB_REGISTRY_URL` / `KB_REGISTRY_AUTH_TOKEN` environment variables |
+
+### Retrieval Settings Override
+
+All patterns support an optional `retrieval_settings` block to override the registry's defaults per KB entry:
+
+```yaml
+retrieval_settings:
+  top_k: 3           # number of documents to retrieve per query
+  score_threshold: 0.4  # minimum similarity score (0.0 – 1.0)
+```
+
+If `retrieval_settings` is omitted, the values configured in the KB Registry are used.
+
+### Backward Compatibility
+
+The old per-entry credential style still works without any changes:
+
+```yaml
+knowledge_base:
+  - name: insurance
+    registry_url: http://localhost:8085
+    auth_token: dummy-token
+    description: "Search insurance policy documents"
+```
+
+Per-entry `registry_url` / `auth_token` always take priority over the top-level `registry` block.
 
 ## Data Sources
 

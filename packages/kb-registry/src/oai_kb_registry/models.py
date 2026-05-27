@@ -108,6 +108,15 @@ class ChunkingConfig(BaseModel):
     separators: Optional[List[str]] = None
 
 
+class RetrievalConfig(BaseModel):
+    """Default retrieval settings stored with the knowledge base."""
+    top_k: int = Field(default=5, ge=1, le=50, description="Number of results to retrieve per query")
+    score_threshold: float = Field(
+        default=0.7, ge=0.0, le=1.0,
+        description="Minimum similarity score (0-1). Results below this are excluded.",
+    )
+
+
 class KBRegistration(BaseModel):
     """Request body for registering a new knowledge base."""
     name: str = Field(..., min_length=1, max_length=255,
@@ -122,6 +131,8 @@ class KBRegistration(BaseModel):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     # Chunking settings
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
+    # Retrieval defaults (stored and returned via /config endpoint for agent-core)
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
 
     @model_validator(mode="after")
     def pinecone_is_always_external(self) -> "KBRegistration":
@@ -249,3 +260,54 @@ class ReindexResponse(BaseModel):
     kb_name: str
     documents_queued: int
     message: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Agent-core integration
+# ---------------------------------------------------------------------------
+
+class KBVectorStoreSettings(BaseModel):
+    """Vector store connection settings in the format oai-agent-core expects."""
+    collection_name: str
+    # Chroma builtin
+    persist_directory: Optional[str] = None
+    # Chroma external
+    host: Optional[str] = None
+    port: Optional[int] = None
+    ssl: Optional[bool] = None
+    # Postgres
+    connection_string: Optional[str] = None
+    # S3
+    bucket_name: Optional[str] = None
+    prefix: Optional[str] = None
+    region: Optional[str] = None
+    aws_access_key_id: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None
+    # Pinecone
+    api_key: Optional[str] = None
+    index_name: Optional[str] = None
+    namespace: Optional[str] = None
+
+
+class KBAgentConfig(BaseModel):
+    """KB config in the format consumed by oai-agent-core BaseKnowledgeBaseFactory.
+
+    Returned by ``GET /knowledge-bases/{kb_name}/config``.  An agent YAML can
+    reference a registered KB by name instead of inlining the full config:
+
+    .. code-block:: yaml
+
+        knowledge_base:
+          - registry_name: insurance_policies
+            # optional local overrides:
+            description: "Search insurance docs"
+            retrieval_settings:
+              top_k: 3
+    """
+    name: str
+    description: str = ""
+    vector_store: Dict[str, Any]
+    embedding: Dict[str, Any]
+    text_splitter: Dict[str, Any]
+    retrieval_settings: Dict[str, Any]
+    data_sources: List[Any] = Field(default_factory=list)

@@ -50,8 +50,9 @@ class PostgresBackend(BasePostgresBackend):
             vector_db_type, deployment_mode,
             embedding_model_id, embedding_region,
             chunk_size, chunk_overlap,
+            retrieval_config,
             status, created_at, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
         ON CONFLICT (name) DO UPDATE SET
             description         = EXCLUDED.description,
             tags                = EXCLUDED.tags,
@@ -59,6 +60,7 @@ class PostgresBackend(BasePostgresBackend):
             embedding_region     = EXCLUDED.embedding_region,
             chunk_size          = EXCLUDED.chunk_size,
             chunk_overlap       = EXCLUDED.chunk_overlap,
+            retrieval_config    = EXCLUDED.retrieval_config,
             status              = EXCLUDED.status,
             updated_at          = EXCLUDED.updated_at
     """
@@ -67,6 +69,7 @@ class PostgresBackend(BasePostgresBackend):
                kb.vector_db_type, kb.deployment_mode,
                kb.embedding_model_id, kb.embedding_region,
                kb.chunk_size, kb.chunk_overlap,
+               kb.retrieval_config,
                kb.status, kb.created_at, kb.updated_at,
                COALESCE(doc_counts.doc_count, 0) AS document_count,
                COALESCE(doc_counts.total_chunks, 0) AS total_chunks
@@ -86,6 +89,7 @@ class PostgresBackend(BasePostgresBackend):
                kb.vector_db_type, kb.deployment_mode,
                kb.embedding_model_id, kb.embedding_region,
                kb.chunk_size, kb.chunk_overlap,
+               kb.retrieval_config,
                kb.status, kb.created_at, kb.updated_at,
                COALESCE(doc_counts.doc_count, 0) AS document_count,
                COALESCE(doc_counts.total_chunks, 0) AS total_chunks
@@ -219,13 +223,15 @@ class PostgresBackend(BasePostgresBackend):
         CREATE INDEX IF NOT EXISTS idx_kb_documents_status    ON kb_documents(status);
         CREATE INDEX IF NOT EXISTS idx_kb_actions_kb_id       ON kb_actions(kb_id);
         """
-        # Migration statements — add columns introduced in the LiteLLM refactor.
+        # Migration statements — add columns introduced in subsequent refactors.
         # Safe to run on both fresh and existing databases.
         migrations = [
             "ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS "
             "embedding_model_id VARCHAR(255) NOT NULL DEFAULT 'bedrock/amazon.titan-embed-text-v1'",
             "ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS "
             "embedding_region VARCHAR(100)",
+            "ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS "
+            "retrieval_config TEXT DEFAULT '{\"top_k\": 5, \"score_threshold\": 0.7}'",
         ]
         try:
             async with self._pool.acquire() as conn:
@@ -263,8 +269,9 @@ class SQLiteBackend(PersistentSQLiteBackend):
             vector_db_type, deployment_mode,
             embedding_model_id, embedding_region,
             chunk_size, chunk_overlap,
+            retrieval_config,
             status, created_at, updated_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(name) DO UPDATE SET
             description         = excluded.description,
             tags                = excluded.tags,
@@ -272,6 +279,7 @@ class SQLiteBackend(PersistentSQLiteBackend):
             embedding_region     = excluded.embedding_region,
             chunk_size          = excluded.chunk_size,
             chunk_overlap       = excluded.chunk_overlap,
+            retrieval_config    = excluded.retrieval_config,
             status              = excluded.status,
             updated_at          = excluded.updated_at
     """
@@ -280,6 +288,7 @@ class SQLiteBackend(PersistentSQLiteBackend):
                kb.vector_db_type, kb.deployment_mode,
                kb.embedding_model_id, kb.embedding_region,
                kb.chunk_size, kb.chunk_overlap,
+               kb.retrieval_config,
                kb.status, kb.created_at, kb.updated_at,
                COALESCE(doc_counts.doc_count, 0) AS document_count,
                COALESCE(doc_counts.total_chunks, 0) AS total_chunks
@@ -299,6 +308,7 @@ class SQLiteBackend(PersistentSQLiteBackend):
                kb.vector_db_type, kb.deployment_mode,
                kb.embedding_model_id, kb.embedding_region,
                kb.chunk_size, kb.chunk_overlap,
+               kb.retrieval_config,
                kb.status, kb.created_at, kb.updated_at,
                COALESCE(doc_counts.doc_count, 0) AS document_count,
                COALESCE(doc_counts.total_chunks, 0) AS total_chunks
@@ -376,6 +386,7 @@ class SQLiteBackend(PersistentSQLiteBackend):
             embedding_region     TEXT,
             chunk_size          INTEGER NOT NULL DEFAULT 1000,
             chunk_overlap       INTEGER NOT NULL DEFAULT 200,
+            retrieval_config    TEXT DEFAULT '{"top_k": 5, "score_threshold": 0.7}',
             status              TEXT NOT NULL DEFAULT 'active',
             created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -422,13 +433,15 @@ class SQLiteBackend(PersistentSQLiteBackend):
         await db.executescript(schema)
         await db.commit()
 
-        # Migration: add columns introduced in the LiteLLM refactor.
+        # Migration: add columns introduced in subsequent refactors.
         # executescript cannot catch individual errors, so run each ALTER
         # separately and swallow the "duplicate column" error on re-runs.
         migrations = [
             "ALTER TABLE knowledge_bases ADD COLUMN "
             "embedding_model_id TEXT NOT NULL DEFAULT 'bedrock/amazon.titan-embed-text-v1'",
             "ALTER TABLE knowledge_bases ADD COLUMN embedding_region TEXT",
+            "ALTER TABLE knowledge_bases ADD COLUMN "
+            "retrieval_config TEXT DEFAULT '{\"top_k\": 5, \"score_threshold\": 0.7}'",
         ]
         for stmt in migrations:
             try:
@@ -507,16 +520,20 @@ class KBDatabaseLogger:
         embedding_region: Optional[str],
         chunk_size: int,
         chunk_overlap: int,
+        retrieval_config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        import json as _json
         if not self._ready():
             return {"id": None, "name": name}
         try:
             now = datetime.now(timezone.utc)
+            retrieval_json = _json.dumps(retrieval_config or {"top_k": 5, "score_threshold": 0.7})
             params = (
                 name, description, self._encode_tags(tags),
                 vector_db_type, deployment_mode,
                 embedding_model_id, embedding_region,
                 chunk_size, chunk_overlap,
+                retrieval_json,
                 "active", now, now,
             )
             await self._backend.execute(self._backend.KB_UPSERT, params)

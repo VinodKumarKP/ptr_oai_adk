@@ -19,7 +19,7 @@ class BaseKnowledgeBaseFactory(ABC):
     and embedding generation.
     """
 
-    def __init__(self, knowledge_base_config: List[Dict[str, Any]],
+    def __init__(self, knowledge_base_config,
                  logger: Optional[logging.Logger] = None,
                  project_root: Optional[str] = None, llm: Any = None,
                  document_loader: Callable = None,
@@ -27,7 +27,40 @@ class BaseKnowledgeBaseFactory(ABC):
         """Initialize the factory.
 
         Args:
-            knowledge_base_config: List of knowledge base configurations.
+            knowledge_base_config: Knowledge base configuration.  Two forms are
+                accepted:
+
+                * **List** (standard / already-resolved)::
+
+                    [
+                      {
+                        "name": "insurance",
+                        "registry_url": "http://localhost:8085",
+                        "auth_token": "dummy-token",
+                        "description": "...",
+                        "retrieval_settings": {"top_k": 5, "score_threshold": 0.4}
+                      },
+                      {
+                        "name": "local_kb",
+                        "vector_store": {...},
+                        "embedding": {...},
+                        "data_sources": [...]
+                      }
+                    ]
+
+                * **Dict** (skills-like registry style)::
+
+                    {
+                      "registry": {"url": "http://localhost:8085", "token": "dummy-token"},
+                      "sources": [
+                        {"name": "insurance", "description": "...",
+                         "retrieval_settings": {"top_k": 5}}
+                      ]
+                    }
+
+                  The ``registry`` credentials are automatically merged into each
+                  source entry before processing.
+
             logger: Optional logger instance.
             project_root: Optional project root path for resolving relative paths.
             llm: Optional LLM instance for query analysis.
@@ -45,14 +78,63 @@ class BaseKnowledgeBaseFactory(ABC):
         self.knowledge_base_tools = {}
         self._initialize_knowledge_bases(knowledge_base_config)
 
-    def _initialize_knowledge_bases(self, knowledge_bases: List[Dict[str, Any]]):
+    def _initialize_knowledge_bases(self, knowledge_bases):
         """Initialize knowledge bases from configuration.
 
+        Accepts two input forms:
+
+        **List** (standard) — each dict is either a fully inline KB config or
+        a registry-proxy entry that already has ``registry_url`` / ``auth_token``
+        set (either via the YAML directly, or after
+        :meth:`BaseAgent._enrich_agent_list_kb_configs` has propagated the
+        top-level ``knowledge_base.registry`` block into it)::
+
+            [
+              {"name": "insurance", "registry_url": "http://...", "auth_token": "...", ...},
+              {"name": "local_kb",  "vector_store": {...}, "embedding": {...}, ...},
+            ]
+
+        **Dict** (skills-like registry style) — normalised here so the factory
+        can be instantiated directly without going through ``BaseAgent``::
+
+            {
+              "registry": {"url": "http://localhost:8085", "token": "dummy-token"},
+              "sources": [
+                {"name": "insurance", "description": "...", "retrieval_settings": {...}}
+              ]
+            }
+
+        Detection logic per entry:
+
+        * ``registry_url`` present → :meth:`_create_registry_proxy_knowledge_base`
+          (HTTP proxy, no local DB connection)
+        * otherwise → :meth:`_create_single_knowledge_base`
+          (inline vector-store config, local connection)
+
         Args:
-            knowledge_bases: List of knowledge base configuration dictionaries.
+            knowledge_bases: List or dict of knowledge base configurations.
         """
+        # Normalise dict style → flat list with registry credentials merged in
+        if isinstance(knowledge_bases, dict):
+            registry_config = knowledge_bases.get('registry', {})
+            sources = knowledge_bases.get('sources', [])
+            registry_url = registry_config.get('url', '')
+            token = registry_config.get('token', '')
+            merged = []
+            for entry in sources:
+                e = dict(entry)
+                if not e.get('registry_url') and registry_url:
+                    e['registry_url'] = registry_url
+                if not e.get('auth_token') and token:
+                    e['auth_token'] = token
+                merged.append(e)
+            knowledge_bases = merged
+
         for kb_config in knowledge_bases:
-            self._create_single_knowledge_base(kb_config)
+            if kb_config.get('registry_url'):
+                self._create_registry_proxy_knowledge_base(kb_config)
+            else:
+                self._create_single_knowledge_base(kb_config)
 
     def _process_data_sources(self, data_sources: List[Dict[str, Any]],
                               text_splitter_settings: Dict[str, Any],
@@ -143,6 +225,72 @@ class BaseKnowledgeBaseFactory(ABC):
                 self.logger.warning(f"Unknown source type '{source_type}' at index {i}. Skipping.")
 
         return docs_paths
+
+    def _create_registry_proxy_knowledge_base(self, kb_config: Dict[str, Any]) -> None:
+        """Register a KB entry that proxies searches to the KB Registry HTTP API.
+
+        Called when ``kb_config`` contains a ``registry_url`` key.  This happens
+        in three ways:
+
+        1. **Skills-like YAML style** (recommended) — top-level
+           ``knowledge_base.registry`` credentials are propagated into each entry
+           by :meth:`BaseAgent._enrich_agent_list_kb_configs` before the builder
+           is invoked, or by :meth:`_initialize_knowledge_bases` when the factory
+           is called directly with a dict-style config.
+
+        2. **Per-entry style** (old, still supported) — ``registry_url`` and
+           ``auth_token`` provided directly on the KB entry in the YAML::
+
+               knowledge_base:
+                 - name: insurance
+                   registry_url: http://localhost:8085
+                   auth_token: dummy-token
+
+        3. **``registry_name`` reference** — :meth:`BaseAgentBuilder._resolve_kb_config`
+           fetches metadata from the registry and builds a resolved entry with
+           ``registry_url`` set.
+
+        No local vector-store connection is opened — every
+        ``search_knowledge_base`` call issues an HTTP POST to the registry's
+        query endpoint instead.
+
+        Args:
+            kb_config: Resolved KB entry dict with keys:
+                * ``name``             — KB name (must match the registered KB name)
+                * ``description``      — Tool description shown to the LLM
+                * ``registry_url``     — Base URL of the KB Registry service
+                * ``auth_token``       — Bearer token for registry requests
+                * ``retrieval_settings`` — optional ``{top_k, score_threshold}``
+        """
+        from oai_agent_core.components.vector_store.registry_proxy_vector_store import (  # noqa: PLC0415
+            RegistryProxyVectorStore,
+        )
+
+        name = kb_config.get('name', 'default_knowledge_base')
+        description = kb_config.get('description', 'Search the knowledge base.')
+        retrieval_settings = kb_config.get('retrieval_settings', {})
+
+        proxy_store = RegistryProxyVectorStore(
+            kb_name=name,
+            registry_url=kb_config['registry_url'],
+            auth_token=kb_config['auth_token'],
+            retrieval_settings=retrieval_settings,
+        )
+
+        self.knowledge_base_tools[name] = {
+            'vector_store': proxy_store,
+            'description': description,
+            'retrieval_settings': retrieval_settings,
+            'vector_load_type': 'registry',
+        }
+
+        if not self.vector_store:
+            self.vector_store = proxy_store
+
+        self.logger.info(
+            "Registered registry-proxy KB '%s' → %s",
+            name, kb_config['registry_url'],
+        )
 
     def _create_single_knowledge_base(self, kb_config: Dict[str, Any]):
         """Create a single knowledge base and register it as a tool.

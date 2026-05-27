@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -45,6 +46,8 @@ class BaseAgentBuilder(ABC):
             logger: Optional logger instance.
             document_loader: Optional document loader instance.
             vector_store: Optional vector store instance.
+            skill_registry: Optional skill registry instance.
+            structured_output_model_registry: Optional structured output model registry.
         """
         self.llm = llm
         self.model_manager = model_manager
@@ -218,18 +221,163 @@ class BaseAgentBuilder(ABC):
             
         return mcp_tools
 
+    async def _resolve_kb_config(self, kb_entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve a KB config entry.
+
+        **Inline config** (no ``registry_name`` key): returned unchanged — the
+        full vector-store details are already present.
+
+        **Registry reference** (``registry_name`` key present): fetches KB
+        metadata (description, retrieval defaults) from the KB Registry service
+        and returns a *proxy sentinel* dict containing:
+
+        * ``name``           — KB name
+        * ``description``    — resolved description
+        * ``_registry_url``  — base URL of the KB Registry (used at query time)
+        * ``_auth_token``    — bearer token for registry requests
+        * ``retrieval_settings`` — merged defaults + local overrides
+
+        :class:`BaseKnowledgeBaseFactory` detects the ``_registry_url`` key and
+        creates a :class:`~oai_agent_core.components.vector_store.registry_proxy_vector_store.RegistryProxyVectorStore`
+        instead of opening a local DB connection.  At search time the proxy
+        calls ``POST {registry_url}/api/v1/kb-registry/knowledge-bases/{kb_name}/query``
+        so no vector-store credentials ever reach the agent process.
+
+        Connection details priority (highest → lowest):
+
+        1. ``registry_url`` / ``auth_token`` keys in the YAML entry itself.
+        2. ``KB_REGISTRY_URL`` / ``AUTH_TOKEN`` environment variables.
+
+        This lets different KBs point at different registry instances within
+        the same agent, and also supports future env-var interpolation in YAML
+        (e.g. ``registry_url: ${KB_REGISTRY_URL}``).
+
+        Args:
+            kb_entry: A single item from the ``knowledge_base`` list in an
+                      agent YAML config.  Supported keys:
+
+                * ``registry_name``   — (required) name of the registered KB
+                * ``registry_url``    — (optional) overrides KB_REGISTRY_URL env var
+                * ``auth_token``      — (optional) overrides AUTH_TOKEN env var
+                * ``description``     — (optional) overrides registry description
+                * ``retrieval_settings`` — (optional) overrides registry defaults
+
+        Returns:
+            Resolved config dict compatible with :class:`BaseKnowledgeBaseFactory`.
+
+        Raises:
+            ValueError: If the registry URL cannot be resolved or the KB is not found.
+        """
+        import json as _json  # noqa: PLC0415
+
+        registry_name = kb_entry.get('registry_name')
+        if not registry_name:
+            return kb_entry  # already inline — use as-is
+
+        # --- resolve registry URL: YAML entry > environment variable ----------
+        kb_registry_url = (
+            (kb_entry.get('registry_url') or '').rstrip('/')
+            or os.getenv('KB_REGISTRY_URL', '').rstrip('/')
+        )
+        if not kb_registry_url:
+            raise ValueError(
+                f"Knowledge base '{registry_name}' uses registry_name but no "
+                "registry URL is configured. Set 'registry_url' in the YAML entry "
+                "or the KB_REGISTRY_URL environment variable."
+            )
+
+        # --- resolve auth token: YAML entry > environment variable -----------
+        auth_token = (
+            kb_entry.get('auth_token')
+            or os.getenv('KB_REGISTRY_AUTH_TOKEN', 'dummy-token')
+        )
+        # Fetch lightweight KB metadata (no vector-store credentials)
+        meta_url = (
+            f"{kb_registry_url}/api/v1/kb-registry"
+            f"/knowledge-bases/{registry_name}"
+        )
+
+        self.logger.debug("Fetching KB metadata from registry: %s", meta_url)
+        try:
+            import aiohttp  # noqa: PLC0415
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    meta_url,
+                    headers={"Authorization": f"Bearer {auth_token}"},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 404:
+                        raise ValueError(
+                            f"Knowledge base '{registry_name}' not found in KB registry "
+                            f"at {kb_registry_url}"
+                        )
+                    if not resp.ok:
+                        text = await resp.text()
+                        raise ValueError(
+                            f"KB registry returned HTTP {resp.status} for '{registry_name}': {text}"
+                        )
+                    kb_meta: Dict[str, Any] = await resp.json()
+        except aiohttp.ClientError as exc:
+            raise ValueError(
+                f"Could not connect to KB registry at {kb_registry_url}: {exc}"
+            ) from exc
+
+        # Parse retrieval defaults stored as JSON string in the registry
+        retrieval_raw = kb_meta.get('retrieval_config') or '{}'
+        if isinstance(retrieval_raw, str):
+            try:
+                retrieval_raw = _json.loads(retrieval_raw)
+            except _json.JSONDecodeError:
+                retrieval_raw = {}
+        registry_retrieval: Dict[str, Any] = retrieval_raw if isinstance(retrieval_raw, dict) else {}
+
+        # Merge: registry defaults → local overrides from agent YAML
+        merged_retrieval: Dict[str, Any] = {
+            'top_k': registry_retrieval.get('top_k', 5),
+            'score_threshold': registry_retrieval.get('score_threshold', 0.7),
+            **(kb_entry.get('retrieval_settings') or {}),
+        }
+
+        # Proxy sentinel — BaseKnowledgeBaseFactory creates RegistryProxyVectorStore
+        proxy_config: Dict[str, Any] = {
+            'name': registry_name,
+            'description': (
+                kb_entry.get('description')
+                or kb_meta.get('description')
+                or f"Search the {registry_name} knowledge base."
+            ),
+            '_registry_url': kb_registry_url,   # sentinel — triggers proxy path
+            '_auth_token': auth_token,
+            'retrieval_settings': merged_retrieval,
+        }
+
+        url_source = "yaml" if kb_entry.get('registry_url') else "env"
+        token_source = "yaml" if kb_entry.get('auth_token') else "env"
+        self.logger.info(
+            "Resolved KB '%s' from registry %s (url=%s, token=%s) — queries proxied via HTTP",
+            registry_name, kb_registry_url, url_source, token_source,
+        )
+        return proxy_config
+
     async def _load_knowledge_base_tools(self, agent_name: str, agent_config: Dict[str, Any]) -> List[Any]:
-        """Load Knowledge Base tools."""
+        """Load Knowledge Base tools (inline config or registry-referenced)."""
         kb_configs = agent_config.get('knowledge_base', [])
         if not kb_configs:
             return []
+
+        # Resolve any registry_name references → full inline configs
+        resolved_configs: List[Dict[str, Any]] = []
+        for kb_entry in kb_configs:
+            resolved = await self._resolve_kb_config(kb_entry)
+            resolved_configs.append(resolved)
+
         try:
             kb_class = self._get_knowledgebase_factory_class()
 
             # Use to_thread for potentially blocking KB initialization
             kb_factory = await asyncio.to_thread(
                 kb_class,
-                knowledge_base_config=kb_configs,
+                knowledge_base_config=resolved_configs,
                 logger=self.logger,
                 project_root=self.tool_registry.project_root,
                 llm=self.llm,
@@ -237,16 +385,19 @@ class BaseAgentBuilder(ABC):
                 vector_store=self.vector_store
             )
 
-            # Add as tool
+            # Create search (+ load) tools for each KB
             tools = []
-            for kb_config in kb_configs:
+            for kb_config in resolved_configs:
                 name = kb_config.get('name', 'default_knowledge_base')
                 description = kb_config.get('description', 'Search the knowledge base.')
                 kb_tool = kb_factory.create_tool(name=name, description=description)
                 tools.append(kb_tool)
-                kb_tool = kb_factory.create_load_tool(name=name, description=description)
-                tools.append(kb_tool)
-                
+                # Skip the load tool for registry-proxied KBs — indexing is
+                # managed by the KB Registry service, not by the agent.
+                if not kb_config.get('registry_url'):
+                    kb_tool = kb_factory.create_load_tool(name=name, description=description)
+                    tools.append(kb_tool)
+
             self.logger.debug(f"Added {len(tools)} knowledge base tools to agent '{agent_name}'")
             return tools
         except ImportError:

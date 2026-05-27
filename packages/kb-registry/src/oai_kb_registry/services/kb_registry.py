@@ -302,6 +302,7 @@ class KBRegistry:
         chunk_overlap: int,
         vector_db_config: Optional[Dict[str, Any]] = None,
         embedding_region: Optional[str] = None,
+        retrieval_config: Optional[Dict[str, Any]] = None,
         performed_by: str = "system",
     ) -> Dict[str, Any]:
         """Register a new knowledge base (or update if it already exists)."""
@@ -316,6 +317,7 @@ class KBRegistry:
             embedding_region=embedding_region,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            retrieval_config=retrieval_config,
         )
 
         kb_id = kb.get("id")

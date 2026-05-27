@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import threading
 from abc import ABC, abstractmethod
 from copy import deepcopy
@@ -161,8 +162,8 @@ class BaseAgent(ABC):
             self.skill_registry = SkillRegistry(
                 logger=self.logger,
                 project_root=config_root,
-                registry_url=remote_registry_config.get('url'),
-                auth_token=remote_registry_config.get('token'),
+                registry_url=remote_registry_config.get('url', os.environ.get('SKILLS_REGISTRY_URL', None)),
+                auth_token=remote_registry_config.get('auth_token', os.environ.get('SKILLS_REGISTRY_AUTH_TOKEN', None)),
                 skills_cache_dir=skills_cache_dir
             )
             self.logger.debug("Skill registry initialized for this agent")
@@ -179,6 +180,111 @@ class BaseAgent(ABC):
         :return:
         """
         self.llm = self.model_manager.create_model(model_config=model_config)
+
+    # ------------------------------------------------------------------
+    # Knowledge-base config normalization helpers
+    # ------------------------------------------------------------------
+
+    def _enrich_agent_list_kb_configs(self) -> None:
+        """Propagate top-level KB registry credentials into every agent's KB entries.
+
+        Called once during :meth:`_load_tools_and_kb_and_memory`.  Walks through
+        ``agent_list`` in ``self.agent_config`` and, for any agent whose
+        ``knowledge_base`` is a flat list without per-entry credentials, injects
+        the top-level ``knowledge_base.registry`` URL and token.
+
+        This means **no builder changes are needed** — by the time the builder
+        receives an agent config, each KB entry already has ``registry_url`` and
+        ``auth_token`` set.  Per-entry values always win over the top-level block.
+
+        Only runs when ``knowledge_base`` is a dict (new style).  Old-style list
+        configs are left untouched for backward compatibility.
+        """
+        raw_kb = self.agent_config.get('knowledge_base')
+        if not isinstance(raw_kb, dict):
+            return  # old-style list or absent — nothing to propagate
+
+        registry_config = raw_kb.get('registry', {})
+        if not registry_config:
+            return  # new-style dict but no registry block — nothing to propagate
+
+        agent_list = self.agent_config.get('agent_list', [])
+        for agent_dict in agent_list:
+            if not isinstance(agent_dict, dict):
+                continue
+            for agent_config in agent_dict.values():
+                if not isinstance(agent_config, dict):
+                    continue
+                kb_entries = agent_config.get('knowledge_base', [])
+                if kb_entries and isinstance(kb_entries, list):
+                    agent_config['knowledge_base'] = (
+                        BaseAgent._merge_registry_into_sources(kb_entries, registry_config)
+                    )
+
+    @staticmethod
+    def _parse_kb_config(raw_config) -> tuple:
+        """Normalize the top-level ``knowledge_base`` value.
+
+        Supports two YAML styles:
+
+        **New style** (skills-like, recommended)::
+
+            knowledge_base:
+              registry:
+                url: http://localhost:8085
+                token: dummy-token
+              sources:
+                - name: insurance
+                  description: "..."
+
+        **Old style** (backward-compatible)::
+
+            knowledge_base:
+              - name: insurance
+                registry_url: http://localhost:8085
+                auth_token: dummy-token
+
+        Returns:
+            ``(sources_list, registry_config)`` where *sources_list* is the
+            flat list of KB entry dicts and *registry_config* is the optional
+            ``{url, token}`` dict (empty dict when using old style).
+        """
+        if isinstance(raw_config, dict):
+            return raw_config.get('sources', []), raw_config.get('registry', {})
+        if isinstance(raw_config, list):
+            return raw_config, {}
+        return [], {}
+
+    @staticmethod
+    def _merge_registry_into_sources(sources: list, registry_config: dict) -> list:
+        """Inject top-level registry URL/token into each KB source entry.
+
+        Per-entry ``registry_url`` / ``auth_token`` values take priority over
+        the global registry block, preserving full backward-compatibility.
+
+        Args:
+            sources: Flat list of KB entry dicts.
+            registry_config: ``{url, token}`` from the top-level
+                ``knowledge_base.registry`` block (may be empty).
+
+        Returns:
+            New list of entry dicts with registry credentials merged in.
+        """
+        if not registry_config:
+            return sources
+        registry_url = registry_config.get('url', '')
+        token = registry_config.get('token', '')
+        result = []
+        for entry in sources:
+            e = dict(entry)
+            if not e.get('registry_url') and registry_url:
+                e['registry_url'] = registry_url
+            if not e.get('auth_token') and token:
+                e['auth_token'] = token
+            result.append(e)
+        return result
+
+    # ------------------------------------------------------------------
 
     async def _load_tools_and_kb_and_memory(self, kb_factory_class: Optional[Type] = None) -> None:
         """Load tools, knowledge base, and memory concurrently.
@@ -209,6 +315,10 @@ class BaseAgent(ABC):
             self.logger.warning("Tool registry not initialized. Skipping tool loading.")
             return
 
+        # Propagate top-level KB registry credentials into every agent's KB entries
+        # so builders receive fully resolved configs with no per-entry credentials needed.
+        self._enrich_agent_list_kb_configs()
+
         async def _load_tools_and_mcp():
             tools_config = self.agent_config.get('tools', {})
             if tools_config:
@@ -223,23 +333,28 @@ class BaseAgent(ABC):
                 self.tool_registry.load_mcp_config(mcp_config)
 
         async def _init_global_kb():
-            global_kb_config = self.agent_config.get('knowledge_base', [])
-            if global_kb_config and kb_factory_class:
-                try:
-                    self.global_kb_factory = await asyncio.to_thread(
-                        kb_factory_class,
-                        knowledge_base_config=global_kb_config,
-                        logger=self.logger,
-                        project_root=self.config_root,
-                        llm=self.llm,
-                        document_loader=self.document_loader,
-                        vector_store=self.vector_store
-                    )
-                    self.logger.info("Initialized global knowledge base")
-                except ImportError as e:
-                    self.logger.warning("Could not initialize global knowledge base: missing dependencies %s", e)
-                except Exception as e:
-                    self.logger.error("Failed to initialize global knowledge base: %s", e)
+            raw_kb = self.agent_config.get('knowledge_base')
+            if not raw_kb or not kb_factory_class:
+                return
+            sources, registry_config = BaseAgent._parse_kb_config(raw_kb)
+            if not sources:
+                return
+            resolved_sources = BaseAgent._merge_registry_into_sources(sources, registry_config)
+            try:
+                self.global_kb_factory = await asyncio.to_thread(
+                    kb_factory_class,
+                    knowledge_base_config=resolved_sources,
+                    logger=self.logger,
+                    project_root=self.config_root,
+                    llm=self.llm,
+                    document_loader=self.document_loader,
+                    vector_store=self.vector_store
+                )
+                self.logger.info("Initialized global knowledge base")
+            except ImportError as e:
+                self.logger.warning("Could not initialize global knowledge base: missing dependencies %s", e)
+            except Exception as e:
+                self.logger.error("Failed to initialize global knowledge base: %s", e)
 
         async def _init_memory_store():
             memory_config = self.agent_config.get('memory', {})
@@ -651,23 +766,35 @@ class BaseAgent(ABC):
                 warnings.append("Tools configured but tool_registry not initialized")
 
         # 4. Validate knowledge base configuration
-        kb_config = self.agent_config.get('knowledge_base', [])
+        kb_config = self.agent_config.get('knowledge_base')
         if kb_config:
-            if not isinstance(kb_config, list):
-                errors.append("'knowledge_base' configuration must be a list")
-            else:
+            if isinstance(kb_config, dict):
+                # New style: {registry: {url, token}, sources: [...]}
+                registry = kb_config.get('registry', {})
+                if registry and not registry.get('url'):
+                    warnings.append(
+                        "'knowledge_base.registry.url' is empty — set it or KB_REGISTRY_URL env var"
+                    )
+                sources = kb_config.get('sources', [])
+                if not isinstance(sources, list):
+                    errors.append("'knowledge_base.sources' must be a list")
+            elif isinstance(kb_config, list):
+                # Old style (or agent-level flat list) — backward-compatible
                 for idx, kb in enumerate(kb_config):
                     if not isinstance(kb, dict):
                         errors.append("Knowledge base config item %d must be a dictionary" % idx)
                         continue
-                    if 'vector_store' not in kb:
+                    # Only require vector_store for fully inline (non-registry) configs
+                    is_registry_kb = kb.get('registry_url') or kb.get('registry_name')
+                    if not is_registry_kb and 'vector_store' not in kb:
                         errors.append(
                             "Knowledge base config item %d missing 'vector_store' configuration" % idx
                         )
-                    if 'type' not in kb and 'path' not in kb and 'url' not in kb:
-                        warnings.append(
-                            "Knowledge base config item %d should specify 'type' (pdf, document, url, etc.)" % idx
-                        )
+            else:
+                errors.append(
+                    "'knowledge_base' must be a list (inline sources) or a dict with "
+                    "'registry' and 'sources' keys (registry style)"
+                )
 
         # 5. Validate memory configuration
         memory_config = self.agent_config.get('memory', {})

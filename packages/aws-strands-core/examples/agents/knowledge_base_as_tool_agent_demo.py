@@ -14,7 +14,7 @@ async def run_kb_tool_agent():
     print("Example: Agent with Knowledge Base as Tool")
     print("=" * 60)
 
-    config_path = os.path.join(CONFIG_DIR, 'knowledge_base_as_tool_agent.yaml')
+    config_path = os.path.join(CONFIG_DIR, 'knowledge_base_as_tool_agent_registry.yaml')
     
     # Load configuration
     with open(config_path) as f:
@@ -33,7 +33,7 @@ async def run_kb_tool_agent():
     print("\n--- Test 1: Knowledge Base Tool Query ---")
     query = "What does the policy say about vacation days?"
     result = await agent.ainvoke(query)
-    pprint(result['content'][0]['text'])
+    pprint(result['content']['text'])
 
 if __name__ == "__main__":
     asyncio.run(run_kb_tool_agent())
