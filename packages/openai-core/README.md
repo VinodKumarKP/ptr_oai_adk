@@ -2,7 +2,7 @@
 
 A powerful, YAML-based configuration system for building multi-agent AI workflows using the [openai-agents](https://github.com/openai/openai-agents-python) library and LiteLLM. Build complex agent orchestrations without writing code—just configure and run.
 
-## Table of Contents
+## 📖 Table of Contents
 
 - [Overview](#overview)
 - [Prerequisites](#prerequisites)
@@ -34,7 +34,7 @@ A powerful, YAML-based configuration system for building multi-agent AI workflow
   - [OpenAIAgent Class](#openaiagent-class)
   - [Model ID Format](#model-id-format-litellm)
 
-## Overview
+## 📝 Overview
 
 The OpenAI Multi-Agent Framework enables you to create sophisticated agent orchestrations through simple YAML configuration files. Built on the [openai-agents](https://github.com/openai/openai-agents-python) library with LiteLLM for multi-provider model support, it provides a declarative way to define multi-agent systems with support for various orchestration patterns.
 
@@ -57,7 +57,7 @@ The framework operates on a simple principle: your YAML configuration is the sin
 - Autonomous agent systems with dynamic collaboration
 - Enterprise-grade AI applications
 
-## Prerequisites
+## ✅ Prerequisites
 
 Before running the agent, ensure you have the necessary API keys set as environment variables based on your chosen `cloud_provider`:
 
@@ -80,7 +80,7 @@ This package uses [LiteLLM](https://docs.litellm.ai/) under the hood (via `opena
 pip install "openai-agents[litellm]"
 ```
 
-## Quick Start
+## 🚀 Quick Start
 
 There are two ways to get started: using the interactive project generator for a guided setup, or manually configuring your project.
 
@@ -248,7 +248,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## Project Structure
+## 📁 Project Structure
 
 When you use the `oai-gen` tool to create a new OpenAI agent project, it generates a standardized, production-ready directory structure. This ensures consistency and makes it easy to locate and manage different parts of your agent.
 
@@ -285,7 +285,7 @@ ptr_agent_servers_my_project/
 -   **`pyproject.toml`**: Managed by Poetry, this file lists all project dependencies. The generator automatically adds the required packages based on your framework and feature selections.
 -   **`docker-compose.yaml`**: Allows you to run your agent and any dependent services (like a Postgres database for memory) in containers.
 
-## Key Features
+## ✨ Key Features
 
 ### 🤖 openai-agents Library
 Built directly on the [openai-agents](https://github.com/openai/openai-agents-python) library for reliable tool use, streaming, and multi-agent handoffs.
@@ -323,7 +323,7 @@ Optional Langfuse integration for tracing, monitoring, and debugging.
 ### ⚡ Streaming Support
 Real-time streaming of agent outputs and task handoffs.
 
-## Configuration
+## ⚙️ Configuration
 
 The entire behavior of your agent is defined in a single, powerful YAML file. This declarative approach allows you to build and modify complex agent systems without writing extensive boilerplate code.
 
@@ -456,7 +456,7 @@ agent_list:
 system_prompt: "You are a supervisor. Your job is to manage the agents."
 ```
 
-## Orchestration Patterns
+## 🔗 Orchestration Patterns
 
 ### 1. Single Agent
 
@@ -536,7 +536,7 @@ agent_list:
 User Input → Main Agent → (Calls Tool) → Sub-Agent → (Returns Result) → Main Agent → Final Output
 ```
 
-## Agents Configuration
+## 🤖 Agents Configuration
 
 ### Agent Properties Reference
 
@@ -756,7 +756,7 @@ agent_list:
       system_prompt: Perform deep analysis on the classified input.
 ```
 
-## Tools System
+## 🛠️ Tools System
 
 ### Defining Tools
 
@@ -798,7 +798,7 @@ tools:
         upper: 100
 ```
 
-## Agent Skills
+## 🧠 Agent Skills
 
 Agent Skills provide a way to modularize complex behaviors, workflows, and prompts into reusable components. Think of a "skill" as a predefined set of instructions and patterns that teach an agent *how* to perform a specific kind of complex task, such as processing a file, writing a specific type of code, or conducting a specialized analysis.
 
@@ -895,7 +895,7 @@ agent_list:
 
 When the `data_assistant` agent runs, it will now have all the knowledge and instructions defined in `skills/file-processing/SKILL.md` added to its prompt.
 
-## Skills Registry
+## 📝 Skills Registry
 
 The **Skills Registry** is a centralized service that manages skills as versioned, shared assets. Instead of bundling `SKILL.md` files inside every project, you register skills once in the registry and reference them by name across all your agents. This is the recommended approach for teams and production deployments.
 
@@ -995,7 +995,7 @@ Connection details are resolved with the following priority (highest wins):
 | 1 (highest) | `skills.registry.url` / `.token` in the YAML |
 | 2 | `SKILLS_REGISTRY_URL` / `SKILLS_REGISTRY_AUTH_TOKEN` environment variables |
 
-## Structured Output
+## 📊 Structured Output
 
 Ensure your agent's responses are predictable and machine-readable by defining a structured output format. This is useful when you need the agent to return data that can be programmatically processed, such as JSON with a specific schema.
 
@@ -1074,7 +1074,7 @@ agent_list:
 
 In this example, even though the individual agents (`researcher`, `writer`) may produce intermediate text, the supervisor is responsible for assembling their work into a final JSON object that matches the `FinalReport` Pydantic model.
 
-## Knowledge Base Integration
+## 📚 Knowledge Base Integration
 
 Give your agents access to custom information by setting up a knowledge base. This allows them to answer questions about specific documents or data you provide.
 
@@ -1191,7 +1191,7 @@ agent_list:
           # ... other settings ...
 ```
 
-## KB Registry Integration
+## 📝 KB Registry Integration
 
 The **KB Registry** is a shared service that pre-indexes documents and exposes a search API. All agents call the registry over HTTP instead of opening their own database connections. This is the recommended approach for multi-agent systems and production deployments.
 
@@ -1352,7 +1352,7 @@ knowledge_base:
 
 Per-entry `registry_url` / `auth_token` always take priority over the top-level `registry` block.
 
-## Data Sources
+## 💾 Data Sources
 
 The framework supports loading data from various sources to ground your agents.
 
@@ -1402,7 +1402,7 @@ knowledge_base:
 >
 > **Important**: When using a dynamic LangChain loader, be sure to consult its documentation and install any required dependencies (e.g., `pip install atlassian-python-api` for the Confluence loader).
 
-## Memory Management
+## 🧠 Memory Management
 
 Enable your agents to remember past conversations and learn from interactions over time. The framework's memory management system provides both short-term and long-term memory, ensuring conversations are coherent and context-aware.
 
@@ -1452,7 +1452,7 @@ memory:
 
 The memory system uses the same vector store options as the Knowledge Base. You can choose between `chroma`, `postgres`, and `s3`. Please refer to the **Vector Store Options** section under [Knowledge Base Integration](#knowledge-base-integration) for detailed configuration examples for each type.
 
-## MCP Integration
+## 🔌 MCP Integration
 
 Model Context Protocol (MCP) provides a powerful way to extend your agents' capabilities by connecting them to external tools and services. Think of MCP servers as providers of "super-tools" that can give your agents the ability to interact with filesystems, databases, or any other external API.
 
@@ -1490,7 +1490,7 @@ mcps:
 
 For systems with many MCP tools, this can increase startup time. To optimize this, the framework also supports lazy loading. See the next section for details.
 
-## Lazy MCP Loading
+## ⏳ Lazy MCP Loading
 
 For scenarios with many MCP tools or high latency, you can enable lazy loading. This allows the agent to discover and load tools only when needed, reducing initial startup time and token usage.
 
@@ -1512,7 +1512,7 @@ crew_config:
 
 This workflow is automatically handled by the framework when `enable_lazy_loading` is set to true.
 
-## Guardrails Integration
+## 🛡️ Guardrails Integration
 
 Guardrails are essential for creating safe and reliable AI agents. They allow you to validate, structure, and sanitize the inputs and outputs of your agents, ensuring they behave as expected. This framework integrates with [Guardrails AI](https://www.guardrailsai.com/) to provide powerful and flexible validation capabilities.
 
@@ -1589,7 +1589,7 @@ guardrails:
 
 > **Note**: The system automatically tries to download and install any required validators from the Guardrails AI Hub. If you add a new validator and it doesn't work immediately, a restart of the agent may be required.
 
-## Dynamic Input Variables
+## 💡 Dynamic Input Variables
 
 ### Variable Syntax
 
@@ -1625,7 +1625,7 @@ result = await agent.ainvoke(
 result = await agent.ainvoke("Quantum Computing")
 ```
 
-## Usage Examples
+## 💡 Usage Examples
 
 ### Example 1: Simple Research Agent
 
@@ -1663,7 +1663,7 @@ agent_list:
 system_prompt: You are an editor. Coordinate the research and writing process.
 ```
 
-## Streaming Support
+## ⚡ Streaming Support
 
 ### Async Streaming
 
@@ -1689,7 +1689,7 @@ async for chunk in agent.astream("Research quantum computing"):
         print(content['text'], end='', flush=True)
 ```
 
-## Observability
+## 📈 Observability
 
 ### Langfuse Integration
 
@@ -1714,14 +1714,14 @@ agent = OpenAIAgent(
 )
 ```
 
-## Best Practices
+## 👍 Best Practices
 
 1. **Clear Agent Roles**: Define specific responsibilities for each agent to avoid confusion.
 2. **Tool Scoping**: Assign only necessary tools to each agent to reduce hallucination risks.
 3. **Supervisor Prompts**: For multi-agent systems, ensure the supervisor's prompt clearly defines the workflow and delegation strategy.
 4. **Security**: Use environment variables for API keys and sensitive data.
 
-## Troubleshooting
+## 🐛 Troubleshooting
 
 **Issue: "Agent not initialized"**
 ```python
@@ -1738,7 +1738,7 @@ tools:
     module: tool_module
 ```
 
-## API Reference
+## 📋 API Reference
 
 ### Import
 

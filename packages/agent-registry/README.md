@@ -2,7 +2,7 @@
 
 The OAI Agent Registry is a powerful, FastAPI-based proxy and lifecycle manager for OAI-compatible agent servers. It acts as a single entry point for all your agents, providing centralized control, dynamic discovery, deployment, and robust security.
 
-## Key Features
+## ✨ Key Features
 
 - **Dynamic Routing**: Intelligently proxies requests to the correct agent based on the URL path.
 - **Agent Lifecycle Management**: Start, stop, restart, and redeploy agents directly through the registry's API.
@@ -16,7 +16,7 @@ The OAI Agent Registry is a powerful, FastAPI-based proxy and lifecycle manager 
 - **Health Checks**: Built-in endpoints to monitor the health of the registry and all registered agents.
 - **Interactive API Docs**: Access Swagger UI at `/docs` for interactive API documentation.
 
-## Architecture
+## 🏗️ Architecture
 
 The agent registry is composed of several key modules:
 
@@ -30,7 +30,7 @@ The agent registry is composed of several key modules:
 - **`security/`**: Manages API token authentication and validation.
 - **`models.py`**: Defines the Pydantic models for configuration and API data structures.
 
-## Installation
+## 📦 Installation
 
 You can install the `oai-agent-registry` package directly from the Git repository using `uv` and `pip`:
 
@@ -38,7 +38,7 @@ You can install the `oai-agent-registry` package directly from the Git repositor
 uv pip install "oai-agent-registry @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit.git@main#subdirectory=packages/agent-registry"
 ```
 
-## Database Configuration
+## 🗄️ Database Configuration
 
 The Agent Registry supports both PostgreSQL and SQLite for logging agent registrations and actions. It automatically attempts to connect to a PostgreSQL database first. If a PostgreSQL connection cannot be established or the driver is unavailable, it seamlessly falls back to using a local SQLite database (`agent_registry.db` by default).
 
@@ -53,7 +53,7 @@ To use PostgreSQL, you must have a PostgreSQL server running (either locally or 
 - `LOGGING_DB_PASSWORD`: The database password (default: `postgres`).
 - `REGISTRY_DB_LOGGING_ENABLED`: Set to `true` to enable database logging (default: `true`).
 
-## CLI
+## 🖥️ CLI
 
 The `oai-agent-registry` command-line interface provides a convenient way to start the HTTP server.
 
@@ -70,7 +70,7 @@ oai-agent-registry
 - `--start-port`: The starting port for the auto-discovery scan.
 - `--end-port`: The ending port for the auto-discovery scan.
 
-## Usage
+## 🚀 Usage
 
 ### Configuration File
 
@@ -94,7 +94,7 @@ oai-agent-registry
 }
 ```
 
-## API Endpoints
+## 📋 API Endpoints
 
 The registry provides a rich set of API endpoints for managing agents and the registry itself. You can explore these endpoints interactively by visiting `/docs` in your browser.
 
@@ -132,7 +132,7 @@ The registry provides a rich set of API endpoints for managing agents and the re
 
 - **ANY `/{agent_name}/{path:path}`**: Proxies any request to the specified path on the corresponding agent.
 
-## Security
+## 🔒 Security
 
 When `auth_enabled` is `true`, all requests must include a valid API token in one of the following headers:
 

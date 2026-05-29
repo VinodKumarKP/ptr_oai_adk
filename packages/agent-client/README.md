@@ -2,7 +2,7 @@
 
 `oai-agent-client` is a robust Python client for interacting with agent servers. It provides both asynchronous (`AsyncAgentClient`) and synchronous (`SyncAgentClient`) implementations built on `httpx`. The client can connect to a running agent server or manage a local server process.
 
-## Features
+## ✨ Features
 
 - **Async and Sync APIs**: `AsyncAgentClient` for `asyncio` applications and `SyncAgentClient` for synchronous code.
 - **HTTP/2 Support**: Leverages `httpx` for modern HTTP features.
@@ -16,15 +16,15 @@
 - **Pydantic Configuration**: Uses a `ClientConfig` model for validated and immutable configuration.
 - **Built-in Logging**: Captures and logs the `stdout` and `stderr` of managed server processes.
 
-## Installation
+## 📦 Installation
 
 ```bash
 pip install oai-agent-client
 ```
 
-## Quickstart
+## 🚀 Quickstart
 
-### Asynchronous Client
+### ⚡ Asynchronous Client
 
 Recommended for use in `asyncio` applications (e.g., FastAPI).
 
@@ -49,7 +49,7 @@ async def main():
 asyncio.run(main())
 ```
 
-### Synchronous Client
+### ⏳ Synchronous Client
 
 Suitable for scripts, Jupyter notebooks, or traditional web frameworks like Flask or Django.
 
@@ -70,11 +70,11 @@ with SyncAgentClient(config=config) as client:
         print(chunk, end="", flush=True)
 ```
 
-## Configuration
+## ⚙️ Configuration
 
 The client is configured via the `ClientConfig` model. You must provide either a `url` for a remote server or a `command` to manage a local one.
 
-### Remote Server
+### 🌐 Remote Server
 
 ```python
 from oai_agent_client import ClientConfig
@@ -85,7 +85,7 @@ config = ClientConfig(
 )
 ```
 
-### Managed Local Server (Async Only)
+### 🖥️ Managed Local Server (Async Only)
 
 The `AsyncAgentClient` can manage a local server subprocess.
 
@@ -101,7 +101,7 @@ config = ClientConfig(
 
 `ClientConfig` is immutable. To update headers after initialization, use `client.update_headers(**new_headers)`.
 
-### Full `ClientConfig` Reference
+### 📋 Full `ClientConfig` Reference
 
 | Field                 | Type                  | Default                   | Description                               |
 | --------------------- | --------------------- | ------------------------- | ----------------------------------------- |
@@ -126,7 +126,7 @@ config = ClientConfig(
 | `startup_timeout`     | `int`                 | `30`                      | Seconds to wait for a managed server.     |
 | `log_level`           | `str`                 | `"INFO"`                  | Logging level for the client.             |
 
-## Error Handling
+## ⚠️ Error Handling
 
 The client raises specific exceptions to simplify error handling. All exceptions inherit from `AgentClientError`.
 

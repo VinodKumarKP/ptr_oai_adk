@@ -2,7 +2,7 @@
 
 The OAI Skills Registry is a FastAPI-based service for managing the lifecycle of agent skills. It provides a centralized catalog for registering, versioning, and deploying skills with deep GitHub integration for source control and version discovery.
 
-## Key Features
+## ✨ Key Features
 
 - **GitHub-backed versioning** — import skills directly from any GitHub repository and discover versions from Git tags.
 - **Manual lifecycle control** — explicitly publish, upgrade, downgrade, and deprecate skill versions.
@@ -17,7 +17,7 @@ The OAI Skills Registry is a FastAPI-based service for managing the lifecycle of
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
 ```
 oai_skills_registry/
@@ -37,7 +37,7 @@ oai_skills_registry/
 
 ---
 
-## Installation
+## 📦 Installation
 
 ```bash
 uv pip install "oai-skills-registry @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit.git@main#subdirectory=packages/skills-registry"
@@ -45,7 +45,7 @@ uv pip install "oai-skills-registry @ git+https://github.com/Capgemini-Innersour
 
 ---
 
-## CLI
+## 🖥️ CLI
 
 Start the HTTP server:
 
@@ -69,7 +69,7 @@ oai-skills-registry --auto-start-infra
 
 ---
 
-## Database Configuration
+## 🗄️ Database Configuration
 
 PostgreSQL is used when the environment variables below are set and reachable; otherwise the registry falls back to a local SQLite file (`skills_registry.db`).
 
@@ -93,7 +93,7 @@ PostgreSQL is used when the environment variables below are set and reachable; o
 
 ---
 
-## Other Environment Variables
+## ⚙️ Other Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -106,7 +106,7 @@ PostgreSQL is used when the environment variables below are set and reachable; o
 
 ---
 
-## API Reference
+## 📋 API Reference
 
 All endpoints are prefixed with `/api/v1/skills-registry`. Authentication uses a Bearer token in the `Authorization` header.
 
@@ -119,7 +119,7 @@ All endpoints are prefixed with `/api/v1/skills-registry`. Authentication uses a
 
 ---
 
-### Skills Catalog
+### 📚 Skills Catalog
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -144,7 +144,7 @@ POST /api/v1/skills-registry/skills
 
 ---
 
-### Skill READMEs
+### 📄 Skill READMEs
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -154,7 +154,7 @@ POST /api/v1/skills-registry/skills
 
 ---
 
-### Git & GitHub Integration
+### 🐙 Git & GitHub Integration
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -191,7 +191,7 @@ POST /api/v1/skills-registry/skills/data-analysis/import-from-git
 
 ---
 
-### Skill Lifecycle
+### 🔄 Skill Lifecycle
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -211,7 +211,7 @@ Only **Published** versions are served to agents. Downgrade and deprecate allow 
 
 ---
 
-### Token Management
+### 🔑 Token Management
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -222,7 +222,7 @@ Only **Published** versions are served to agents. Downgrade and deprecate allow 
 
 ---
 
-## Skill Repository Structure
+## 📁 Skill Repository Structure
 
 For a skill to be discovered and imported, the GitHub repository must follow this layout:
 
@@ -255,7 +255,7 @@ Provides tools for data loading, transformation, and visualization...
 
 ---
 
-## Agent Integration
+## 🤝 Agent Integration
 
 Agents reference the registry in their `agent.yaml`:
 
@@ -277,7 +277,7 @@ env:
 
 ---
 
-## Development
+## 👨‍💻 Development
 
 ```bash
 # Install dependencies

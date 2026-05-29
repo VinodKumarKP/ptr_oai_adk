@@ -310,7 +310,7 @@ augmented = agent._augment_message(user_input)
 validated_input = agent._guardrail_input_message(user_input)
 
 # Apply output validation via guardrails
-validated_output = agent._guardrail_output_message(response)
+validated_output = agent._guardrail_output_message(agent_response)
 
 # Get conversation context from memory
 context = agent._get_conversation_context(session_id, user_id)

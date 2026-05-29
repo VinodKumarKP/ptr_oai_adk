@@ -4,7 +4,7 @@ A flexible regression testing framework for AI Agents. This library allows you t
 
 It is designed to be framework-agnostic, allowing you to plug in any agent implementation (e.g., OpenAI, LangGraph, Bedrock) by providing the agent class.
 
-## Table of Contents
+## 📖 Table of Contents
 
 - [Features](#features)
 - [Installation](#installation)
@@ -24,7 +24,7 @@ It is designed to be framework-agnostic, allowing you to plug in any agent imple
   - [TestScenario](#testscenario)
 - [Requirements](#requirements)
 
-## Features
+## ✨ Features
 
 - **Scenario-based Testing**: Define inputs, expected outputs, and agent configurations in simple YAML files.
 - **LLM-as-a-Judge**: Uses a separate LLM (Judge Agent) to score responses and provide explanations, handling the semantic variability of AI outputs.
@@ -40,7 +40,7 @@ It is designed to be framework-agnostic, allowing you to plug in any agent imple
 - **Macros**: Use dynamic values in your scenarios (e.g., dates, UUIDs, file contents, external data) using `{{ MACRO }}` syntax.
 - **Advanced Macros**: Support for file concatenation, sampling, text manipulation, JSON extraction, templates, business day calculations, HTTP requests, and SQL queries.
 
-## Installation
+## 📦 Installation
 
 ```bash
 pip install oai-agent-evaluator
@@ -73,7 +73,7 @@ pip install "oai-agent-evaluator[ocr]"    # Only OCR support (images)
 
 *(Note: Adjust installation command based on your actual package publication or local path)*
 
-## Usage
+## 🚀 Usage
 
 ### 1. Define Scenarios
 
@@ -227,7 +227,7 @@ if __name__ == "__main__":
     runner.run("tests/scenarios.yaml")
 ```
 
-## Macros
+## 📝 Macros
 
 You can use macros in `input_message` and `expected_output` to inject dynamic content.
 
@@ -269,7 +269,7 @@ You can use macros in `input_message` and `expected_output` to inject dynamic co
 - `{{ SET var_name value }}`: Sets a variable for the current scenario.
 - `{{ GET var_name [default] }}`: Gets a variable value.
 - `{{ IF condition true_value false_value }}`: Implements conditional logic (ternary operator).
-- `{{ LOOP count "template" [separator] }}`: Repeats a template string multiple times. Use `[[ ... ]]` for delayed evaluation of inner macros.
+- `{{ LOOP count "template" [separator] }`: Repeats a template string multiple times. Use `[[ ... ]]` for delayed evaluation of inner macros.
 
 ### External Data
 - `{{ HTTP_GET url [headers_json] }}`: Fetches data from a URL using HTTP GET. Optional headers as JSON string.
@@ -343,7 +343,7 @@ input_message: 'Create these users: {{ LOOP 3 "User [[ GET LOOP_COUNT ]]: [[ FAK
 input_message: 'Deploy to {{ IF {{ ENV IS_PROD }} "Production" "Staging" }} environment.'
 ```
 
-## Advanced Configuration
+## ⚙️ Advanced Configuration
 
 ### Agent Class Specification
 You can specify the agent class in three ways (in order of precedence):
@@ -364,7 +364,7 @@ You can specify a different model for the judge agent using `judge_model_id` in 
 ### Default Configuration Loading
 If `agent_config` is not provided in the YAML (neither globally nor per-scenario), the evaluator will pass `None` as the configuration to your agent's constructor. This allows your agent implementation to handle its own default configuration loading (e.g., loading from a file based on the agent name).
 
-## Evaluation Metrics
+## 📊 Evaluation Metrics
 
 The framework supports the following built-in metrics:
 
@@ -374,7 +374,7 @@ The framework supports the following built-in metrics:
 
 You can specify these in your YAML file under the `metrics` key. If not specified, it defaults to checking all three.
 
-## API Reference
+## 📋 API Reference
 
 ### `RegressionRunner`
 
@@ -405,7 +405,7 @@ Data class representing a single test case.
 - `agent_model_config`: (Optional) Dictionary or List of dictionaries to override the agent's model configuration.
 - `judge_model_id`: (Optional) Model ID to use for the judge agent for this scenario.
 
-## Requirements
+## ✅ Requirements
 
 - Python 3.11+
 - `openai-agents` (or compatible library for LLM interaction)

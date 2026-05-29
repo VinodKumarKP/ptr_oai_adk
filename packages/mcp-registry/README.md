@@ -2,7 +2,7 @@
 
 The OAI MCP Registry is a powerful, FastAPI-based proxy server designed to manage and route requests to multiple MCP (Multi-Content-Platform) servers. It acts as a single entry point for all your MCP servers, providing centralized control, dynamic discovery, and robust security.
 
-## Key Features
+## ✨ Key Features
 
 - **Dynamic Routing**: Intelligently proxies requests to the correct MCP server based on the URL path.
 - **Auto-Discovery**: Automatically discovers and registers MCP servers running on the same host within a specified port range.
@@ -11,7 +11,7 @@ The OAI MCP Registry is a powerful, FastAPI-based proxy server designed to manag
 - **High Performance**: Built on FastAPI and `httpx` for asynchronous, high-throughput request handling.
 - **Interactive API Docs**: Access Swagger UI at `/docs` for interactive API documentation.
 
-## Architecture
+## 🏗️ Architecture
 
 The MCP Registry is composed of several key modules:
 
@@ -26,7 +26,7 @@ The MCP Registry is composed of several key modules:
 - **`security/`**: Handles API key authentication and token validation.
 - **`models.py`**: Defines Pydantic models for configuration, API requests, and responses.
 
-## Installation
+## 📦 Installation
 
 You can install the `oai-mcp-registry` package directly from the Git repository using `uv` and `pip`:
 
@@ -34,7 +34,7 @@ You can install the `oai-mcp-registry` package directly from the Git repository 
 uv pip install "oai-mcp-registry @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit.git@main#subdirectory=packages/mcp-registry"
 ```
 
-## Database Configuration
+## 🗄️ Database Configuration
 
 The MCP Registry supports both PostgreSQL and SQLite for logging server registrations and actions. It automatically attempts to connect to a PostgreSQL database first. If a PostgreSQL connection cannot be established or the driver is unavailable, it seamlessly falls back to using a local SQLite database (`mcp_registry.db` by default).
 
@@ -49,7 +49,7 @@ To use PostgreSQL, you must have a PostgreSQL server running (either locally or 
 - `LOGGING_DB_PASSWORD`: The database password (default: `postgres`).
 - `REGISTRY_DB_LOGGING_ENABLED`: Set to `true` to enable database logging (default: `true`).
 
-## CLI
+## 🖥️ CLI
 
 The `oai-mcp-registry` command-line interface provides a convenient way to start the HTTP server and manage underlying infrastructure.
 
@@ -75,7 +75,7 @@ oai-mcp-registry --auto-start-infra
 - `--infra-compose-file`: Path to the infra `docker-compose.yaml` file.
 - `--infra-startup-timeout`: Seconds to wait for Postgres to become ready.
 
-## Usage
+## 🚀 Usage
 
 ### Starting the Server
 
@@ -110,7 +110,7 @@ You can configure the registry using a JSON file for more advanced setups.
 }
 ```
 
-## API Endpoints
+## 📋 API Endpoints
 
 The registry provides a rich set of API endpoints for managing MCP servers and the registry itself. You can explore these endpoints interactively by visiting `/docs` in your browser.
 
@@ -154,13 +154,13 @@ The registry provides a rich set of API endpoints for managing MCP servers and t
 
 - **ANY `/{server_name}/{path:path}`**: Proxies any request to the specified path on the corresponding MCP server. For example, a `POST` request to `/my_first_server/mcp` will be forwarded to `http://localhost:8001/mcp`.
 
-## Security
+## 🔒 Security
 
 The MCP Registry supports API key authentication for its management endpoints. When enabled, requests to `/register`, `/deregister`, `/reload-config`, and `/lifecycle` must include a valid API key.
 
 - **API Key Header**: `X-API-Key`
 
-## Development
+## 👨‍💻 Development
 
 To run the server during development:
 

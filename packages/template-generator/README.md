@@ -7,7 +7,7 @@ An interactive CLI that scaffolds production-ready **AI Agent** and **MCP Server
 
 ---
 
-## Installation
+## 📦 Installation
 
 ```bash
 pip install oai-template-generator
@@ -22,7 +22,7 @@ pip install -e .
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
 ```bash
 # Interactive wizard — guides you through every option
@@ -37,7 +37,7 @@ oai-gen list
 
 ---
 
-## Commands
+## 📋 Commands
 
 | Command | Description |
 |---------|-------------|
@@ -57,7 +57,7 @@ oai-gen list
 
 ---
 
-## Agent Template
+## 🤖 Agent Template
 
 ### What gets generated
 
@@ -115,7 +115,7 @@ Project name  →  Author  →  Email  →  Output dir  →  Description
 
 ---
 
-## MCP Server Template
+## 🔌 MCP Server Template
 
 ### What gets generated
 
@@ -147,9 +147,9 @@ Project name  →  Author  →  Email  →  Output dir  →  Description
 
 ---
 
-## Configuration Features
+## ⚙️ Configuration Features
 
-### Skills
+### 🧠 Skills
 
 **Local skills** — provide a comma-separated list of skill names:
 
@@ -213,7 +213,7 @@ env:
 
 ---
 
-### Knowledge Base (RAG)
+### 📚 Knowledge Base (RAG)
 
 **Inline KB** — provide a KB name to configure a local vector store:
 
@@ -283,7 +283,7 @@ env:
 
 ---
 
-### Vector Stores
+### 🗄️ Vector Stores
 
 Supported backends for both Knowledge Base and Memory:
 
@@ -305,7 +305,7 @@ pinecone → oai-...-core[pinecone]
 
 ---
 
-### Memory
+### 🧠 Memory
 
 Persistent cross-session conversation history stored in a vector store. Configured like the Knowledge Base (supports all four backends):
 
@@ -326,7 +326,7 @@ memory:
 
 ---
 
-### MCP Servers
+### 🔌 MCP Servers
 
 Two transport types:
 
@@ -361,7 +361,7 @@ crew_config:
 
 ---
 
-### Guardrails
+### 🛡️ Guardrails
 
 Adds a ready-to-customise `guardrails:` block with sample validators:
 
@@ -391,7 +391,7 @@ guardrails:
 
 ---
 
-### Structured Output
+### 📊 Structured Output
 
 Generates Pydantic `BaseModel` stubs in `structured_output/` — one file per model name.
 
@@ -411,7 +411,7 @@ Configure at two scopes:
 
 ---
 
-## Model Selection
+## 🤖 Model Selection
 
 The wizard presents a numbered menu of popular Bedrock models plus a **Custom...** option for any LiteLLM-compatible model string:
 
@@ -428,7 +428,7 @@ Select a Model ID
 Enter number or value:
 ```
 
-## AWS Region Selection
+## 🌍 AWS Region Selection
 
 A 15-region dropdown is presented for region selection. You can enter the number (e.g. `1`) or type the region name directly (e.g. `us-east-1`):
 
@@ -443,7 +443,7 @@ Enter number or value:
 
 ---
 
-## Build Summary
+## ✅ Build Summary
 
 After scaffolding, a structured summary is printed showing exactly what was created:
 
@@ -483,7 +483,7 @@ After scaffolding, a structured summary is printed showing exactly what was crea
 
 ---
 
-## Generated YAML Reference
+## 📄 Generated YAML Reference
 
 A complete `agent.yaml` using all features:
 
@@ -579,7 +579,7 @@ crew_config:
 
 ---
 
-## Dependency Management
+## 📦 Dependency Management
 
 Dependencies in `pyproject.toml` and `requirements.txt` are automatically populated based on what you enable:
 
@@ -595,7 +595,7 @@ Dependencies in `pyproject.toml` and `requirements.txt` are automatically popula
 
 ---
 
-## Contributing
+## 🤝 Contributing
 
 ```bash
 # Install with test dependencies
@@ -612,6 +612,6 @@ All 23 tests must pass before submitting a PR.
 
 ---
 
-## License
+## 📄 License
 
 MIT License — see [LICENSE](../../LICENSE) for details.

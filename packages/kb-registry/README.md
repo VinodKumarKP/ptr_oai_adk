@@ -2,7 +2,7 @@
 
 Knowledge Base Registry — manage vector-backed knowledge bases with document ingestion, embedding, and semantic search.
 
-## Features
+## ✨ Features
 
 - Register knowledge bases backed by **Chroma**, **Postgres (pgvector)**, or **S3** vector stores
 - Two deployment modes: **builtin** (platform provisions the DB) or **external** (supply your own connection)
@@ -15,9 +15,9 @@ Knowledge Base Registry — manage vector-backed knowledge bases with document i
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
-### 1. Install
+### 📦 1. Install
 
 ```bash
 # Minimal — Chroma builtin vector store, no external loaders
@@ -39,7 +39,7 @@ pip install -e "packages/kb-registry[sources]"          # all loaders
 pip install -e "packages/kb-registry[all]"
 ```
 
-### 2. Start infrastructure (optional — builtin mode)
+### 🐳 2. Start infrastructure (optional — builtin mode)
 
 ```bash
 docker compose -f packages/kb-registry/src/oai_kb_registry/resources/docker/docker-compose.yaml up -d
@@ -51,7 +51,7 @@ This starts:
 - `chromadb:8010` — builtin ChromaDB
 - `valkey:6383` — token store
 
-### 3. Run the server
+### ▶️ 3. Run the server
 
 ```bash
 # Development (no auth, local SQLite)
@@ -63,7 +63,7 @@ oai-kb-registry --port 8085 --workers 4
 
 ---
 
-## Environment Variables
+## ⚙️ Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -78,11 +78,11 @@ oai-kb-registry --port 8085 --workers 4
 
 ---
 
-## API Overview
+## 📋 API Overview
 
 Base path: `/api/v1/kb-registry`
 
-### Knowledge Bases
+### 📚 Knowledge Bases
 
 ```
 GET    /knowledge-bases                    # List all KBs
@@ -92,7 +92,7 @@ DELETE /knowledge-bases/{kb_name}          # Delete KB + vector data
 GET    /knowledge-bases/{kb_name}/history  # Audit log
 ```
 
-### Documents
+### 📄 Documents
 
 ```
 POST   /knowledge-bases/{kb_name}/documents/upload   # Upload file (PDF/DOCX/TXT/MD)
@@ -102,13 +102,13 @@ DELETE /knowledge-bases/{kb_name}/documents/{doc_id} # Remove document
 POST   /knowledge-bases/{kb_name}/reindex            # Rebuild vector store
 ```
 
-### Query
+### 🔍 Query
 
 ```
 POST   /knowledge-bases/{kb_name}/query    # Semantic similarity search
 ```
 
-### Data Sources
+### 💾 Data Sources
 
 ```
 GET    /loaders                                              # Loader catalog (grouped by category)
@@ -121,7 +121,7 @@ POST   /knowledge-bases/{kb_name}/sources/{source_id}/sync  # Trigger manual syn
 GET    /knowledge-bases/{kb_name}/sources/{source_id}/status # Sync status + recent runs
 ```
 
-### Token Management
+### 🔑 Token Management
 
 ```
 POST   /tokens/generate   # Generate API token
@@ -132,7 +132,7 @@ DELETE /tokens            # Revoke all tokens
 
 ---
 
-## Registration Example
+## 📝 Registration Example
 
 ```json
 POST /api/v1/kb-registry/knowledge-bases
@@ -176,7 +176,7 @@ For external Postgres vector store:
 }
 ```
 
-## Query Example
+## ❓ Query Example
 
 ```json
 POST /api/v1/kb-registry/knowledge-bases/company-policies/query
@@ -192,14 +192,14 @@ POST /api/v1/kb-registry/knowledge-bases/company-policies/query
 
 ---
 
-## Data Sources
+## 💾 Data Sources
 
 Data sources connect a KB to external systems and keep it in sync automatically.
 Documents are loaded via **LangChain community loaders**, re-chunked using the KB's own
 `chunk_size` / `chunk_overlap` settings, embedded, and stored in the vector store.
 All sync runs execute in the background — the API returns immediately.
 
-### Built-in loaders
+### 🏗️ Built-in loaders
 
 | ID | Display Name | Category | Requires |
 |----|-------------|----------|---------|
@@ -209,7 +209,7 @@ All sync runs execute in the background — the API returns immediately.
 | `web` | Web Pages / Sitemap | Web | — |
 | `github` | GitHub Repository | Code / Docs | `PyGithub` |
 
-### How sync works
+### 🔄 How sync works
 
 ```
 POST /sources                           POST /sources/{id}/sync
@@ -243,7 +243,7 @@ HTTP 201 returned immediately      BackgroundTask → _run_sync()
 Sync status values: `never` → `running` → `success` / `failed`.
 Poll `GET /sources/{id}/status` to monitor — it returns the source record and the last 10 run records.
 
-### Secret handling
+### 🔒 Secret handling
 
 Config values can reference environment variables using `${VAR_NAME}` syntax.
 They are resolved from `os.environ` at sync time and **never stored in plaintext**:
@@ -264,13 +264,13 @@ GET endpoints return `config_public` with secret fields masked as `••••�
 
 ---
 
-## Adding a New Source Loader
+## ➕ Adding a New Source Loader
 
 The system is fully schema-driven. Adding a new loader requires touching **one file** for
 the catalog entry and **one file** for the loader implementation — no DB migrations,
 no router changes, no frontend changes.
 
-### Step 1 — Add a catalog entry (`loaders/catalog.py`)
+### 📝 Step 1 — Add a catalog entry (`loaders/catalog.py`)
 
 ```python
 "notion": {
@@ -302,7 +302,7 @@ no router changes, no frontend changes.
 
 **Field types:** `text`, `url`, `secret`, `boolean`, `number`, `textarea`, `select`
 
-### Step 2 — Add the loader function (`services/source_sync_service.py`)
+### ⚙️ Step 2 — Add the loader function (`services/source_sync_service.py`)
 
 ```python
 def _load_notion(config: Dict[str, Any]) -> List[Any]:
@@ -322,7 +322,7 @@ The function must be **synchronous** (all LangChain community loaders are) and r
 `List[Document]` with `page_content` and `metadata`.  It is called via
 `asyncio.to_thread` so it never blocks the event loop.
 
-### Step 3 — Register it in the dispatch table (same file, 1 line)
+### ✅ Step 3 — Register it in the dispatch table (same file, 1 line)
 
 ```python
 _LOADER_DISPATCH = {
@@ -335,7 +335,7 @@ _LOADER_DISPATCH = {
 }
 ```
 
-### What you get for free (no further changes needed)
+### 🎁 What you get for free (no further changes needed)
 
 | Layer | Automatic |
 |-------|-----------|
@@ -350,7 +350,7 @@ _LOADER_DISPATCH = {
 
 ---
 
-## Package Structure
+## 📁 Package Structure
 
 ```
 packages/kb-registry/

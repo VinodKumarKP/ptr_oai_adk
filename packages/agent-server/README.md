@@ -2,7 +2,7 @@
 
 A robust, FastAPI-based server for hosting and managing OAI Agents. This server provides a standardized HTTP interface for interacting with agents, including chat, streaming, logging, and management capabilities.
 
-## Features
+## ✨ Features
 
 *   **FastAPI Powered**: Built on modern, high-performance FastAPI framework.
 *   **Standardized API**: RESTful endpoints for chat (`/chat`), streaming (`/chat/stream`), and agent management.
@@ -16,7 +16,7 @@ A robust, FastAPI-based server for hosting and managing OAI Agents. This server 
 *   **Graceful Shutdown**: Handles server restarts and shutdowns gracefully, ensuring active requests complete.
 *   **Health Checks**: Standardized `/health` and `/status` endpoints for monitoring.
 
-## Installation
+## 📦 Installation
 
 You can install the server directly from the source:
 
@@ -53,7 +53,7 @@ The server uses optional dependencies for certain features. You can install them
     pip install .[all]
     ```
 
-## Usage
+## 🚀 Usage
 
 ### Starting the Server
 
@@ -78,7 +78,7 @@ oai-agent-server <agent_name>
 oai-agent-server my_agent --port 8080 --allowed-modes chat health schedule
 ```
 
-### Environment Variables
+### ⚙️ Environment Variables
 
 The server is configured primarily via environment variables. The most commonly tuned settings:
 
@@ -112,7 +112,7 @@ The server is configured primarily via environment variables. The most commonly 
 
 > Note: `/info` returns only a whitelisted subset of `agent_config` to avoid leaking secrets. Add safe field names via `INFO_EXTRA_FIELDS` when you need more.
 
-## API Endpoints
+## 📋 API Endpoints
 
 ### Chat
 
@@ -121,7 +121,7 @@ The server is configured primarily via environment variables. The most commonly 
 *   **POST** `/chat/stream`: Send a message and receive a streaming response (SSE).
 *   **POST** `/chat/stream/with-files`: Streaming chat with file uploads.
 
-### Scheduled Jobs
+### 🗓️ Scheduled Jobs
 
 *   **POST** `/schedule`: Create a new scheduled agent job (recurring or one-time).
 *   **POST** `/schedule/run`: Run an agent job immediately and stream the result.
@@ -132,19 +132,19 @@ The server is configured primarily via environment variables. The most commonly 
 *   **PUT** `/schedule/{job_id}/resume`: Resume a paused schedule.
 *   **DELETE** `/schedule/{job_id}`: Delete a schedule and its stored results.
 
-### Agent-to-Agent (A2A)
+### 🤝 Agent-to-Agent (A2A)
 
 *   **GET** `/a2a/.well-known/agent.json`: A2A Agent Card discovery.
 *   **POST** `/a2a/`: JSON-RPC endpoint for A2A methods.
 
-### Management
+### ⚙️ Management
 
 *   **POST** `/agent/initialize`: Re-initialize the agent.
 *   **GET** `/agent/info` (and `/info`): Get details about the running agent. Returns only a whitelisted subset of `agent_config` (extend with `INFO_EXTRA_FIELDS`).
 *   **POST** `/restart`: Gracefully restart the server. Strict auth — never honors the trusted-CIDR bypass.
 *   **POST** `/kill`: Immediately kill the server process. Strict auth — never honors the trusted-CIDR bypass.
 
-### Admin (A2A task store)
+### 👮 Admin (A2A task store)
 
 Operator-only endpoints for inspecting persisted A2A tasks. All routes require a valid API key — they do **not** honor `FORCE_AUTH=false` / `TRUSTED_CIDRS`. When `A2A_TASK_STORE=memory` (or no DB backend is bound), every endpoint returns `503`.
 
@@ -153,14 +153,14 @@ Operator-only endpoints for inspecting persisted A2A tasks. All routes require a
 *   **GET** `/admin/tasks/{task_id}`: Full task row including parsed `task_data`.
 *   **DELETE** `/admin/tasks/{task_id}`: Hard-delete a task. Returns `204`.
 
-### Logs
+### 📜 Logs
 
 *   **GET** `/logs`: Retrieve chat logs with filtering options (session_id, user_id, date range).
 *   **GET** `/logs/sessions/{session_id}`: Get logs for a specific session.
 *   **GET** `/logs/stats`: Get usage statistics.
 *   `GET` `/logs/stats/users`: Get usage statistics grouped by user.
 
-### System
+### 🖥️ System
 
 *   **GET** `/health`: Liveness check — returns 200 as long as the process is up.
 *   **GET** `/ready`: Readiness probe — returns 503 if the agent failed to initialize or the database backend is unreachable.
@@ -169,7 +169,7 @@ Operator-only endpoints for inspecting persisted A2A tasks. All routes require a
 
 Every request and response carries an `X-Request-ID` header. If the client doesn't supply one, the server generates a UUID. The same value is attached to log lines (structured `request_id` field when `LOG_FORMAT=json`) and surfaced on client-side exceptions to make distributed traces easy to stitch together.
 
-## Authentication
+## 🔒 Authentication
 
 When authentication is enabled, requests must include a valid API token in one of the following headers:
 *   `api-token`
@@ -185,7 +185,7 @@ By default, all requests require a valid API key. Setting `FORCE_AUTH=false` ena
 
 > **Docker caveat:** With default bridge networking, the source IP visible to the server is the bridge gateway, not the original caller. Either bind the published port to `127.0.0.1` for safe local-only access, or expand `TRUSTED_CIDRS` to include the bridge range (e.g. `172.16.0.0/12` covers Docker defaults). Do not run `FORCE_AUTH=false` in any environment where untrusted hosts share the bridge subnet.
 
-## Project Structure
+## 📁 Project Structure
 
 ```
 oai_agent_server/
@@ -201,7 +201,7 @@ oai_agent_server/
 └── utils/               # Helper utilities
 ```
 
-## Development
+## 👨‍💻 Development
 
 To run the server during development, first install the dependencies:
 
@@ -215,7 +215,7 @@ Then, run the server:
 python -m oai_agent_server.cli my_agent
 ```
 
-## Production Deployment
+## 🚀 Production Deployment
 
 A few recommendations when running this server in a production environment:
 
