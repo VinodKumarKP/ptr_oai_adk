@@ -20,8 +20,23 @@ Knowledge Base Registry — manage vector-backed knowledge bases with document i
 ### 1. Install
 
 ```bash
-pip install -e packages/kb-registry          # minimal (Chroma builtin)
-pip install -e "packages/kb-registry[postgres,openai]"  # with pgvector + OpenAI embeddings
+# Minimal — Chroma builtin vector store, no external loaders
+pip install -e packages/kb-registry
+
+# Common setups
+pip install -e "packages/kb-registry[chroma]"           # explicit Chroma support
+pip install -e "packages/kb-registry[postgres]"         # pgvector backend
+pip install -e "packages/kb-registry[pinecone]"         # Pinecone backend
+
+# Data source loaders
+pip install -e "packages/kb-registry[loaders]"          # Web + S3 loaders
+pip install -e "packages/kb-registry[confluence]"       # + Confluence
+pip install -e "packages/kb-registry[sharepoint]"       # + SharePoint
+pip install -e "packages/kb-registry[github]"           # + GitHub
+pip install -e "packages/kb-registry[sources]"          # all loaders
+
+# Everything
+pip install -e "packages/kb-registry[all]"
 ```
 
 ### 2. Start infrastructure (optional — builtin mode)

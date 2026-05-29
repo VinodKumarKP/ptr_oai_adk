@@ -52,10 +52,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+
+# ── Vector store backends ────────────────────────────────────────────────────
 postgres = [
     "asyncpg>=0.29.0",
     "pgvector>=0.2.0",
     "psycopg2-binary>=2.9.0",
+    "langchain-postgres>=0.0.6",
 ]
 sqlite = [
     "aiosqlite>=0.19.0",
@@ -64,6 +67,38 @@ chroma = [
     "chromadb>=0.4.0",
     "langchain-chroma>=0.1.0",
 ]
+pinecone = [
+    "pinecone-client>=3.0.0",
+    "langchain-pinecone>=0.1.0",
+]
+
+# ── Data source loaders ──────────────────────────────────────────────────────
+# Base: enables Web (WebBaseLoader / SitemapLoader) and S3 (S3DirectoryLoader).
+# boto3 is already a core dependency so S3 works with just this extra.
+loaders = [
+    "langchain-community>=0.0.20",
+]
+confluence = [
+    "langchain-community>=0.0.20",
+    "atlassian-python-api>=3.41.0",
+]
+sharepoint = [
+    "langchain-community>=0.0.20",
+    "O365>=2.0.26",
+]
+github = [
+    "langchain-community>=0.0.20",
+    "PyGithub>=2.1.1",
+]
+# Convenience: all loaders at once
+sources = [
+    "langchain-community>=0.0.20",
+    "atlassian-python-api>=3.41.0",
+    "O365>=2.0.26",
+    "PyGithub>=2.1.1",
+]
+
+# ── Development ──────────────────────────────────────────────────────────────
 dev = [
     "pytest>=7.4.3",
     "pytest-asyncio>=0.21.1",
@@ -72,8 +107,10 @@ dev = [
     "isort>=5.13.0",
     "mypy>=1.7.0",
 ]
+
+# ── Convenience bundles ──────────────────────────────────────────────────────
 all = [
-    "oai-kb-registry[postgres,sqlite,chroma,dev]",
+    "oai-kb-registry[postgres,sqlite,chroma,pinecone,sources,dev]",
 ]
 
 [project.scripts]
