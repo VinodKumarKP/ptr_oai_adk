@@ -44,12 +44,45 @@ async def lifespan(app: FastAPI):
         logger.error(f"Error during shutdown: {e}")
 
 
+_OPENAPI_TAGS = [
+    {
+        "name": "Skills Catalog",
+        "description": (
+            "Register, browse, and retrieve skills. "
+            "Includes template download and README management."
+        ),
+    },
+    {
+        "name": "Git & Versioning",
+        "description": (
+            "Discover skills in a Git repository, preview available versions, "
+            "import a specific version, and refresh version metadata from GitHub."
+        ),
+    },
+    {
+        "name": "Lifecycle",
+        "description": (
+            "Promote or demote skill versions: publish, upgrade, downgrade, "
+            "deprecate, and view the full action history for a skill."
+        ),
+    },
+    {
+        "name": "Tokens",
+        "description": "Generate, list, and revoke API bearer tokens.",
+    },
+]
+
 # Create FastAPI app
 app = FastAPI(
     title="Skills Registry",
-    description="Manage skill lifecycle with Git integration",
+    description=(
+        "Manage skill lifecycle with Git integration. "
+        "Register skills, import versions from GitHub, and promote them through "
+        "draft → published lifecycle stages."
+    ),
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    openapi_tags=_OPENAPI_TAGS,
 )
 
 # Configure CORS

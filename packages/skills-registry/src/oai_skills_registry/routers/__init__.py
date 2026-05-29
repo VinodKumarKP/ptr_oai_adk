@@ -24,9 +24,9 @@ router = APIRouter()
 # /skills/preview-versions) must be registered before parameterised paths
 # (e.g. /skills/{skill_name}).  skills_router and git_router both contain
 # static /skills/... paths, so they are included before lifecycle_router.
-router.include_router(skills_router)
-router.include_router(git_router)
-router.include_router(lifecycle_router)
-router.include_router(token_router)
+router.include_router(skills_router,    tags=["Skills Catalog"])
+router.include_router(git_router,       tags=["Git & Versioning"])
+router.include_router(lifecycle_router, tags=["Lifecycle"])
+router.include_router(token_router,     tags=["Tokens"])
 
 __all__ = ["router"]
