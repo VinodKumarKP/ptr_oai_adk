@@ -171,5 +171,5 @@ class SkillImporter:
             "skill_id": existing_skill["id"],
             "version_id": skill_version.get("id"),
             "version": version,
-            "preview": preview.dict()
+            "preview": preview.model_dump()
         }

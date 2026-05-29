@@ -4,9 +4,14 @@ from pydantic import BaseModel, Field
 
 
 class SkillGitSource(BaseModel):
-    """Represents a Git repository as skill source."""
+    """Represents a Git repository as skill source.
+
+    GitHub is the primary provider for this release.  The ``git_provider`` field
+    is kept as a plain string so that clients can extend the registry with other
+    providers (GitLab, Gitea, …) without a model change.
+    """
     name: str
-    git_provider: Literal["github", "gitlab", "gitea"] = "github"
+    git_provider: str = "github"  # "github" | "gitlab" | "gitea" | custom
     repository: str  # owner/repo
     git_url: str
     branch: str = "main"
@@ -108,19 +113,19 @@ class SkillRegistration(BaseModel):
 
 
 class SkillImportConfig(BaseModel):
-    """Config for importing skill from Git."""
-    git_source_id: Optional[int] = None  # For registered git sources
-    git_repository_url: Optional[str] = None  # For direct GitHub imports
+    """Config for importing a skill version from GitHub.
+
+    Provide *either*:
+    - ``git_repository_url`` — recommended; direct GitHub HTTPS URL
+      (``https://github.com/owner/repo.git``).
+    - ``git_source_id`` — legacy; ID of a registered git source record.
+
+    If both are omitted the request is rejected with HTTP 400.
+    """
+    git_source_id: Optional[int] = None  # Legacy: registered git source
+    git_repository_url: Optional[str] = None  # Preferred: direct GitHub URL
     git_tag: Optional[str] = None  # If None, use latest commit on branch
     version: Optional[str] = None  # If None, extract from SKILL.md
-
-    class Config:
-        @classmethod
-        def validate_imports(cls, values):
-            """At least one of git_source_id or git_repository_url must be provided."""
-            if not values.get('git_source_id') and not values.get('git_repository_url'):
-                raise ValueError('Either git_source_id or git_repository_url must be provided')
-            return values
 
 
 class SkillPublishConfig(BaseModel):

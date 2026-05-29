@@ -1,149 +1,296 @@
 # OAI Skills Registry
 
-The OAI Skills Registry is a FastAPI-based service for managing the lifecycle of agent skills. It provides a centralized system for registering, versioning, and deploying skills, with deep integration with Git for source control.
+The OAI Skills Registry is a FastAPI-based service for managing the lifecycle of agent skills. It provides a centralized catalog for registering, versioning, and deploying skills with deep GitHub integration for source control and version discovery.
 
 ## Key Features
 
-- **Git-Based Skill Management**: Import and manage skills directly from Git repositories.
-- **Manual Lifecycle Control**: Developers can explicitly publish, upgrade, downgrade, and deprecate skill versions.
-- **Semantic Versioning**: Full support for versioning skills, allowing for controlled rollouts and rollbacks.
-- **Action History**: A complete audit trail of all skill lifecycle actions is recorded.
-- **Database Support**: Works with both PostgreSQL and SQLite for data persistence.
-- **Interactive API Docs**: A Swagger UI is available at `/docs` for easy exploration and testing of the API.
+- **GitHub-backed versioning** — import skills directly from any GitHub repository and discover versions from Git tags.
+- **Manual lifecycle control** — explicitly publish, upgrade, downgrade, and deprecate skill versions.
+- **Semantic versioning** — full support for version pinning, controlled rollouts, and rollbacks.
+- **Skill discovery** — scan a GitHub repository and auto-detect all available skills from `SKILL.md` manifests.
+- **Bulk registration** — register multiple skills from a single repository in one request.
+- **README caching** — per-skill README served and cached via the API for UI rendering.
+- **Audit trail** — every lifecycle action is recorded with timestamp and actor.
+- **Token management** — generate and revoke API tokens for access control.
+- **Database flexibility** — PostgreSQL for production, auto-fallback to SQLite for local development.
+- **Interactive API docs** — Swagger UI at `/docs`.
+
+---
 
 ## Architecture
 
-The Skills Registry is composed of the following key modules:
+```
+oai_skills_registry/
+├── main.py               ← FastAPI app entry point
+├── cli.py                ← oai-skills-registry CLI command
+├── models.py             ← Pydantic request/response + DB schemas
+├── security/             ← API token authentication
+├── routers/
+│   ├── skills.py         ← Catalog: list, get, register, readme
+│   ├── git.py            ← Git/GitHub: discover, import, refresh, bulk-register
+│   ├── lifecycle.py      ← Lifecycle: publish, upgrade, downgrade, deprecate, history
+│   └── token.py          ← Token: generate, list, revoke
+└── services/
+    ├── skills_registry.py ← Core orchestration + GitHub integration
+    └── db/               ← Database interactions
+```
 
-- **`main.py`**: The main FastAPI application entry point.
-- **`cli.py`**: Command-line interface for starting the registry.
-- **`routers/`**: Defines the API endpoints for managing skills, Git sources, and tokens.
-- **`services/`**:
-    - **`skills_registry.py`**: The core service that orchestrates skill management, Git integration, and lifecycle operations.
-    - **`db/`**: Handles all database interactions.
-- **`security/`**: Manages API token authentication.
-- **`models.py`**: Pydantic models for API request/response data and database table schemas.
+---
 
 ## Installation
-
-You can install the `oai-skills-registry` package directly from the Git repository using `uv` and `pip`:
 
 ```bash
 uv pip install "oai-skills-registry @ git+https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit.git@main#subdirectory=packages/skills-registry"
 ```
 
-## Database Configuration
-
-The Skills Registry supports both PostgreSQL and SQLite. It automatically attempts to connect to a PostgreSQL database first. If a PostgreSQL connection cannot be established, it seamlessly falls back to using a local SQLite database (`skills_registry.db` by default).
-
-To use PostgreSQL, you must have a PostgreSQL server running (either locally or in a container) and provide the connection details via environment variables. If these variables are not set or the server is unreachable, SQLite will be used.
-
-### Database Environment Variables
-
-- `LOGGING_DB_HOST`: The database host (default: `localhost`).
-- `LOGGING_DB_PORT`: The database port (default: `5432`).
-- `LOGGING_DB_NAME`: The name of the database (default: `skills_logs`).
-- `LOGGING_DB_USER`: The database user (default: `postgres`).
-- `LOGGING_DB_PASSWORD`: The database password (default: `postgres`).
-- `REGISTRY_DB_LOGGING_ENABLED`: Set to `true` to enable database logging (default: `true`).
-
-## Database Schema
-
-The registry uses the following tables to store its data:
-
-- **`skills`**: Stores the core information about each skill.
-- **`skill_versions`**: Tracks every version of a skill, including its Git source, content, and status.
-- **`skill_actions`**: Logs all lifecycle actions performed on a skill.
-- **`skill_git_sources`**: Manages the connection details for Git repositories.
+---
 
 ## CLI
 
-The `oai-skills-registry` command-line interface provides a convenient way to start the HTTP server and manage underlying infrastructure.
+Start the HTTP server:
 
-**Basic Usage:**
 ```bash
 oai-skills-registry
 ```
 
-**Auto-start Infrastructure:**
-You can tell the CLI to automatically spin up a Docker Compose stack (e.g., PostgreSQL and Valkey) before starting the server. This is useful for local development.
+Start with automatic Docker infrastructure (PostgreSQL + Valkey) for local development:
+
 ```bash
 oai-skills-registry --auto-start-infra
 ```
 
-**Options:**
-- `--host`: Host address to bind to (default: `0.0.0.0`).
-- `--port`, `-p`: Port number to listen on (default: `8083`).
-- `--auto-start-infra`: Run `docker compose up` on the infra compose file before initializing the database.
-- `--infra-compose-file`: Path to the infra `docker-compose.yaml` file.
-- `--infra-startup-timeout`: Seconds to wait for PostgreSQL to become ready.
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--host` | `0.0.0.0` | Bind address |
+| `--port / -p` | `8083` | Listen port |
+| `--auto-start-infra` | false | Run `docker compose up` before starting |
+| `--infra-compose-file` | — | Path to the infra `docker-compose.yaml` |
+| `--infra-startup-timeout` | — | Seconds to wait for PostgreSQL ready |
 
-## API Endpoints
+---
 
-The Skills Registry exposes a RESTful API for managing skills. You can access the interactive Swagger UI at `/docs` to explore the endpoints.
+## Database Configuration
 
-### Health Check
+PostgreSQL is used when the environment variables below are set and reachable; otherwise the registry falls back to a local SQLite file (`skills_registry.db`).
 
-- **GET `/api/v1/skills-registry/health`**: Checks the health of the registry.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOGGING_DB_HOST` | `localhost` | Database host |
+| `LOGGING_DB_PORT` | `5432` | Database port |
+| `LOGGING_DB_NAME` | `skills_logs` | Database name |
+| `LOGGING_DB_USER` | `postgres` | Database user |
+| `LOGGING_DB_PASSWORD` | `postgres` | Database password |
+| `REGISTRY_DB_LOGGING_ENABLED` | `true` | Enable DB logging |
 
-### Skill Management
+### Schema
 
-- **GET `/api/v1/skills-registry/skills`**: Lists all registered skills.
-- **GET `/api/v1/skills-registry/skills/{skill_name}`**: Retrieves the details of a specific skill, including all its versions.
-- **POST `/api/v1/skills-registry/skills`**: Registers a new skill.
-    - **Request Body**:
-    ```json
-    {
-      "name": "my-new-skill",
-      "description": "A description of my new skill.",
-      "category": "data-processing",
-      "tags": ["new", "beta"],
-      "author": "developer@example.com",
-      "git_repository_url": "https://github.com/my-org/my-new-skill.git"
-    }
-    ```
-- **DELETE `/api/v1/skills-registry/skills/{skill_name}`**: Deletes a skill.
+| Table | Purpose |
+|-------|---------|
+| `skills` | Core skill metadata |
+| `skill_versions` | Every version with Git source, content, and status |
+| `skill_actions` | Audit log of all lifecycle events |
+| `skill_git_sources` | GitHub repository connection details |
 
-### Git Integration
-
-- **POST `/api/v1/skills-registry/git-sources`**: Registers a new Git source.
-- **GET `/api/v1/skills-registry/git-sources`**: Lists all registered Git sources.
-- **GET `/api/v1/skills-registry/skills/{skill_name}/git-versions`**: Lists the available versions of a skill from its Git repository.
-
-### Skill Lifecycle
-
-- **POST `/api/v1/skills-registry/skills/{skill_name}/import-from-git`**: Imports a new version of a skill from its Git repository.
-- **POST `/api/v1/skills-registry/skills/{skill_name}/publish`**: Publishes a new version of a skill.
-- **POST `/api/v1/skills-registry/skills/{skill_name}/upgrade`**: Upgrades a skill to a new version.
-- **POST `/api/v1/skills-registry/skills/{skill_name}/downgrade`**: Downgrades a skill to a previous version.
-- **POST `/api/v1/skills-registry/skills/{skill_name}/deprecate`**: Deprecates a version of a skill.
-
-### Action History
-
-- **GET `/api/v1/skills-registry/skills/{skill_name}/history`**: Retrieves the action history for a specific skill.
+---
 
 ## Other Environment Variables
 
-- `HOST`: The host for the FastAPI server (default: `0.0.0.0`).
-- `PORT`: The port for the FastAPI server (default: `8083`).
-- `ENV`: The environment (e.g., `development`, `production`).
-- `CORS_ORIGINS`: A comma-separated list of allowed CORS origins (default: `*`).
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HOST` | `0.0.0.0` | FastAPI server host |
+| `PORT` | `8083` | FastAPI server port |
+| `ENV` | — | Environment tag (`development`, `production`) |
+| `CORS_ORIGINS` | `*` | Comma-separated allowed CORS origins |
+| `GITHUB_TOKEN` | — | GitHub personal-access token — increases API rate limit and enables private-repo access |
+| `SKILLS_LOCAL_DIR` | — | Local filesystem path to serve skill READMEs from (takes precedence over GitHub fetch) |
+
+---
+
+## API Reference
+
+All endpoints are prefixed with `/api/v1/skills-registry`. Authentication uses a Bearer token in the `Authorization` header.
+
+### Root & Health
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | List all available endpoints |
+| `GET` | `/health` | Health check |
+
+---
+
+### Skills Catalog
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/skills` | List all registered skills |
+| `GET` | `/skills/{skill_name}` | Get skill details including all versions |
+| `GET` | `/skills/{skill_name}/published` | Get the currently published version |
+| `POST` | `/skills` | Register a new skill |
+| `GET` | `/skills/template/download` | Download the SKILL.md template |
+
+**Register a skill:**
+```json
+POST /api/v1/skills-registry/skills
+{
+  "name": "data-analysis",
+  "description": "Data analysis and visualization skill",
+  "category": "analytics",
+  "tags": ["data", "charts"],
+  "author": "developer@example.com",
+  "git_repository_url": "https://github.com/my-org/skills-repo.git"
+}
+```
+
+---
+
+### Skill READMEs
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/skills/{skill_name}/readme` | Get skill README (cached) |
+| `POST` | `/skills/{skill_name}/readme/invalidate-cache` | Invalidate README cache for a skill |
+| `GET` | `/readme/cache-stats` | View cache hit/miss statistics |
+
+---
+
+### Git & GitHub Integration
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/skills/discover` | Scan a GitHub repository and discover all available skills |
+| `POST` | `/skills/preview-versions` | Preview available Git versions before importing |
+| `POST` | `/skills/register-bulk` | Register multiple skills from a repository in one request |
+| `POST` | `/skills/{skill_name}/import-from-git` | Import a specific version of a skill from GitHub |
+| `POST` | `/skills/{skill_name}/refresh-versions` | Refresh available versions from GitHub |
+
+**Discover skills in a repository:**
+```json
+POST /api/v1/skills-registry/skills/discover
+{
+  "repository_url": "https://github.com/my-org/skills-repo.git",
+  "branch": "main"
+}
+```
+
+**Refresh versions from GitHub:**
+```bash
+curl -X POST http://localhost:8083/api/v1/skills-registry/skills/data-analysis/refresh-versions \
+  -H "Authorization: Bearer your-token"
+```
+Returns a list of available versions with commit SHA, message, author, and creation date.
+
+**Import a version:**
+```json
+POST /api/v1/skills-registry/skills/data-analysis/import-from-git
+{
+  "git_tag": "v2.1.0",
+  "notes": "Adds pandas 2.x support"
+}
+```
+
+---
+
+### Skill Lifecycle
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/skills/{skill_name}/publish` | Publish a version (makes it available to agents) |
+| `POST` | `/skills/{skill_name}/upgrade` | Upgrade to a newer version |
+| `POST` | `/skills/{skill_name}/downgrade` | Roll back to a previous version |
+| `POST` | `/skills/{skill_name}/deprecate` | Deprecate a version |
+| `GET` | `/skills/{skill_name}/history` | Get the full lifecycle action history |
+
+**Lifecycle stages:**
+
+```
+Draft → Review → Published → Deprecated → Archived
+```
+
+Only **Published** versions are served to agents. Downgrade and deprecate allow controlled rollbacks without data loss.
+
+---
+
+### Token Management
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/tokens/generate` | Generate a new API token |
+| `GET` | `/tokens` | List all active tokens |
+| `DELETE` | `/tokens` | Revoke all tokens |
+| `DELETE` | `/tokens/{token}` | Revoke a specific token |
+
+---
+
+## Skill Repository Structure
+
+For a skill to be discovered and imported, the GitHub repository must follow this layout:
+
+```
+skills/
+└── <skill-name>/
+    ├── SKILL.md          ← required: skill manifest with frontmatter
+    ├── skill_config.yaml ← required: configuration schema
+    └── ...               ← any additional files
+```
+
+**SKILL.md frontmatter example:**
+
+```markdown
+---
+name: data-analysis
+version: 2.1.0
+description: Data analysis and visualization
+author: developer@example.com
+tags: [data, analytics, charts]
+dependencies:
+  - pandas>=2.0
+  - matplotlib
+---
+
+# Data Analysis Skill
+
+Provides tools for data loading, transformation, and visualization...
+```
+
+---
+
+## Agent Integration
+
+Agents reference the registry in their `agent.yaml`:
+
+```yaml
+# Pin specific versions
+skills:
+  registry:
+    url: "${SKILLS_REGISTRY_URL}"
+    token: "${SKILLS_REGISTRY_TOKEN}"
+  data_analysis:
+    version: "2.1.0"
+  web_search:
+    version: "latest"    # always tracks latest published
+
+env:
+  SKILLS_REGISTRY_URL: "${SKILLS_REGISTRY_URL}"
+  SKILLS_REGISTRY_TOKEN: "${SKILLS_REGISTRY_TOKEN}"
+```
+
+---
 
 ## Development
 
-To run the Skills Registry locally for development:
+```bash
+# Install dependencies
+pip install -r requirements.txt
 
-1.  **Install dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-2.  **Run the server**:
-    ```bash
-    python -m oai_skills_registry.main
-    ```
-    Or use the CLI:
-    ```bash
-    oai-skills-registry --auto-start-infra
-    ```
+# Start with local SQLite (no Docker needed)
+python -m oai_skills_registry.main
 
-You can also run the registry using Docker.
+# Start with Docker infrastructure
+oai-skills-registry --auto-start-infra
+
+# Run tests
+pytest
+```
+
+Interactive API docs are available at `http://localhost:8083/docs` once the server is running.
