@@ -7,6 +7,7 @@ Knowledge Base Registry — manage vector-backed knowledge bases with document i
 - Register knowledge bases backed by **Chroma**, **Postgres (pgvector)**, or **S3** vector stores
 - Two deployment modes: **builtin** (platform provisions the DB) or **external** (supply your own connection)
 - Ingest documents from **file uploads** (PDF, DOCX, TXT, Markdown) or **S3 object references**
+- **Data Sources** — auto-sync documents from external systems (Confluence, SharePoint, S3, GitHub, Web/Sitemap) via LangChain community loaders
 - Automatic chunking, embedding, and indexing
 - Semantic similarity search with optional metadata filters and score thresholds
 - Same authentication as other registries (SAML + platform API tokens, trusted peer bypass)
@@ -92,6 +93,19 @@ POST   /knowledge-bases/{kb_name}/reindex            # Rebuild vector store
 POST   /knowledge-bases/{kb_name}/query    # Semantic similarity search
 ```
 
+### Data Sources
+
+```
+GET    /loaders                                              # Loader catalog (grouped by category)
+POST   /loaders/test                                        # Test credentials without saving
+
+POST   /knowledge-bases/{kb_name}/sources                   # Add source + start initial sync
+GET    /knowledge-bases/{kb_name}/sources                   # List sources
+DELETE /knowledge-bases/{kb_name}/sources/{source_id}       # Remove source
+POST   /knowledge-bases/{kb_name}/sources/{source_id}/sync  # Trigger manual sync
+GET    /knowledge-bases/{kb_name}/sources/{source_id}/status # Sync status + recent runs
+```
+
 ### Token Management
 
 ```
@@ -161,6 +175,166 @@ POST /api/v1/kb-registry/knowledge-bases/company-policies/query
 
 ---
 
+---
+
+## Data Sources
+
+Data sources connect a KB to external systems and keep it in sync automatically.
+Documents are loaded via **LangChain community loaders**, re-chunked using the KB's own
+`chunk_size` / `chunk_overlap` settings, embedded, and stored in the vector store.
+All sync runs execute in the background — the API returns immediately.
+
+### Built-in loaders
+
+| ID | Display Name | Category | Requires |
+|----|-------------|----------|---------|
+| `confluence` | Confluence | Collaboration | `atlassian-python-api` |
+| `sharepoint` | SharePoint | Collaboration | `O365` |
+| `s3_directory` | Amazon S3 | Cloud Storage | `boto3` (already a core dep) |
+| `web` | Web Pages / Sitemap | Web | — |
+| `github` | GitHub Repository | Code / Docs | `PyGithub` |
+
+### How sync works
+
+```
+POST /sources                           POST /sources/{id}/sync
+       │                                         │
+       ▼                                         ▼
+DB: create_data_source()           DB: create_sync_run()
+BackgroundTask → _run_sync()       DB: set status = "running"
+HTTP 201 returned immediately      BackgroundTask → _run_sync()
+                                   HTTP 202 + run record returned
+
+                    ┌─────────────────────────────────────┐
+                    │           _run_sync()               │
+                    │                                     │
+                    │  resolve ${ENV_VAR} in config       │
+                    │         │                           │
+                    │  asyncio.to_thread(loader_fn)       │
+                    │    LangChain loader (sync)          │
+                    │    returns List[Document]           │
+                    │         │                           │
+                    │  for each Document:                 │
+                    │    index_document_from_text()       │
+                    │    ├─ DocumentProcessor.process_text│
+                    │    │   RecursiveCharacterTextSplitter│
+                    │    ├─ embed chunks (LiteLLM)        │
+                    │    └─ store in vector DB            │
+                    │         │                           │
+                    │  update sync_run + data_source      │
+                    └─────────────────────────────────────┘
+```
+
+Sync status values: `never` → `running` → `success` / `failed`.
+Poll `GET /sources/{id}/status` to monitor — it returns the source record and the last 10 run records.
+
+### Secret handling
+
+Config values can reference environment variables using `${VAR_NAME}` syntax.
+They are resolved from `os.environ` at sync time and **never stored in plaintext**:
+
+```json
+{
+  "source_type": "confluence",
+  "display_name": "Engineering Wiki",
+  "config": {
+    "url": "https://acme.atlassian.net/wiki",
+    "username": "bot@acme.com",
+    "api_key": "${CONFLUENCE_API_KEY}"
+  }
+}
+```
+
+GET endpoints return `config_public` with secret fields masked as `••••••••`.
+
+---
+
+## Adding a New Source Loader
+
+The system is fully schema-driven. Adding a new loader requires touching **one file** for
+the catalog entry and **one file** for the loader implementation — no DB migrations,
+no router changes, no frontend changes.
+
+### Step 1 — Add a catalog entry (`loaders/catalog.py`)
+
+```python
+"notion": {
+    "id": "notion",
+    "display_name": "Notion",
+    "category": "collaboration",
+    "description": "Index pages and databases from your Notion workspace.",
+    "pip_extra": "notion-client",
+    "langchain_class": "langchain_community.document_loaders.NotionDBLoader",
+    "fields": [
+        {
+            "name": "integration_token",
+            "type": "secret",          # rendered as masked input, encrypted at rest
+            "label": "Integration Token",
+            "hint": "Create at notion.so/my-integrations",
+            "env_var_hint": "NOTION_TOKEN",   # UI shows "or set $NOTION_TOKEN"
+            "required": True,
+        },
+        {
+            "name": "database_id",
+            "type": "text",
+            "label": "Database ID",
+            "placeholder": "abc123...",
+            "required": True,
+        },
+    ],
+},
+```
+
+**Field types:** `text`, `url`, `secret`, `boolean`, `number`, `textarea`, `select`
+
+### Step 2 — Add the loader function (`services/source_sync_service.py`)
+
+```python
+def _load_notion(config: Dict[str, Any]) -> List[Any]:
+    try:
+        from langchain_community.document_loaders import NotionDBLoader
+    except ImportError:
+        raise ImportError("notion-client is required: pip install notion-client")
+
+    loader = NotionDBLoader(
+        integration_token=config["integration_token"],
+        database_id=config["database_id"],
+    )
+    return loader.load()
+```
+
+The function must be **synchronous** (all LangChain community loaders are) and return
+`List[Document]` with `page_content` and `metadata`.  It is called via
+`asyncio.to_thread` so it never blocks the event loop.
+
+### Step 3 — Register it in the dispatch table (same file, 1 line)
+
+```python
+_LOADER_DISPATCH = {
+    "confluence":   _load_confluence,
+    "sharepoint":   _load_sharepoint,
+    "s3_directory": _load_s3_directory,
+    "web":          _load_web,
+    "github":       _load_github,
+    "notion":       _load_notion,   # ← add this
+}
+```
+
+### What you get for free (no further changes needed)
+
+| Layer | Automatic |
+|-------|-----------|
+| `GET /loaders` catalog response | ✓ new entry appears immediately |
+| UI source-type grid | ✓ Notion card renders from catalog |
+| UI config form | ✓ fields rendered from `entry.fields` |
+| Test Connection | ✓ routes through dispatch table |
+| Background sync | ✓ routes through dispatch table |
+| Secret masking in GET responses | ✓ `type: "secret"` fields auto-masked |
+| `${ENV_VAR}` resolution | ✓ applies to all loaders |
+| DB schema | ✓ config stored as JSON blob — no migration |
+
+---
+
 ## Package Structure
 
 ```
@@ -169,18 +343,23 @@ packages/kb-registry/
 └── src/oai_kb_registry/
     ├── main.py                      # FastAPI app + lifespan
     ├── models.py                    # Pydantic models
-    ├── dependencies.py              # DI container (registry, auth)
+    ├── dependencies.py              # DI container (registry, sync service, auth)
     ├── cli.py                       # oai-kb-registry CLI
     ├── security/
     │   └── dependencies.py          # Token validation (same as other registries)
+    ├── loaders/
+    │   ├── __init__.py
+    │   └── catalog.py               # LOADER_CATALOG dict — add new loaders here
     ├── routers/
     │   ├── knowledge_bases.py       # CRUD + audit log
     │   ├── documents.py             # Upload, S3, reindex
     │   ├── query.py                 # Semantic search
+    │   ├── sources.py               # Data source management + sync endpoints
     │   └── token.py                 # Token management
     ├── services/
     │   ├── kb_registry.py           # Core orchestration service
     │   ├── document_processor.py    # Parse → chunk → LangChain Documents
+    │   ├── source_sync_service.py   # LangChain loader dispatch + background sync
     │   ├── provider_factory.py      # Creates vector store from KB config
     │   └── db/
     │       └── database_logger.py   # Postgres + SQLite CRUD layer

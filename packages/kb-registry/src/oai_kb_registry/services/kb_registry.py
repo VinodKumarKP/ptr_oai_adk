@@ -504,6 +504,67 @@ class KBRegistry:
 
         return await self.db.get_document(doc_id) or {}
 
+    async def index_document_from_text(
+        self,
+        kb_name: str,
+        name: str,
+        text: str,
+        source_type: str = "external",
+        source_uri: Optional[str] = None,
+        extra_metadata: Optional[Dict[str, Any]] = None,
+        performed_by: str = "system",
+    ) -> Dict[str, Any]:
+        """Index pre-extracted text (e.g. from a LangChain loader) into the KB.
+
+        Used by the source sync service — each LangChain Document becomes one
+        ``kb_documents`` record that is chunked, embedded, and stored.
+        """
+        kb = await self.db.get_knowledge_base(kb_name)
+        if not kb:
+            raise ValueError(f"Knowledge base not found: {kb_name!r}")
+
+        kb_id = kb["id"]
+
+        doc_record = await self.db.create_document(
+            kb_id=kb_id,
+            name=name,
+            source_type=source_type,
+            source_uri=source_uri,
+            file_size_bytes=len(text.encode("utf-8", errors="replace")),
+        )
+        doc_id = doc_record.get("id")
+
+        await self.db.update_document_status(doc_id, "indexing")
+
+        try:
+            processor = DocumentProcessor(
+                chunk_size=kb["chunk_size"],
+                chunk_overlap=kb["chunk_overlap"],
+            )
+            vs = await self._get_or_create_vector_store(kb_name)
+            documents = processor.process_text(
+                text=text,
+                name=name,
+                kb_name=kb_name,
+                doc_id=doc_id,
+                source_type=source_type,
+                extra_metadata=extra_metadata,
+            )
+            chunk_count = await self._index_documents_in_thread(kb_name, doc_id, documents, vs)
+            await self.db.update_document_status(doc_id, "indexed", chunk_count)
+            await self.db.log_action(
+                kb_id, "add_document", performed_by,
+                f"Indexed {name!r} from {source_type} ({chunk_count} chunks)",
+            )
+            self.logger.info("Indexed %s → %s (%d chunks)", name, kb_name, chunk_count)
+        except Exception as exc:
+            self.logger.error("Failed to index text doc %s: %s", name, exc)
+            await self.db.update_document_status(doc_id, "failed", error_message=str(exc))
+            await self.db.log_action(kb_id, "index_error", performed_by, str(exc))
+            raise RuntimeError(f"Indexing failed: {exc}") from exc
+
+        return await self.db.get_document(doc_id) or {}
+
     async def remove_document(
         self,
         kb_name: str,

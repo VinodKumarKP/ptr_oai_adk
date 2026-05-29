@@ -23,6 +23,7 @@ from fastapi import Depends, Request
 
 from oai_kb_registry.services.db.database_logger import KBDatabaseLogger
 from oai_kb_registry.services.kb_registry import KBRegistry
+from oai_kb_registry.services.source_sync_service import SourceSyncService
 from oai_kb_registry.security.dependencies import _validate_token
 
 # ---------------------------------------------------------------------------
@@ -231,6 +232,11 @@ def get_registry() -> KBRegistry:
     if _kb_registry is None:
         raise RuntimeError("KB Registry not initialised. Call initialize_registry() first.")
     return _kb_registry
+
+
+def get_sync_service(registry: KBRegistry = Depends(get_registry)) -> SourceSyncService:
+    """FastAPI dependency: return a SourceSyncService backed by the current registry."""
+    return SourceSyncService(registry=registry)
 
 
 async def verify_bearer_token(request: Request) -> bool:

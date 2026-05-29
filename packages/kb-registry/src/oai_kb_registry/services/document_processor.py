@@ -215,6 +215,25 @@ class DocumentProcessor:
         }
         return self._build_documents(text, meta)
 
+    def process_text(
+        self,
+        text: str,
+        name: str,
+        kb_name: str,
+        doc_id: Optional[int] = None,
+        source_type: str = "external",
+        extra_metadata: Optional[dict] = None,
+    ) -> "List[Document]":
+        """Split pre-extracted text (e.g. from a LangChain loader) and return Document chunks."""
+        meta = {
+            "kb_name": kb_name,
+            "doc_name": name,
+            "doc_id": doc_id,
+            "source_type": source_type,
+            **(extra_metadata or {}),
+        }
+        return self._build_documents(text, meta)
+
     def process_url(
         self,
         url: str,

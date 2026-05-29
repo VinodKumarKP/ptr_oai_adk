@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -165,6 +166,61 @@ class PostgresBackend(BasePostgresBackend):
     """
 
     # ------------------------------------------------------------------
+    # kb_data_sources
+    # ------------------------------------------------------------------
+    DS_INSERT = """
+        INSERT INTO kb_data_sources (
+            id, kb_id, source_type, display_name,
+            config_encrypted, config_public,
+            sync_schedule, sync_status,
+            document_count, created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    """
+    DS_SELECT_ONE = """
+        SELECT id, kb_id, source_type, display_name,
+               config_encrypted, config_public,
+               sync_schedule, sync_status,
+               last_sync_at, last_sync_error,
+               document_count, created_at
+        FROM kb_data_sources WHERE id = $1
+    """
+    DS_SELECT_BY_KB = """
+        SELECT id, kb_id, source_type, display_name,
+               config_encrypted, config_public,
+               sync_schedule, sync_status,
+               last_sync_at, last_sync_error,
+               document_count, created_at
+        FROM kb_data_sources WHERE kb_id = $1 ORDER BY created_at DESC
+    """
+    DS_UPDATE_SYNC_STATUS = """
+        UPDATE kb_data_sources
+        SET sync_status = $1, last_sync_at = $2,
+            last_sync_error = $3, document_count = $4
+        WHERE id = $5
+    """
+    DS_DELETE = "DELETE FROM kb_data_sources WHERE id = $1"
+
+    # ------------------------------------------------------------------
+    # kb_sync_runs
+    # ------------------------------------------------------------------
+    SR_INSERT = """
+        INSERT INTO kb_sync_runs (
+            id, source_id, started_at, status, document_count
+        ) VALUES ($1,$2,$3,$4,$5)
+    """
+    SR_SELECT_BY_SOURCE = """
+        SELECT id, source_id, started_at, completed_at,
+               status, document_count, error_message
+        FROM kb_sync_runs WHERE source_id = $1 ORDER BY started_at DESC
+    """
+    SR_UPDATE = """
+        UPDATE kb_sync_runs
+        SET status = $1, completed_at = $2,
+            document_count = $3, error_message = $4
+        WHERE id = $5
+    """
+
+    # ------------------------------------------------------------------
     # Schema
     # ------------------------------------------------------------------
     async def _create_schema(self, logger: Optional[logging.Logger] = None) -> None:
@@ -217,11 +273,39 @@ class PostgresBackend(BasePostgresBackend):
             created_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
 
-        CREATE INDEX IF NOT EXISTS idx_knowledge_bases_name   ON knowledge_bases(name);
-        CREATE INDEX IF NOT EXISTS idx_kb_configs_kb_id       ON kb_configs(kb_id);
-        CREATE INDEX IF NOT EXISTS idx_kb_documents_kb_id     ON kb_documents(kb_id);
-        CREATE INDEX IF NOT EXISTS idx_kb_documents_status    ON kb_documents(status);
-        CREATE INDEX IF NOT EXISTS idx_kb_actions_kb_id       ON kb_actions(kb_id);
+        CREATE TABLE IF NOT EXISTS kb_data_sources (
+            id               TEXT PRIMARY KEY,
+            kb_id            INTEGER NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+            source_type      VARCHAR(50) NOT NULL,
+            display_name     VARCHAR(255) NOT NULL,
+            config_encrypted TEXT NOT NULL DEFAULT '{}',
+            config_public    TEXT NOT NULL DEFAULT '{}',
+            sync_schedule    VARCHAR(100),
+            sync_status      VARCHAR(50) NOT NULL DEFAULT 'never',
+            last_sync_at     TIMESTAMP WITH TIME ZONE,
+            last_sync_error  TEXT,
+            document_count   INTEGER NOT NULL DEFAULT 0,
+            created_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS kb_sync_runs (
+            id              TEXT PRIMARY KEY,
+            source_id       TEXT NOT NULL REFERENCES kb_data_sources(id) ON DELETE CASCADE,
+            started_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            completed_at    TIMESTAMP WITH TIME ZONE,
+            status          VARCHAR(50) NOT NULL DEFAULT 'running',
+            document_count  INTEGER NOT NULL DEFAULT 0,
+            error_message   TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_knowledge_bases_name    ON knowledge_bases(name);
+        CREATE INDEX IF NOT EXISTS idx_kb_configs_kb_id        ON kb_configs(kb_id);
+        CREATE INDEX IF NOT EXISTS idx_kb_documents_kb_id      ON kb_documents(kb_id);
+        CREATE INDEX IF NOT EXISTS idx_kb_documents_status     ON kb_documents(status);
+        CREATE INDEX IF NOT EXISTS idx_kb_actions_kb_id        ON kb_actions(kb_id);
+        CREATE INDEX IF NOT EXISTS idx_kb_data_sources_kb_id   ON kb_data_sources(kb_id);
+        CREATE INDEX IF NOT EXISTS idx_kb_data_sources_status  ON kb_data_sources(sync_status);
+        CREATE INDEX IF NOT EXISTS idx_kb_sync_runs_source_id  ON kb_sync_runs(source_id);
         """
         # Migration statements — add columns introduced in subsequent refactors.
         # Safe to run on both fresh and existing databases.
@@ -373,6 +457,61 @@ class SQLiteBackend(PersistentSQLiteBackend):
         FROM kb_actions WHERE kb_id = ? ORDER BY created_at DESC
     """
 
+    # ------------------------------------------------------------------
+    # kb_data_sources
+    # ------------------------------------------------------------------
+    DS_INSERT = """
+        INSERT INTO kb_data_sources (
+            id, kb_id, source_type, display_name,
+            config_encrypted, config_public,
+            sync_schedule, sync_status,
+            document_count, created_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?)
+    """
+    DS_SELECT_ONE = """
+        SELECT id, kb_id, source_type, display_name,
+               config_encrypted, config_public,
+               sync_schedule, sync_status,
+               last_sync_at, last_sync_error,
+               document_count, created_at
+        FROM kb_data_sources WHERE id = ?
+    """
+    DS_SELECT_BY_KB = """
+        SELECT id, kb_id, source_type, display_name,
+               config_encrypted, config_public,
+               sync_schedule, sync_status,
+               last_sync_at, last_sync_error,
+               document_count, created_at
+        FROM kb_data_sources WHERE kb_id = ? ORDER BY created_at DESC
+    """
+    DS_UPDATE_SYNC_STATUS = """
+        UPDATE kb_data_sources
+        SET sync_status = ?, last_sync_at = ?,
+            last_sync_error = ?, document_count = ?
+        WHERE id = ?
+    """
+    DS_DELETE = "DELETE FROM kb_data_sources WHERE id = ?"
+
+    # ------------------------------------------------------------------
+    # kb_sync_runs
+    # ------------------------------------------------------------------
+    SR_INSERT = """
+        INSERT INTO kb_sync_runs (
+            id, source_id, started_at, status, document_count
+        ) VALUES (?,?,?,?,?)
+    """
+    SR_SELECT_BY_SOURCE = """
+        SELECT id, source_id, started_at, completed_at,
+               status, document_count, error_message
+        FROM kb_sync_runs WHERE source_id = ? ORDER BY started_at DESC
+    """
+    SR_UPDATE = """
+        UPDATE kb_sync_runs
+        SET status = ?, completed_at = ?,
+            document_count = ?, error_message = ?
+        WHERE id = ?
+    """
+
     async def _create_schema(self) -> None:  # type: ignore[override]
         schema = """
         CREATE TABLE IF NOT EXISTS knowledge_bases (
@@ -424,10 +563,37 @@ class SQLiteBackend(PersistentSQLiteBackend):
             created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
-        CREATE INDEX IF NOT EXISTS idx_knowledge_bases_name ON knowledge_bases(name);
-        CREATE INDEX IF NOT EXISTS idx_kb_configs_kb_id     ON kb_configs(kb_id);
-        CREATE INDEX IF NOT EXISTS idx_kb_documents_kb_id   ON kb_documents(kb_id);
-        CREATE INDEX IF NOT EXISTS idx_kb_actions_kb_id     ON kb_actions(kb_id);
+        CREATE TABLE IF NOT EXISTS kb_data_sources (
+            id               TEXT PRIMARY KEY,
+            kb_id            INTEGER NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+            source_type      TEXT NOT NULL,
+            display_name     TEXT NOT NULL,
+            config_encrypted TEXT NOT NULL DEFAULT '{}',
+            config_public    TEXT NOT NULL DEFAULT '{}',
+            sync_schedule    TEXT,
+            sync_status      TEXT NOT NULL DEFAULT 'never',
+            last_sync_at     DATETIME,
+            last_sync_error  TEXT,
+            document_count   INTEGER NOT NULL DEFAULT 0,
+            created_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS kb_sync_runs (
+            id              TEXT PRIMARY KEY,
+            source_id       TEXT NOT NULL REFERENCES kb_data_sources(id) ON DELETE CASCADE,
+            started_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at    DATETIME,
+            status          TEXT NOT NULL DEFAULT 'running',
+            document_count  INTEGER NOT NULL DEFAULT 0,
+            error_message   TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_knowledge_bases_name   ON knowledge_bases(name);
+        CREATE INDEX IF NOT EXISTS idx_kb_configs_kb_id       ON kb_configs(kb_id);
+        CREATE INDEX IF NOT EXISTS idx_kb_documents_kb_id     ON kb_documents(kb_id);
+        CREATE INDEX IF NOT EXISTS idx_kb_actions_kb_id       ON kb_actions(kb_id);
+        CREATE INDEX IF NOT EXISTS idx_kb_data_sources_kb_id  ON kb_data_sources(kb_id);
+        CREATE INDEX IF NOT EXISTS idx_kb_sync_runs_source_id ON kb_sync_runs(source_id);
         """
         db = await self._get_conn()
         await db.executescript(schema)
@@ -736,4 +902,134 @@ class KBDatabaseLogger:
             return [dict(r) for r in rows]
         except Exception as exc:
             self.logger.error("Failed to get actions for kb_id=%s: %s", kb_id, exc)
+            return []
+
+    # ------------------------------------------------------------------ #
+    #  Data Sources                                                        #
+    # ------------------------------------------------------------------ #
+
+    async def create_data_source(
+        self,
+        kb_id: int,
+        source_type: str,
+        display_name: str,
+        config_encrypted: str,
+        config_public: str,
+        sync_schedule: Optional[str] = None,
+    ) -> str:
+        """Insert a new data source row and return its UUID."""
+        source_id = str(uuid.uuid4())
+        if not self._ready():
+            return source_id
+        try:
+            now = datetime.now(timezone.utc)
+            params = (
+                source_id, kb_id, source_type, display_name,
+                config_encrypted, config_public,
+                sync_schedule, "never",
+                0, now,
+            )
+            await self._backend.execute(self._backend.DS_INSERT, params)
+            self.logger.debug("Created data source %s (type=%s, kb_id=%s)", source_id, source_type, kb_id)
+        except Exception as exc:
+            self.logger.error("Failed to create data source for kb_id=%s: %s", kb_id, exc)
+        return source_id
+
+    async def get_data_source(self, source_id: str) -> Optional[Dict[str, Any]]:
+        if not self._ready():
+            return None
+        try:
+            row = await self._backend.fetch_one(self._backend.DS_SELECT_ONE, (source_id,))
+            return dict(row) if row else None
+        except Exception as exc:
+            self.logger.error("Failed to get data source %s: %s", source_id, exc)
+            return None
+
+    async def get_kb_data_sources(self, kb_id: int) -> List[Dict[str, Any]]:
+        if not self._ready():
+            return []
+        try:
+            rows = await self._backend.fetch(self._backend.DS_SELECT_BY_KB, (kb_id,))
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            self.logger.error("Failed to list data sources for kb_id=%s: %s", kb_id, exc)
+            return []
+
+    async def update_data_source_sync_status(
+        self,
+        source_id: str,
+        status: str,
+        last_sync_at: Optional[datetime] = None,
+        last_sync_error: Optional[str] = None,
+        document_count: int = 0,
+    ) -> None:
+        if not self._ready():
+            return
+        try:
+            sync_at = last_sync_at or datetime.now(timezone.utc)
+            await self._backend.execute(
+                self._backend.DS_UPDATE_SYNC_STATUS,
+                (status, sync_at, last_sync_error, document_count, source_id),
+            )
+        except Exception as exc:
+            self.logger.error("Failed to update sync status for source %s: %s", source_id, exc)
+
+    async def delete_data_source(self, source_id: str) -> None:
+        if not self._ready():
+            return
+        try:
+            await self._backend.execute(self._backend.DS_DELETE, (source_id,))
+            self.logger.info("Deleted data source %s", source_id)
+        except Exception as exc:
+            self.logger.error("Failed to delete data source %s: %s", source_id, exc)
+
+    # ------------------------------------------------------------------ #
+    #  Sync Runs                                                           #
+    # ------------------------------------------------------------------ #
+
+    async def create_sync_run(
+        self,
+        source_id: str,
+        started_at: Optional[datetime] = None,
+    ) -> str:
+        """Insert a new sync-run row and return its UUID."""
+        run_id = str(uuid.uuid4())
+        if not self._ready():
+            return run_id
+        try:
+            now = started_at or datetime.now(timezone.utc)
+            params = (run_id, source_id, now, "running", 0)
+            await self._backend.execute(self._backend.SR_INSERT, params)
+            self.logger.debug("Created sync run %s for source %s", run_id, source_id)
+        except Exception as exc:
+            self.logger.error("Failed to create sync run for source %s: %s", source_id, exc)
+        return run_id
+
+    async def update_sync_run(
+        self,
+        run_id: str,
+        status: str,
+        completed_at: Optional[datetime] = None,
+        document_count: int = 0,
+        error_message: Optional[str] = None,
+    ) -> None:
+        if not self._ready():
+            return
+        try:
+            now = completed_at or datetime.now(timezone.utc)
+            await self._backend.execute(
+                self._backend.SR_UPDATE,
+                (status, now, document_count, error_message, run_id),
+            )
+        except Exception as exc:
+            self.logger.error("Failed to update sync run %s: %s", run_id, exc)
+
+    async def get_source_sync_runs(self, source_id: str) -> List[Dict[str, Any]]:
+        if not self._ready():
+            return []
+        try:
+            rows = await self._backend.fetch(self._backend.SR_SELECT_BY_SOURCE, (source_id,))
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            self.logger.error("Failed to get sync runs for source %s: %s", source_id, exc)
             return []

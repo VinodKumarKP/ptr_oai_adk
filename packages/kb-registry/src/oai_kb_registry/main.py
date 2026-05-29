@@ -40,15 +40,52 @@ async def lifespan(app: FastAPI):
         logger.error("Error during KB Registry shutdown: %s", exc)
 
 
+_OPENAPI_TAGS = [
+    {
+        "name": "Knowledge Bases",
+        "description": (
+            "Register and manage knowledge bases. "
+            "Each KB has its own vector store, embedding model, and chunking configuration."
+        ),
+    },
+    {
+        "name": "Documents",
+        "description": (
+            "Ingest documents into a knowledge base via file upload (PDF, DOCX, TXT, Markdown) "
+            "or S3 object reference. Supports full reindex."
+        ),
+    },
+    {
+        "name": "Query",
+        "description": (
+            "Semantic similarity search against a knowledge base. "
+            "Supports top-k, score threshold, and metadata filters."
+        ),
+    },
+    {
+        "name": "Data Sources",
+        "description": (
+            "Connect external systems (Confluence, SharePoint, S3, GitHub, Web) "
+            "and keep the KB in sync automatically via LangChain loaders."
+        ),
+    },
+    {
+        "name": "Tokens",
+        "description": "Generate, list, and revoke API bearer tokens.",
+    },
+]
+
 app = FastAPI(
     title="Knowledge Base Registry",
     description=(
         "Manage vector-backed knowledge bases. "
         "Register KBs, ingest documents (PDF, DOCX, TXT, S3), "
+        "connect external data sources, "
         "and query via semantic similarity search."
     ),
     version="1.0.0",
     lifespan=lifespan,
+    openapi_tags=_OPENAPI_TAGS,
 )
 
 # CORS

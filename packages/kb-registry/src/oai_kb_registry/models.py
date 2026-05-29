@@ -289,6 +289,96 @@ class KBVectorStoreSettings(BaseModel):
     namespace: Optional[str] = None
 
 
+# ---------------------------------------------------------------------------
+# Data sources (external loader-based ingestion)
+# ---------------------------------------------------------------------------
+
+class LoaderFieldType(str, Enum):
+    TEXT     = "text"
+    URL      = "url"
+    SECRET   = "secret"
+    BOOLEAN  = "boolean"
+    NUMBER   = "number"
+    TEXTAREA = "textarea"
+    SELECT   = "select"
+
+
+class LoaderField(BaseModel):
+    name:         str
+    type:         LoaderFieldType
+    label:        str
+    required:     bool = False
+    default:      Optional[Any] = None
+    placeholder:  Optional[str] = None
+    hint:         Optional[str] = None
+    help:         Optional[str] = None
+    env_var_hint: Optional[str] = None
+    options:      Optional[List[Dict[str, str]]] = None  # for select
+
+
+class LoaderCatalogEntry(BaseModel):
+    id:           str
+    display_name: str
+    category:     str
+    description:  str
+    pip_extra:    Optional[str] = None
+    fields:       List[LoaderField]
+
+
+class SyncStatus(str, Enum):
+    IDLE    = "idle"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED  = "failed"
+    NEVER   = "never"
+
+
+class DataSourceCreate(BaseModel):
+    source_type:   str
+    display_name:  str
+    config:        Dict[str, Any]
+    sync_schedule: Optional[str] = None   # "manual" or a cron expression
+
+
+class DataSourceResponse(BaseModel):
+    id:             str
+    kb_name:        str
+    source_type:    str
+    display_name:   str
+    config_public:  Dict[str, Any]        # secrets masked
+    sync_schedule:  Optional[str]
+    sync_status:    SyncStatus
+    last_sync_at:   Optional[datetime]
+    last_sync_error: Optional[str]
+    document_count: int
+    created_at:     datetime
+
+
+class SyncRunResponse(BaseModel):
+    id:             str
+    source_id:      str
+    started_at:     Optional[datetime]
+    completed_at:   Optional[datetime]
+    status:         SyncStatus
+    document_count: int
+    error_message:  Optional[str]
+
+
+class TestConnectionRequest(BaseModel):
+    source_type: str
+    config:      Dict[str, Any]
+
+
+class TestConnectionResponse(BaseModel):
+    status:       str               # "ok" or "error"
+    message:      Optional[str] = None
+    sample_count: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
+# Agent-core integration
+# ---------------------------------------------------------------------------
+
 class KBAgentConfig(BaseModel):
     """KB config in the format consumed by oai-agent-core BaseKnowledgeBaseFactory.
 
