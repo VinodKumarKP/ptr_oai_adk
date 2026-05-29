@@ -314,6 +314,9 @@ def {tool}():
 
     def _generate_agent_skills(self, config: Dict, skills_dir: Path) -> None:
         """Generates files for agent skills."""
+        # When using skills registry, don't create local skill stubs
+        if config.get("use_skill_registry"):
+            return
         skill_list = config.get("skill_list", [])
         for skill in skill_list:
             skill_dir = skills_dir / skill
@@ -390,7 +393,11 @@ class {model_name}(BaseModel):
                 elif kb_type == "s3":
                     lines.append(f"{indent}      # bucket_name: your-bucket")
                     lines.append(f"{indent}      # region: us-east-1")
-                    
+                elif kb_type == "pinecone":
+                    lines.append(f"{indent}      # index_name: your-pinecone-index")
+                    lines.append(f"{indent}      # environment: your-pinecone-env")
+                    lines.append(f"{indent}      # api_key: ${{PINECONE_API_KEY}}")
+
                 lines.append(f"{indent}  embedding:")
                 lines.append(f"{indent}    model_id: \"bedrock/amazon.titan-embed-text-v1\"")
                 lines.append(f"{indent}    region_name: \"us-west-2\"")
@@ -405,16 +412,35 @@ class {model_name}(BaseModel):
                 lines.append(f"{indent}    score_threshold: 0.7")
             return lines
 
+        def generate_kb_registry_section(kb_reg_items, indent_level=0):
+            lines = []
+            indent = " " * indent_level
+            for item in kb_reg_items:
+                lines.append(f"{indent}- registry_name: \"{item['registry_name']}\"")
+                lines.append(f"{indent}  description: \"{item['description']}\"")
+                lines.append(f"{indent}  retrieval_settings:")
+                lines.append(f"{indent}    top_k: {item.get('top_k', 5)}")
+                lines.append(f"{indent}    score_threshold: {item.get('score_threshold', 0.7)}")
+            return lines
+
         if len(sub_agents) > 1:
             yaml_content.append(f"instructions: |\n  {config['instructions']}")
             yaml_content.append("")
-            
-            if global_kb:
-                yaml_content.append("# Global Knowledge Base")
+
+            use_kb_registry = config.get("use_kb_registry", False)
+            kb_registry_items = config.get("kb_registry_items", [])
+
+            if use_kb_registry and kb_registry_items:
+                yaml_content.append("# KB Registry configuration")
+                yaml_content.append("knowledge_base:")
+                yaml_content.extend(generate_kb_registry_section(kb_registry_items, indent_level=2))
+                yaml_content.append("")
+            elif global_kb:
+                yaml_content.append("# Knowledge Base configuration")
                 yaml_content.append("knowledge_base:")
                 yaml_content.extend(generate_kb_section(global_kb, indent_level=2))
                 yaml_content.append("")
-            
+
             yaml_content.append("# Multi-agent configuration")
             yaml_content.append("agent_list:")
             for sub in sub_agents:
@@ -459,9 +485,17 @@ class {model_name}(BaseModel):
             # Single agent
             yaml_content.append(f"instructions: |\n  {config['instructions']}")
             yaml_content.append("")
-            
-            if global_kb:
-                yaml_content.append("# Global Knowledge Base")
+
+            use_kb_registry = config.get("use_kb_registry", False)
+            kb_registry_items = config.get("kb_registry_items", [])
+
+            if use_kb_registry and kb_registry_items:
+                yaml_content.append("# KB Registry configuration")
+                yaml_content.append("knowledge_base:")
+                yaml_content.extend(generate_kb_registry_section(kb_registry_items, indent_level=2))
+                yaml_content.append("")
+            elif global_kb:
+                yaml_content.append("# Knowledge Base configuration")
                 yaml_content.append("knowledge_base:")
                 yaml_content.extend(generate_kb_section(global_kb, indent_level=2))
                 yaml_content.append("")
@@ -513,19 +547,27 @@ class {model_name}(BaseModel):
         yaml_content.append(f"  region_name: {config['region']}")
         yaml_content.append("")
         
-        if skill_list:
+        use_skill_registry = config.get("use_skill_registry", False)
+        skill_registry_items = config.get("skill_registry_items", [])
+
+        if use_skill_registry and skill_registry_items:
+            yaml_content.append("# Skills Registry configuration")
+            yaml_content.append("skills:")
+            yaml_content.append(f"  registry:")
+            yaml_content.append(f"    url: \"{config.get('skill_registry_url', '${SKILLS_REGISTRY_URL}')}\"")
+            yaml_content.append(f"    token: \"{config.get('skill_registry_token', '${SKILLS_REGISTRY_TOKEN}')}\"")
+            for item in skill_registry_items:
+                yaml_content.append(f"  {item['name']}:")
+                yaml_content.append(f"    version: \"{item['version']}\"")
+            yaml_content.append("")
+        elif skill_list:
             yaml_content.append("# Skills configuration")
             yaml_content.append("skills:")
             yaml_content.append("  skill_dir: \"./skills\"")
+            yaml_content.append("  skill_list:")
+            for skill in skill_list:
+                yaml_content.append(f"    - {skill}")
             yaml_content.append("")
-            
-            # Add skills to agent_list
-            for i, line in enumerate(yaml_content):
-                if line.strip().startswith("- " + sub_agents[0]["name"]):
-                    yaml_content.insert(i + 2, "      skills:")
-                    for skill in skill_list:
-                        yaml_content.insert(i + 3, f"        - {skill}")
-                    break
 
         if tool_list:
             yaml_content.append("# For tools configuration")
@@ -577,7 +619,11 @@ class {model_name}(BaseModel):
             elif mem_type == "s3":
                 yaml_content.append(f"      # bucket_name: your-bucket")
                 yaml_content.append(f"      # region: us-east-1")
-                
+            elif mem_type == "pinecone":
+                yaml_content.append(f"      # index_name: your-memory-index")
+                yaml_content.append(f"      # api_key: ${{PINECONE_API_KEY}}")
+                yaml_content.append(f"      # environment: your-pinecone-env")
+
             yaml_content.append("  embedding:")
             yaml_content.append("    model_id: \"bedrock/amazon.titan-embed-text-v1\"")
             yaml_content.append("    region_name: \"us-west-2\"")
@@ -642,22 +688,39 @@ class {model_name}(BaseModel):
             for tag in config['tags']:
                 yaml_content.append(f"  - {tag}")
         
-        yaml_content.append("env: {}")
-        if config.get("env"):
-            yaml_content[-1] = "env:"
-            for k, v in config["env"].items():
+        # Collect all env vars (registry + user-defined)
+        registry_env = {}
+        if config.get("use_skill_registry"):
+            registry_env["SKILLS_REGISTRY_URL"] = "${SKILLS_REGISTRY_URL}"
+            registry_env["SKILLS_REGISTRY_TOKEN"] = "${SKILLS_REGISTRY_TOKEN}"
+        if config.get("use_kb_registry"):
+            registry_env["KB_REGISTRY_URL"] = "${KB_REGISTRY_URL}"
+            registry_env["KB_REGISTRY_TOKEN"] = "${KB_REGISTRY_TOKEN}"
+
+        user_env = config.get("env", {})
+        has_env = registry_env or user_env
+
+        if has_env:
+            yaml_content.append("env:")
+            for k, v in registry_env.items():
+                yaml_content.append(f"  {k}: \"{v}\"")
+            for k, v in user_env.items():
                 yaml_content.append(f"  {k}: {v}")
-        
+        else:
+            yaml_content.append("env: {}")
+
         if config['prompts']:
             yaml_content.append("prompts:")
             for p in config['prompts']:
                 yaml_content.append(f"  - \"{p}\"")
-        
+
         yaml_content.append("")
         yaml_content.append("crew_config:")
         yaml_content.append(f"  pattern: {pattern}")
         if entry_agent:
             yaml_content.append(f"  entry_agent: {entry_agent}")
+        if config.get("use_lazy_loading", False):
+            yaml_content.append("  enable_lazy_loading: true")
         if global_structured_output_model:
             yaml_content.append(f"  structured_output_model: {global_structured_output_model}")
 
@@ -701,6 +764,10 @@ class {model_name}(BaseModel):
             
             if item.get("use_guardrails"):
                 extras.add("guardrails")
+            if item.get("use_skill_registry"):
+                extras.add("skills-registry")
+            if item.get("use_kb_registry"):
+                extras.add("kb-registry")
 
         # Build dependency strings
         extras_str = ",".join(sorted(list(extras)))
@@ -785,28 +852,64 @@ class {model_name}(BaseModel):
         venv_activate = (
             "source .venv/bin/activate  # or .venv\\Scripts\\activate on Windows"
         )
-        logger.info(f"\n✅  Project '{self.project_name}' created successfully!\n")
-        logger.info("  Next steps:\n")
         try:
             rel = self.project_dir.relative_to(Path.cwd())
         except ValueError:
             rel = self.project_dir
+
+        logger.info(f"\n{'─'*60}")
+        logger.info(f"✅  Project '{self.project_name}' created successfully!")
+        logger.info(f"{'─'*60}")
+        logger.info(f"\n📁  Location : {self.project_dir}")
+        logger.info(f"📋  Template  : {self.template}")
+        if self.framework:
+            logger.info(f"🧠  Framework : {self.framework}")
+
+        if self.items:
+            if self.template == "agent":
+                logger.info(f"\n🤖  Agents ({len(self.items)}):")
+                for item in self.items:
+                    name = item["name"] if isinstance(item, dict) else item
+                    pattern = item.get("pattern", "single") if isinstance(item, dict) else ""
+                    port = item.get("port", "") if isinstance(item, dict) else ""
+                    sub_agents = item.get("sub_agents", []) if isinstance(item, dict) else []
+                    agent_count = len(sub_agents) if len(sub_agents) > 1 else 1
+                    logger.info(f"    • {name}  [port={port}, pattern={pattern}, agents={agent_count}]")
+                    if isinstance(item, dict):
+                        if item.get("use_skill_registry"):
+                            logger.info(f"      └─ Skills Registry: {len(item.get('skill_registry_items', []))} skills")
+                        elif item.get("skill_list"):
+                            logger.info(f"      └─ Local skills: {', '.join(item['skill_list'])}")
+                        if item.get("use_kb_registry"):
+                            logger.info(f"      └─ KB Registry: {len(item.get('kb_registry_items', []))} knowledge bases")
+                        elif item.get("global_kb"):
+                            logger.info(f"      └─ Inline KB: {', '.join(k['name'] for k in item['global_kb'])}")
+                        if item.get("mcp_servers"):
+                            logger.info(f"      └─ MCP servers: {', '.join(s['name'] for s in item['mcp_servers'])}")
+            elif self.template == "mcp":
+                logger.info(f"\n🔌  MCP Servers ({len(self.items)}):")
+                for item in self.items:
+                    name = item["name"] if isinstance(item, dict) else item
+                    port = item.get("port", "") if isinstance(item, dict) else ""
+                    logger.info(f"    • {name}  [port={port}]")
+
+        logger.info("\n  Next steps:\n")
         logger.info(f"    cd {rel}")
         logger.info(f"    {venv_activate}")
         logger.info("    pip install -e .[dev]")
-        
+
         if self.template == "mcp":
-            logger.info("\n  🛠  MCP Setup Instructions:")
-            logger.info("    1. Update 'pyproject.toml' and 'requirements.txt' with any additional dependencies.")
-            logger.info("    2. Add necessary utility files in 'mcp_registry_servers/tools/'.")
-            logger.info("    3. Test your MCP server using the MCP Inspector or by running:")
-            logger.info("       python -m mcp_registry_servers.server")
+            logger.info("\n  🛠  MCP Setup:")
+            logger.info("    1. Add tool logic in 'mcp_registry_servers/tools/'")
+            logger.info("    2. Update server config YAMLs in 'mcp_registry_servers/servers_config/'")
+            logger.info("    3. Run: python -m mcp_registry_servers.server")
         elif self.template == "agent":
-            logger.info("\n  🤖 Agent Setup Instructions:")
-            logger.info(f"    1. Framework selected: {self.framework}")
-            logger.info("    2. Update 'pyproject.toml' and 'requirements.txt' with any additional dependencies.")
-            logger.info("    3. Update the agent configuration in 'agentic_registry_agents/agents_config/<agent_name>.yaml'.")
-            logger.info("    4. Implement your agent logic in 'agentic_registry_agents/agents/<agent_name>/agent.py'.")
-            logger.info("    5. Run your agent server:")
-            logger.info("       python -m agentic_registry_agents.server")
-        logger.info("")
+            logger.info(f"\n  🤖  Agent Setup:")
+            logger.info(f"    1. Update agent config in 'agentic_registry_agents/agents_config/<agent>.yaml'")
+            logger.info(f"    2. Add agent logic in 'agentic_registry_agents/agents/<agent>/agent.py'")
+            logger.info(f"    3. Run: python -m agentic_registry_agents.server")
+            if any(isinstance(i, dict) and i.get("use_skill_registry") for i in self.items):
+                logger.info(f"\n  🔧  Skills Registry: Set SKILLS_REGISTRY_URL and SKILLS_REGISTRY_TOKEN env vars")
+            if any(isinstance(i, dict) and i.get("use_kb_registry") for i in self.items):
+                logger.info(f"\n  📚  KB Registry: Set KB_REGISTRY_URL and KB_REGISTRY_TOKEN env vars")
+        logger.info(f"\n{'─'*60}\n")

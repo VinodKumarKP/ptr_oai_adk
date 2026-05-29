@@ -2,7 +2,7 @@
 
 import re
 import sys
-from oai_template_generator.constants import FRAMEWORK_PATTERNS, MODEL_OPTIONS
+from oai_template_generator.constants import FRAMEWORK_PATTERNS, MODEL_OPTIONS, AWS_REGIONS
 
 
 def _ask(prompt: str, default: str = "") -> str:
@@ -17,15 +17,21 @@ def _ask(prompt: str, default: str = "") -> str:
 
 
 def _choose(prompt: str, choices: list[str]) -> str:
-    """Present a numbered menu and return the chosen value."""
+    """Present a numbered menu and return the chosen value.
+
+    Accepts either the item number (1-N) or the value itself so that
+    automated tests and piped inputs can pass the actual string directly.
+    """
     print(f"\n{prompt}")
     for i, choice in enumerate(choices, 1):
         print(f"  {i}) {choice}")
     while True:
-        raw = _ask("Enter number")
+        raw = _ask("Enter number or value")
         if raw.isdigit() and 1 <= int(raw) <= len(choices):
             return choices[int(raw) - 1]
-        print(f"  ⚠  Please enter a number between 1 and {len(choices)}.")
+        if raw in choices:
+            return raw
+        print(f"  ⚠  Please enter a number (1–{len(choices)}) or a valid value.")
 
 
 def confirm(prompt: str, default: bool = False) -> bool:
@@ -92,10 +98,10 @@ def prompt_project_details(
     # Email
     if not email:
         while True:
-            email = _ask("Email address (must be @capgemini.com)", default="user@capgemini.com")
-            if email.endswith("@capgemini.com"):
+            email = _ask("Email address", default="user@example.com")
+            if "@" in email and "." in email.split("@")[-1]:
                 break
-            print("  ⚠  Email must be a @capgemini.com address.")
+            print("  ⚠  Please enter a valid email address.")
 
     # Output Directory
     if not output_dir or output_dir == ".":
@@ -197,7 +203,7 @@ def prompt_project_details(
                     if confirm(f"      Enable Knowledge Base for '{sub}'?", default=False):
                         kb_name = _ask("        Knowledge Base Name", default="docs_kb")
                         kb_desc = _ask("        Description", default="Document search")
-                        kb_type = _choose("        Vector Store Type", ["chroma", "postgres", "s3"])
+                        kb_type = _choose("        Vector Store Type", ["chroma", "postgres", "s3", "pinecone"])
                         kb_list.append({"name": kb_name, "description": kb_desc, "type": kb_type})
                     
                     structured_output_model = _ask("      Structured Output Model Name (optional)")
@@ -223,7 +229,7 @@ def prompt_project_details(
             else:
                 model_id = model_choice
                 
-            region = _ask("    AWS Region", default="us-east-1")
+            region = _choose("    Select AWS Region", AWS_REGIONS)
             
             # Additional Capabilities
             use_tools = confirm("  Will this agent use tools?", default=False)
@@ -234,9 +240,26 @@ def prompt_project_details(
             
             # Skills
             skill_list = []
+            use_skill_registry = False
+            skill_registry_url = ""
+            skill_registry_token = ""
+            skill_registry_items = []
             if confirm("  Will this agent use skills?", default=False):
-                skills_input = _ask("    List of skills (comma-separated)")
-                skill_list = [s.strip() for s in skills_input.split(",") if s.strip()]
+                # Leaving blank triggers Skills Registry mode; a list uses local skills
+                skills_input = _ask("    Skill names (comma-separated), or leave blank to configure Skills Registry")
+                if skills_input.strip():
+                    skill_list = [s.strip() for s in skills_input.split(",") if s.strip()]
+                else:
+                    use_skill_registry = True
+                    skill_registry_url = _ask("    Skills Registry URL", default="${SKILLS_REGISTRY_URL}")
+                    skill_registry_token = _ask("    Skills Registry Token (env var)", default="${SKILLS_REGISTRY_TOKEN}")
+                    print("    Add skills from registry (empty name to finish):")
+                    while True:
+                        skill_name = _ask("      Skill name (or Enter to finish)")
+                        if not skill_name:
+                            break
+                        skill_version = _ask(f"      Version for '{skill_name}'", default="latest")
+                        skill_registry_items.append({"name": skill_name, "version": skill_version})
 
             # MCP Servers
             mcp_servers = []
@@ -271,6 +294,11 @@ def prompt_project_details(
                         mcp_config["headers"] = headers_dict
                     mcp_servers.append(mcp_config)
 
+            # MCP lazy loading
+            use_lazy_loading = False
+            if mcp_servers:
+                use_lazy_loading = confirm("  Enable MCP Lazy Loading? (recommended for 3+ servers)", default=len(mcp_servers) >= 3)
+
             # Global Memory
             memory_config = {}
             if confirm("  Enable Memory (Conversation History)?", default=False):
@@ -281,18 +309,42 @@ def prompt_project_details(
 
             # Global Knowledge Base
             global_kb = []
-            if confirm("  Enable Global Knowledge Base (shared)?", default=False):
-                kb_name = _ask("    Knowledge Base Name", default="global_kb")
-                kb_desc = _ask("    Description", default="Global document search")
-                kb_type = _choose("    Vector Store Type", ["chroma", "postgres", "s3"])
-                global_kb.append({"name": kb_name, "description": kb_desc, "type": kb_type})
+            use_kb_registry = False
+            kb_registry_url = ""
+            kb_registry_token = ""
+            kb_registry_items = []
+            if confirm("  Enable Knowledge Base?", default=False):
+                # Leaving KB name blank triggers KB Registry mode
+                kb_name = _ask("    Knowledge Base name (or leave blank to configure KB Registry)")
+                if kb_name.strip():
+                    kb_desc = _ask("    Description", default="Global document search")
+                    kb_type = _choose("    Vector Store Type", ["chroma", "postgres", "s3", "pinecone"])
+                    global_kb.append({"name": kb_name, "description": kb_desc, "type": kb_type})
+                else:
+                    use_kb_registry = True
+                    kb_registry_url = _ask("    KB Registry URL", default="${KB_REGISTRY_URL}")
+                    kb_registry_token = _ask("    KB Registry Token (env var)", default="${KB_REGISTRY_TOKEN}")
+                    print("    Add KB sources from registry (empty name to finish):")
+                    while True:
+                        reg_name = _ask("      Registry KB name (or Enter to finish)")
+                        if not reg_name:
+                            break
+                        reg_desc = _ask(f"      Description for '{reg_name}'", default="Knowledge base")
+                        top_k = _ask(f"      top_k", default="5")
+                        score_threshold = _ask(f"      score_threshold", default="0.7")
+                        kb_registry_items.append({
+                            "registry_name": reg_name,
+                            "description": reg_desc,
+                            "top_k": top_k,
+                            "score_threshold": score_threshold,
+                        })
             
             # Agent-level KB for single agent case (if not already handled in sub_agents loop above)
             if len(sub_agents) == 1 and sub_agents[0]["name"] == item:
                  if confirm(f"  Enable Knowledge Base for '{item}'?", default=False):
                     kb_name = _ask("    Knowledge Base Name", default="agent_kb")
                     kb_desc = _ask("    Description", default="Agent specific documents")
-                    kb_type = _choose("    Vector Store Type", ["chroma", "postgres", "s3"])
+                    kb_type = _choose("    Vector Store Type", ["chroma", "postgres", "s3", "pinecone"])
                     sub_agents[0]["knowledge_base"].append({"name": kb_name, "description": kb_desc, "type": kb_type})
 
             # Guardrails
@@ -346,7 +398,16 @@ def prompt_project_details(
                 "global_structured_output_model": global_structured_output_model,
                 "tags": [t.strip() for t in tags.split(",") if t.strip()],
                 "prompts": prompts,
-                "env": env_vars
+                "env": env_vars,
+                "use_skill_registry": use_skill_registry,
+                "skill_registry_url": skill_registry_url,
+                "skill_registry_token": skill_registry_token,
+                "skill_registry_items": skill_registry_items,
+                "use_kb_registry": use_kb_registry,
+                "kb_registry_url": kb_registry_url,
+                "kb_registry_token": kb_registry_token,
+                "kb_registry_items": kb_registry_items,
+                "use_lazy_loading": use_lazy_loading,
             })
 
     print()

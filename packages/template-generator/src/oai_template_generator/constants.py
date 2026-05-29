@@ -23,7 +23,23 @@ DEFAULT_MODEL_ID = "anthropic.claude-3-5-sonnet-20240620-v1:0"
 
 # Options
 FRAMEWORKS = ["langgraph", "crewai", "strands", "openai"]
-VECTOR_STORES = ["chroma", "postgres", "s3"]
+VECTOR_STORES = ["chroma", "postgres", "s3", "pinecone"]
+
+AWS_REGIONS = [
+    "us-east-1", "us-east-2", "us-west-1", "us-west-2",
+    "eu-west-1", "eu-west-2", "eu-west-3", "eu-central-1",
+    "ap-southeast-1", "ap-southeast-2", "ap-northeast-1",
+    "ap-northeast-2", "ap-south-1", "ca-central-1", "sa-east-1",
+]
+
+EMBEDDING_MODELS = [
+    "bedrock/amazon.titan-embed-text-v2:0",
+    "bedrock/amazon.titan-embed-text-v1",
+    "bedrock/cohere.embed-english-v3",
+    "bedrock/cohere.embed-multilingual-v3",
+    "openai/text-embedding-3-small",
+    "openai/text-embedding-3-large",
+]
 
 MODEL_OPTIONS = [
     "bedrock/global.amazon.nova-2-lite-v1:0",
@@ -45,10 +61,10 @@ FRAMEWORK_INFO = {
 
 # Framework specific patterns
 FRAMEWORK_PATTERNS = {
-    "langgraph": ["supervisor", "agent-as-tool", "swarm"],
-    "openai": ["supervisor", "agent-as-tool", "swarm", "handoff"],
-    "strands": ["graph", "swarm", "sequential", "hierarchical", "agent-as-tool"],
-    "crewai": ["crew", "flow"]
+    "langgraph": ["single", "supervisor", "agent-as-tool", "swarm"],
+    "openai": ["single", "supervisor", "agent-as-tool", "swarm", "handoff"],
+    "strands": ["single", "graph", "swarm", "sequential", "hierarchical", "agent-as-tool"],
+    "crewai": ["single", "crew", "flow"],
 }
 
 # Agent Core Dependency Mapping
@@ -69,5 +85,6 @@ AGENT_CORE_SUBDIRS = {
 VECTOR_STORE_EXTRAS = {
     "chroma": "chromadb",
     "postgres": "postgres",
-    "s3": "s3"
+    "s3": "s3",
+    "pinecone": "pinecone",
 }
