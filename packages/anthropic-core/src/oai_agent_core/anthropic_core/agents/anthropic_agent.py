@@ -142,8 +142,28 @@ class AnthropicAgent(BaseAgent):
         if tools_config:
             self.tool_registry.load_tools_from_config(tools_config)
 
-        # Wrap custom Python tools as a native claude-agent-sdk in-process
-        # MCP server (McpSdkServerConfig) so the CLI can call them.
+        # ── KB tools → SDK MCP server ─────────────────────────────────────────
+        # _load_tools_and_kb_and_memory() above populated self.global_kb_factory
+        # with all global knowledge bases.  Register their search/load callables
+        # as custom tools so they are included in the in-process MCP server.
+        if self.global_kb_factory:
+            try:
+                for kb_name, kb_data in self.global_kb_factory.knowledge_base_tools.items():
+                    description = kb_data.get("description", f"Search {kb_name}")
+                    search_fn = self.global_kb_factory.create_tool(
+                        name=kb_name, description=description
+                    )
+                    load_fn = self.global_kb_factory.create_load_tool(
+                        name=kb_name, description=f"Load documents into {kb_name}"
+                    )
+                    self.tool_registry.custom_tools[search_fn.__name__] = search_fn
+                    self.tool_registry.custom_tools[load_fn.__name__] = load_fn
+                    self.logger.info("Registered KB tools for '%s'", kb_name)
+            except Exception as exc:
+                self.logger.warning("KB tool registration failed: %s", exc)
+
+        # Build the in-process SDK MCP server from all collected custom tools
+        # (Python tools + KB tools). No-op if custom_tools is empty.
         self.tool_registry.build_sdk_mcp_server()
 
         self.agent_builder = AgentBuilder(
@@ -174,9 +194,14 @@ class AnthropicAgent(BaseAgent):
             entry_agent=crew_config.get("entry_agent"),
         )
 
+        # Wire Langfuse + structured output into the orchestration builder
+        self.langfuse_manager.initialize_client()
+
         self.orchestration_builder = OrchestrationBuilder(
             tool_registry=self.tool_registry,
             logger=self.logger,
+            langfuse_manager=self.langfuse_manager,
+            output_model_registry=self.output_model_registry,
         )
 
         self._initialized = True
@@ -203,6 +228,10 @@ class AnthropicAgent(BaseAgent):
         formatted = self._augment_message(formatted, original_query=user_message)
 
         crew_config = self.agent_config.get("crew_config", {})
+        structured_output_model = (
+            crew_config.get("structured_output_model")
+            or self.agent_config.get("structured_output", {}).get("model")
+        )
 
         result = await self.orchestration_builder.invoke(
             pattern=crew_config.get("pattern", "single"),
@@ -212,6 +241,9 @@ class AnthropicAgent(BaseAgent):
             system_prompt=self._entry_system_prompt,
             entry_agent=crew_config.get("entry_agent"),
             anthropic_config=self.agent_config.get("anthropic_config", {}),
+            structured_output_model=structured_output_model,
+            session_id=self.session_id,
+            user_id=self.user_id,
         )
 
         return {
@@ -276,6 +308,10 @@ class AnthropicAgent(BaseAgent):
         formatted = self._augment_message(formatted, original_query=user_message)
 
         crew_config = self.agent_config.get("crew_config", {})
+        structured_output_model = (
+            crew_config.get("structured_output_model")
+            or self.agent_config.get("structured_output", {}).get("model")
+        )
         last_chunk = None
 
         try:
@@ -287,6 +323,9 @@ class AnthropicAgent(BaseAgent):
                 system_prompt=self._entry_system_prompt,
                 entry_agent=crew_config.get("entry_agent"),
                 anthropic_config=self.agent_config.get("anthropic_config", {}),
+                structured_output_model=structured_output_model,
+                session_id=self.session_id,
+                user_id=self.user_id,
             ):
                 # Apply output guardrail on final chunk
                 if chunk.get("final") and "content" in chunk:
