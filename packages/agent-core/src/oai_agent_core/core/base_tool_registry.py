@@ -323,6 +323,7 @@ class BaseToolRegistry(ABC):
                 return
 
             function_params = function_params or {}
+            func_list = []
 
             for func in functions:
                 tool_name = self._get_function_name(func)
@@ -350,10 +351,12 @@ class BaseToolRegistry(ABC):
 
                     self.logger.info(f"✅ Loaded tool: {tool_name} from {module_name} - {doc_preview}")
 
+                func_list.append(self.tools[tool_name])
+
             self.logger.info(f"✅ Successfully loaded {len(functions)} tool(s) from {module_name}")
-            self.custom_modules[module_name] = functions
+            self.custom_modules[module_name] = func_list
             if tool_key:
-                self.custom_modules[tool_key] = functions
+                self.custom_modules[tool_key] = func_list
 
         except ImportError as e:
             self.logger.error(

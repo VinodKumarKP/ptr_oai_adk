@@ -32,7 +32,7 @@ async def run_simple_agent():
     # Test 1: General query
     print("\n--- Test 1: General Query ---")
     result = await agent.ainvoke('Hello! What can you do?')
-    pprint(result['content'][0]['text'])
+    pprint(result['content']['text'])
 
 if __name__ == "__main__":
     asyncio.run(run_simple_agent())
