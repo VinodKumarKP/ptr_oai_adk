@@ -70,6 +70,7 @@ class OrchestrationBuilder:
             structured_output_model=structured_output_model,
             session_id=session_id,
             user_id=user_id,
+            entry_agent=entry_agent,
         )
 
         collected_text = ""
@@ -112,6 +113,7 @@ class OrchestrationBuilder:
             structured_output_model=structured_output_model,
             session_id=session_id,
             user_id=user_id,
+            entry_agent=entry_agent,
         )
 
         async for message in query(prompt=user_message, options=options):
@@ -140,6 +142,7 @@ class OrchestrationBuilder:
         structured_output_model: Optional[str] = None,
         session_id: str = "default",
         user_id: str = "default",
+        entry_agent: Optional[str] = None,
     ) -> "ClaudeAgentOptions":
         from claude_agent_sdk import ClaudeAgentOptions
 
@@ -168,11 +171,29 @@ class OrchestrationBuilder:
         # ── Supervisor / agent-as-tool ────────────────────────────────────────
         if pattern in (Constants.PATTERN_SUPERVISOR, Constants.PATTERN_AGENT_AS_TOOL):
             if agent_definitions:
-                options_kwargs["agents"] = agent_definitions
-                allowed_tools = list(set(allowed_tools + ["Agent"]))
-                self.logger.info(
-                    "Pattern '%s': %d sub-agent(s) registered.", pattern, len(agent_definitions)
-                )
+                # For agent-as-tool: exclude entry agent from callable agents
+                # (entry agent is the main agent that calls others)
+                agents_to_register = dict(agent_definitions)
+
+                if pattern == Constants.PATTERN_AGENT_AS_TOOL and entry_agent:
+                    agents_to_register.pop(entry_agent, None)
+                    self.logger.debug(
+                        "Agent-as-tool: entry_agent '%s' removed from callable agents dict",
+                        entry_agent
+                    )
+
+                if agents_to_register:
+                    options_kwargs["agents"] = agents_to_register
+                    allowed_tools = list(set(allowed_tools + ["Agent"]))
+                    self.logger.info(
+                        "Pattern '%s': %d callable agent(s) registered.", pattern, len(agents_to_register)
+                    )
+                else:
+                    self.logger.warning(
+                        "Pattern '%s': no callable agents after filtering. entry_agent=%s",
+                        pattern,
+                        entry_agent
+                    )
 
         # ── Structured output ─────────────────────────────────────────────────
         # Resolve the named Pydantic model → JSON schema → output_format

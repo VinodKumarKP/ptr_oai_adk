@@ -154,8 +154,7 @@ class LangfuseObservabilityManager:
                 environment=os.environ.get('ENVIRONMENT', 'production'),
                 application_name=self.agent_name,
                 otlp_headers=f"Authorization=Basic {langfuse_auth}",
-                otlp_endpoint=os.environ['LANGFUSE_HOST'] + '/api/public/otel',
-                collect_system_metrics=True
+                otlp_endpoint=os.environ['LANGFUSE_HOST'] + '/api/public/otel'
             )
 
             LangfuseObservabilityManager._instrumented = True
