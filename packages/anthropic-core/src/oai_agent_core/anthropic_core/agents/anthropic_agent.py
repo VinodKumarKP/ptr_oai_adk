@@ -189,6 +189,31 @@ class AnthropicAgent(BaseAgent):
             # Rebuild SDK MCP server to include any agent-level KB tools registered during build
             self.tool_registry.build_sdk_mcp_server()
 
+        elif pattern == "single":
+            # For single pattern: process agent-level KB configs for the single agent
+            if agent_list:
+                single_agent_key = list(agent_list[0].keys())[0]
+                single_agent_config = agent_list[0][single_agent_key]
+                try:
+                    kb_configs = single_agent_config.get("knowledge_base", [])
+                    if kb_configs:
+                        kb_tools = await self.agent_builder._load_knowledge_base_tools(
+                            single_agent_key, single_agent_config
+                        )
+                        for kb_tool in kb_tools:
+                            tool_name = getattr(kb_tool, '__name__', str(kb_tool))
+                            self.tool_registry.custom_tools[tool_name] = kb_tool
+                            self.logger.info(f"Registered KB tool '{tool_name}' for single agent")
+                        if kb_tools:
+                            # Rebuild SDK MCP server to include KB tools
+                            self.tool_registry.build_sdk_mcp_server()
+                            self.logger.info(f"Single pattern agent loaded {len(kb_tools)} KB tool(s)")
+                except Exception as e:
+                    self.logger.warning(
+                        f"Failed to load KB tools for single pattern agent '{single_agent_key}': {e}",
+                        exc_info=True
+                    )
+
         # Resolve the top-level system prompt
         self._entry_system_prompt = self.agent_builder.resolve_entry_system_prompt(
             agent_configs=agent_list,
