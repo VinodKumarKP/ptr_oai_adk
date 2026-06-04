@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
+import sys
 from typing import Any, Dict, List, Optional
 
 from oai_agent_core.builders.base_agent_builder import BaseAgentBuilder
@@ -17,6 +19,75 @@ from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.anthropic_core.components.configuration.model_config import AnthropicModelConfigurationManager
 from oai_agent_core.anthropic_core.components.knowledge.knowledge_base_factory import KnowledgeBaseFactory
 from oai_agent_core.anthropic_core.components.registry.tool_registry import AnthropicToolRegistry
+
+
+# ── Skill Capability Tools ────────────────────────────────────────────────────
+
+def read_file(file_path: str) -> str:
+    """Read and return the contents of a file.
+
+    Args:
+        file_path: Path to the file to read
+
+    Returns:
+        File contents as string
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        return f"Error: File '{file_path}' not found"
+    except PermissionError:
+        return f"Error: Permission denied reading '{file_path}'"
+    except Exception as e:
+        return f"Error reading file: {str(e)}"
+
+
+def write_file(file_path: str, content: str) -> str:
+    """Write content to a file.
+
+    Args:
+        file_path: Path to the file to write
+        content: Content to write to the file
+
+    Returns:
+        Success or error message
+    """
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return f"Successfully wrote to '{file_path}'"
+    except PermissionError:
+        return f"Error: Permission denied writing to '{file_path}'"
+    except Exception as e:
+        return f"Error writing file: {str(e)}"
+
+
+def shell_execute(command: str) -> str:
+    """Execute a shell command and return its output.
+
+    Args:
+        command: Shell command to execute
+
+    Returns:
+        Command output or error message
+    """
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode == 0:
+            return result.stdout if result.stdout else "(Command executed successfully with no output)"
+        else:
+            return f"Error (exit code {result.returncode}):\n{result.stderr}"
+    except subprocess.TimeoutExpired:
+        return "Error: Command execution timed out (30 seconds)"
+    except Exception as e:
+        return f"Error executing command: {str(e)}"
 
 
 class AgentBuilder(BaseAgentBuilder):
@@ -58,9 +129,41 @@ class AgentBuilder(BaseAgentBuilder):
 
         # Inject skills into system prompt
         skill_names = agent_data.get("skills", [])
+        skill_tool_names: List[str] = []
         if skill_names and self.skill_registry:
             skill_list = self.skill_registry.get_skills(skill_names)
             system_prompt += "\n" + self.skill_registry.generate_skills_prompt(skill_list)
+
+            # ── Register skill capability tools (read, write, shell) ────────────────────
+            # When skills are enabled, provide tools for the agent to work with files
+            # and execute commands, similar to AWS Strands behavior
+            try:
+                # Register read_file tool
+                self.tool_registry.custom_tools["read_file"] = read_file
+                skill_tool_names.append("mcp__custom_tools__read_file")
+                self.logger.debug(f"Registered read_file tool for agent '{agent_key}'")
+
+                # Register write_file tool
+                self.tool_registry.custom_tools["write_file"] = write_file
+                skill_tool_names.append("mcp__custom_tools__write_file")
+                self.logger.debug(f"Registered write_file tool for agent '{agent_key}'")
+
+                # Register shell_execute tool (except on Windows)
+                if sys.platform != 'win32':
+                    self.tool_registry.custom_tools["shell_execute"] = shell_execute
+                    skill_tool_names.append("mcp__custom_tools__shell_execute")
+                    self.logger.debug(f"Registered shell_execute tool for agent '{agent_key}'")
+                else:
+                    self.logger.debug("shell_execute tool not available on Windows platform")
+
+                self.logger.info(
+                    f"Agent '{agent_key}' enabled {len(skill_tool_names)} skill capability tool(s)"
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to register skill capability tools for agent '{agent_key}': {e}",
+                    exc_info=True
+                )
 
         # Collect allowed_tools.
         # - yaml_tools: bare names like "search_hotels" from the YAML tools list.
@@ -120,7 +223,7 @@ class AgentBuilder(BaseAgentBuilder):
             self.tool_registry.load_mcp_configs(agent_mcp)
             mcp_wildcards += [f"mcp__{name}__*" for name in agent_mcp]
 
-        allowed_tools = list(set(resolved_tools + kb_tool_names + mcp_wildcards))
+        allowed_tools = list(set(resolved_tools + kb_tool_names + skill_tool_names + mcp_wildcards))
 
         description = agent_data.get(
             "description",

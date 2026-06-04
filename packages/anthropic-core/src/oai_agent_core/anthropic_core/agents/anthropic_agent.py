@@ -190,10 +190,13 @@ class AnthropicAgent(BaseAgent):
             self.tool_registry.build_sdk_mcp_server()
 
         elif pattern == "single":
-            # For single pattern: process agent-level KB configs for the single agent
+            # For single pattern: process agent-level KB configs and skill capability tools
             if agent_list:
                 single_agent_key = list(agent_list[0].keys())[0]
                 single_agent_config = agent_list[0][single_agent_key]
+                mcp_rebuilt = False
+
+                # Process KB tools
                 try:
                     kb_configs = single_agent_config.get("knowledge_base", [])
                     if kb_configs:
@@ -205,14 +208,52 @@ class AnthropicAgent(BaseAgent):
                             self.tool_registry.custom_tools[tool_name] = kb_tool
                             self.logger.info(f"Registered KB tool '{tool_name}' for single agent")
                         if kb_tools:
-                            # Rebuild SDK MCP server to include KB tools
-                            self.tool_registry.build_sdk_mcp_server()
                             self.logger.info(f"Single pattern agent loaded {len(kb_tools)} KB tool(s)")
+                            mcp_rebuilt = True
                 except Exception as e:
                     self.logger.warning(
                         f"Failed to load KB tools for single pattern agent '{single_agent_key}': {e}",
                         exc_info=True
                     )
+
+                # Process skill capability tools
+                try:
+                    import sys
+                    skill_names = single_agent_config.get("skills", [])
+                    if skill_names and self.skill_registry:
+                        from oai_agent_core.anthropic_core.builders.agent_builder import (
+                            read_file, write_file, shell_execute
+                        )
+
+                        skill_tool_count = 0
+
+                        # Register read_file tool
+                        self.tool_registry.custom_tools["read_file"] = read_file
+                        skill_tool_count += 1
+                        self.logger.debug("Registered read_file tool for single agent")
+
+                        # Register write_file tool
+                        self.tool_registry.custom_tools["write_file"] = write_file
+                        skill_tool_count += 1
+                        self.logger.debug("Registered write_file tool for single agent")
+
+                        # Register shell_execute tool (except on Windows)
+                        if sys.platform != 'win32':
+                            self.tool_registry.custom_tools["shell_execute"] = shell_execute
+                            skill_tool_count += 1
+                            self.logger.debug("Registered shell_execute tool for single agent")
+
+                        self.logger.info(f"Single pattern agent loaded {skill_tool_count} skill capability tool(s)")
+                        mcp_rebuilt = True
+                except Exception as e:
+                    self.logger.warning(
+                        f"Failed to register skill capability tools for single pattern agent: {e}",
+                        exc_info=True
+                    )
+
+                # Rebuild SDK MCP server once to include KB and skill tools
+                if mcp_rebuilt:
+                    self.tool_registry.build_sdk_mcp_server()
 
         # Resolve the top-level system prompt
         self._entry_system_prompt = self.agent_builder.resolve_entry_system_prompt(
