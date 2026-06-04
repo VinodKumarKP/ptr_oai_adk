@@ -186,6 +186,8 @@ class AnthropicAgent(BaseAgent):
 
         if pattern in (Constants.PATTERN_SUPERVISOR, Constants.PATTERN_AGENT_AS_TOOL):
             self.agent_definitions = await self.agent_builder.build_all_agent_definitions(agent_list)
+            # Rebuild SDK MCP server to include any agent-level KB tools registered during build
+            self.tool_registry.build_sdk_mcp_server()
 
         # Resolve the top-level system prompt
         self._entry_system_prompt = self.agent_builder.resolve_entry_system_prompt(

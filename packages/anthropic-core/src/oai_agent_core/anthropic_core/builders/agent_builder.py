@@ -66,8 +66,34 @@ class AgentBuilder(BaseAgentBuilder):
         # - yaml_tools: bare names like "search_hotels" from the YAML tools list.
         #   These are custom Python tools loaded into the "custom_tools" SDK MCP
         #   server, so they're available as mcp__custom_tools__<name>.
+        # - kb_tool_names: knowledge base search/load tools from agent-level KB configs
         # - mcp_wildcards: auto-allow all tools on every registered MCP server.
         yaml_tools: List[str] = agent_data.get("tools", [])
+
+        # ── Load agent-level knowledge base tools ──────────────────────────────────
+        kb_tool_names: List[str] = []
+        kb_configs = agent_data.get("knowledge_base", [])
+        if kb_configs:
+            try:
+                kb_tools = await self._load_knowledge_base_tools(agent_key, agent_data)
+                for kb_tool in kb_tools:
+                    # Get tool name from function or callable
+                    tool_name = getattr(kb_tool, '__name__', str(kb_tool))
+                    self.tool_registry.custom_tools[tool_name] = kb_tool
+                    kb_mcp_name = f"mcp__custom_tools__{tool_name}"
+                    kb_tool_names.append(kb_mcp_name)
+                    self.logger.info(
+                        f"Registered KB tool '{tool_name}' ({kb_mcp_name}) for agent '{agent_key}'"
+                    )
+                if kb_tools:
+                    self.logger.info(
+                        f"Agent '{agent_key}' loaded {len(kb_tools)} knowledge base tool(s)"
+                    )
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to load knowledge base tools for agent '{agent_key}': {e}",
+                    exc_info=True
+                )
 
         # Convert bare tool names → mcp__custom_tools__<name> when the tool
         # lives in our custom_tools registry.
@@ -94,7 +120,7 @@ class AgentBuilder(BaseAgentBuilder):
             self.tool_registry.load_mcp_configs(agent_mcp)
             mcp_wildcards += [f"mcp__{name}__*" for name in agent_mcp]
 
-        allowed_tools = list(set(resolved_tools + mcp_wildcards))
+        allowed_tools = list(set(resolved_tools + kb_tool_names + mcp_wildcards))
 
         description = agent_data.get(
             "description",
