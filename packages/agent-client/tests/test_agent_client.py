@@ -177,6 +177,9 @@ async def test_connection_error_handling():
 @pytest.mark.asyncio
 @patch("asyncio.create_subprocess_exec")
 async def test_local_server_management(mock_subprocess, local_config):
+    import signal
+    import sys
+    
     mock_process = AsyncMock()
     mock_process.stdout.at_eof.side_effect = [False, True]
     mock_process.stdout.readline.return_value = b"log line"
@@ -193,7 +196,11 @@ async def test_local_server_management(mock_subprocess, local_config):
             )
             assert client._server_process is not None
 
-        mock_process.terminate.assert_called_once()
+        # Verify platform-aware shutdown behavior
+        if sys.platform == "win32":
+            mock_process.terminate.assert_called_once()
+        else:
+            mock_process.send_signal.assert_called_once_with(signal.SIGTERM)
 
 
 @pytest.mark.asyncio
@@ -482,7 +489,7 @@ async def test_retry_on_503_for_GET():
     config = ClientConfig(
         url=MOCK_URL,
         max_retries=2,
-        retry_backoff_factor=0.0,
+        retry_backoff_factor=0.001,
         retry_jitter=0.0,
     )
     call_count = {"n": 0}
@@ -508,7 +515,7 @@ async def test_no_retry_on_503_for_POST_by_default():
     config = ClientConfig(
         url=MOCK_URL,
         max_retries=3,
-        retry_backoff_factor=0.0,
+        retry_backoff_factor=0.001,
         retry_jitter=0.0,
     )
     call_count = {"n": 0}
@@ -531,7 +538,7 @@ async def test_retry_on_429_uses_retry_after_header():
     config = ClientConfig(
         url=MOCK_URL,
         max_retries=2,
-        retry_backoff_factor=0.0,
+        retry_backoff_factor=0.001,
         retry_jitter=0.0,
     )
     call_count = {"n": 0}
@@ -562,7 +569,7 @@ async def test_max_retries_respected():
     config = ClientConfig(
         url=MOCK_URL,
         max_retries=2,
-        retry_backoff_factor=0.0,
+        retry_backoff_factor=0.001,
         retry_jitter=0.0,
     )
     call_count = {"n": 0}
@@ -606,7 +613,7 @@ async def test_per_call_retry_override_enables_post_retry():
     config = ClientConfig(
         url=MOCK_URL,
         max_retries=2,
-        retry_backoff_factor=0.0,
+        retry_backoff_factor=0.001,
         retry_jitter=0.0,
     )
     call_count = {"n": 0}
@@ -710,7 +717,7 @@ def test_sync_retry_on_503_for_GET():
     config = ClientConfig(
         url=MOCK_URL,
         max_retries=2,
-        retry_backoff_factor=0.0,
+        retry_backoff_factor=0.001,
         retry_jitter=0.0,
     )
     call_count = {"n": 0}

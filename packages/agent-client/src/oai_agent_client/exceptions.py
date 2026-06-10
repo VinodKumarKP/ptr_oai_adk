@@ -25,11 +25,6 @@ class AgentConnectionError(AgentClientError):
         self.request_id = request_id
 
 
-# Deprecated alias for backward compatibility. Will be removed in v2.0.
-# Note: shadows the Python builtin ``ConnectionError`` when imported with ``*``.
-ConnectionError = AgentConnectionError
-
-
 class AgentTimeoutError(AgentClientError):
     """Raised when a request times out.
 
@@ -94,3 +89,7 @@ class ServerError(APIError):
 class BadRequestError(APIError):
     """Raised for 4xx responses other than 401/403/429."""
     pass
+
+
+# Backward compatibility: ConnectionError alias for AgentConnectionError
+ConnectionError = AgentConnectionError

@@ -71,10 +71,24 @@ def _raise_for_status(
     request_id: Optional[str],
     retry_after_hdr: Optional[str],
 ) -> None:
-    """Raise the most specific :class:`APIError` subclass for ``status``."""
-    snippet = body[:500]
+    """Raise the most specific :class:`APIError` subclass for ``status``.
+    
+    Args:
+        status: HTTP status code
+        body: Response body (first 1000 chars used for context)
+        request_id: Request ID for tracing
+        retry_after_hdr: Optional Retry-After header value
+    """
+    snippet = body[:1000]  # Increased from 500 for better context
+    
     if status in (401, 403):
-        raise AuthError(status, snippet, request_id=request_id, response_body=body)
+        msg = (
+            f"Authentication failed (HTTP {status}). "
+            f"Check credentials or permissions. "
+            f"Request ID: {request_id}"
+        )
+        raise AuthError(status, msg, request_id=request_id, response_body=body)
+    
     if status == 429:
         retry_after: Optional[float] = None
         if retry_after_hdr:
@@ -82,16 +96,36 @@ def _raise_for_status(
                 retry_after = float(retry_after_hdr)
             except ValueError:
                 retry_after = None
+        msg = (
+            f"Rate limited (HTTP 429). "
+            f"Retry after {retry_after}s if available. "
+            f"Request ID: {request_id}"
+        )
         raise RateLimitError(
             429,
-            snippet,
+            msg,
             retry_after=retry_after,
             request_id=request_id,
             response_body=body,
         )
+    
     if status >= 500:
-        raise ServerError(status, snippet, request_id=request_id, response_body=body)
-    raise BadRequestError(status, snippet, request_id=request_id, response_body=body)
+        msg = (
+            f"Server error (HTTP {status}). "
+            f"The server encountered an unexpected condition. "
+            f"Request ID: {request_id}. "
+            f"Response: {snippet}"
+        )
+        raise ServerError(status, msg, request_id=request_id, response_body=body)
+    
+    # 4xx errors (400, 404, etc.)
+    msg = (
+        f"Client error (HTTP {status}). "
+        f"The request was invalid or malformed. "
+        f"Request ID: {request_id}. "
+        f"Response: {snippet}"
+    )
+    raise BadRequestError(status, msg, request_id=request_id, response_body=body)
 
 
 def _should_retry_method(config: ClientConfig, method: str, retry_override: Optional[bool]) -> bool:

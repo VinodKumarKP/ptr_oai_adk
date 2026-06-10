@@ -1,11 +1,11 @@
 from .async_client import AsyncAgentClient
 from .sync_client import SyncAgentClient
 from .config import ClientConfig
+from ._types import InvokePayload, InvokeResponse, StreamEvent, HealthResponse
 from .exceptions import (
     AgentClientError,
     ConfigurationError,
     AgentConnectionError,
-    ConnectionError,  # Deprecated alias; prefer AgentConnectionError.
     AgentTimeoutError,
     APIError,
     AuthError,
@@ -13,6 +13,7 @@ from .exceptions import (
     ServerError,
     BadRequestError,
     ServerStartupError,
+    ConnectionError,  # Backward-compat alias for AgentConnectionError
 )
 
 # Backward-compat: ``AgentClient`` was the original async-only class name.
@@ -23,10 +24,13 @@ __all__ = [
     "AsyncAgentClient",
     "SyncAgentClient",
     "ClientConfig",
+    "InvokePayload",
+    "InvokeResponse",
+    "StreamEvent",
+    "HealthResponse",
     "AgentClientError",
     "ConfigurationError",
     "AgentConnectionError",
-    "ConnectionError",  # Deprecated; will be removed in v2.0.
     "AgentTimeoutError",
     "APIError",
     "AuthError",
@@ -34,4 +38,5 @@ __all__ = [
     "ServerError",
     "BadRequestError",
     "ServerStartupError",
+    "ConnectionError",  # Backward-compat alias
 ]

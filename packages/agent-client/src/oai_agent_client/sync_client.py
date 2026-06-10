@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime
 from typing import Any, Dict, Iterator, Optional
 
 import httpx
@@ -18,10 +19,12 @@ from httpx_sse import connect_sse
 
 from . import _base
 from ._base import _redact_headers
+from ._observability import ErrorEvent, RequestEvent, ResponseEvent, RetryEvent
 from .config import ClientConfig
 from .exceptions import (
     AgentConnectionError,
     AgentTimeoutError,
+    APIError,
     ConfigurationError,
     RateLimitError,
     ServerError,
@@ -178,13 +181,33 @@ class SyncAgentClient:
         headers = _base._build_outgoing_headers(request_id, extra_headers)
         try:
             response = self._client.request(method, url, json=data, headers=headers)
+        except httpx.ConnectTimeout as e:
+            raise AgentTimeoutError(
+                f"Connection timeout after {self.config.connect_timeout}s "
+                f"connecting to {url} ({method}). "
+                f"Request ID: {request_id}",
+                request_id=request_id,
+            ) from e
+        except httpx.ReadTimeout as e:
+            raise AgentTimeoutError(
+                f"Read timeout after {self.config.request_timeout}s "
+                f"for {method} {url}. "
+                f"Request ID: {request_id}",
+                request_id=request_id,
+            ) from e
         except httpx.TimeoutException as e:
             raise AgentTimeoutError(
-                f"Request timed out: {e}", request_id=request_id
+                f"Request timeout after {self.config.request_timeout}s "
+                f"for {method} {url}. "
+                f"Request ID: {request_id}",
+                request_id=request_id,
             ) from e
         except httpx.HTTPError as e:
             raise AgentConnectionError(
-                f"Failed to connect to the server: {e}", request_id=request_id
+                f"Connection failed for {method} {url}: {e}\n"
+                f"Target: {self._base_url}\n"
+                f"Request ID: {request_id}",
+                request_id=request_id,
             ) from e
 
         body_text = response.text
@@ -230,15 +253,76 @@ class SyncAgentClient:
             rid,
             _redact_headers(self._headers),
         )
+        
+        # Emit request event
+        if self.config.observability_hooks:
+            payload_size = len(json.dumps(data)) if data else 0
+            req_event = RequestEvent(
+                timestamp=datetime.utcnow(),
+                request_id=rid,
+                method=method,
+                endpoint=endpoint,
+                payload_size=payload_size,
+                headers=_redact_headers(self._headers),
+            )
+            self.config.observability_hooks.emit_request(req_event)
+        
         max_attempts = self.config.max_retries + 1
+        start_time = time.time()
+        
         for attempt in range(max_attempts):
             try:
-                return self._do_request(method, url, data=data, request_id=rid)
-            except (RateLimitError, ServerError, AgentTimeoutError, AgentConnectionError) as e:
+                result = self._do_request(method, url, data=data, request_id=rid)
+                
+                # Emit response event
+                if self.config.observability_hooks:
+                    elapsed_ms = (time.time() - start_time) * 1000
+                    resp_size = len(json.dumps(result)) if result else 0
+                    resp_event = ResponseEvent(
+                        timestamp=datetime.utcnow(),
+                        request_id=rid,
+                        status_code=200,
+                        response_time_ms=elapsed_ms,
+                        is_stream=False,
+                        response_size=resp_size,
+                    )
+                    self.config.observability_hooks.emit_response(resp_event)
+                
+                return result
+            except (RateLimitError, ServerError, AgentTimeoutError, AgentConnectionError, APIError) as e:
                 if not _base._is_retryable(e, method, self.config, retry):
+                    # Emit error event before raising
+                    if self.config.observability_hooks:
+                        elapsed_ms = (time.time() - start_time) * 1000
+                        err_event = ErrorEvent(
+                            timestamp=datetime.utcnow(),
+                            request_id=rid,
+                            method=method,
+                            endpoint=endpoint,
+                            exception_type=type(e).__name__,
+                            exception_message=str(e),
+                            response_time_ms=elapsed_ms,
+                            is_retryable=False,
+                        )
+                        self.config.observability_hooks.emit_error(err_event)
                     raise
                 if attempt >= self.config.max_retries:
+                    # Emit error event for exhausted retries
+                    if self.config.observability_hooks:
+                        elapsed_ms = (time.time() - start_time) * 1000
+                        err_event = ErrorEvent(
+                            timestamp=datetime.utcnow(),
+                            request_id=rid,
+                            method=method,
+                            endpoint=endpoint,
+                            exception_type=type(e).__name__,
+                            exception_message=f"{e} (exhausted retries)",
+                            response_time_ms=elapsed_ms,
+                            is_retryable=True,
+                        )
+                        self.config.observability_hooks.emit_error(err_event)
                     raise
+                
                 delay = _base._compute_retry_delay(e, attempt, self.config)
                 self.logger.info(
                     "Retrying after %s (attempt %d/%d) in %.2fs request_id=%s",
@@ -248,6 +332,19 @@ class SyncAgentClient:
                     delay,
                     rid,
                 )
+                
+                # Emit retry event
+                if self.config.observability_hooks:
+                    retry_event = RetryEvent(
+                        timestamp=datetime.utcnow(),
+                        request_id=rid,
+                        attempt=attempt,
+                        exception_type=type(e).__name__,
+                        delay_ms=delay * 1000,
+                        reason=str(e),
+                    )
+                    self.config.observability_hooks.emit_retry(retry_event)
+                
                 time.sleep(delay)
 
         raise _SyncAgentClientUnreachable()  # pragma: no cover
@@ -304,7 +401,13 @@ class SyncAgentClient:
                         continue
                     try:
                         yield json.loads(data_str)
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as e:
+                        self.logger.debug(
+                            "SSE event data is not JSON, falling back to text (request_id=%s, raw: %r)",
+                            resolved_id,
+                            data_str[:100],
+                        )
+                        # Fallback to plain text content for non-JSON SSE data (for backward compat)
                         yield {"content": data_str}
         except httpx.TimeoutException as e:
             raise AgentTimeoutError(

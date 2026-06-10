@@ -13,8 +13,10 @@
 - **Configurable Retries**: Exponential backoff with jitter for handling transient server errors.
 - **Request ID Propagation**: Automatically adds an `X-Request-ID` to every request for end-to-end tracing.
 - **Typed Exception Hierarchy**: Provides specific exceptions for easier debugging and error management.
-- **Pydantic Configuration**: Uses a `ClientConfig` model for validated and immutable configuration.
+- **Pydantic Configuration**: Uses a `ClientConfig` model for validated and immutable configuration with comprehensive validation rules.
 - **Built-in Logging**: Captures and logs the `stdout` and `stderr` of managed server processes.
+- **Pluggable Observability Hooks**: Integrate with metrics, logging, and tracing systems via `ObservabilityHooks` (no hard dependencies).
+- **Production-Ready Error Context**: Enhanced error messages with specific guidance for different failure types (401/403/429/5xx).
 
 ## 📦 Installation
 
@@ -126,7 +128,29 @@ config = ClientConfig(
 | `startup_timeout`     | `int`                 | `30`                      | Seconds to wait for a managed server.     |
 | `log_level`           | `str`                 | `"INFO"`                  | Logging level for the client.             |
 
-## ⚠️ Error Handling
+## ✅ Configuration Validation
+
+`ClientConfig` automatically validates all settings to catch misconfigurations early:
+
+- **Mutual exclusivity**: You must provide either `url` or `command`/`args`, not both.
+- **Port range**: Ports must be between 1 and 65535.
+- **Timeout hierarchy**: `connect_timeout` must be ≤ `request_timeout`.
+- **Endpoint paths**: Must be relative (no `/` at start, no `://` for absolute URLs).
+- **Retry settings**: `retry_backoff_factor` must be > 0, `retry_jitter` must be 0.0-1.0.
+- **Command validation**: If `command` is provided, it cannot be empty or whitespace-only.
+
+These validations ensure the client is properly configured before making any requests.
+
+```python
+# ✅ Valid
+config = ClientConfig(url="http://localhost:8000")
+config = ClientConfig(command="my-agent", args=["--port", "8000"])
+
+# ❌ Invalid - raises ConfigurationError
+config = ClientConfig(url="...", command="...")  # Can't provide both
+config = ClientConfig(port=99999)  # Port out of range
+config = ClientConfig(stream_endpoint="/absolute/path")  # Must be relative
+```
 
 The client raises specific exceptions to simplify error handling. All exceptions inherit from `AgentClientError`.
 
@@ -162,4 +186,39 @@ async with AsyncAgentClient(config=ClientConfig(url="...")) as client:
     except AgentTimeoutError:
         # Handle request timeouts
         ...
+```
+
+## 📊 Observability & Metrics
+
+The client provides pluggable observability hooks for integrating with metrics, logging, and tracing systems without hard dependencies.
+
+### 🪝 Observability Hooks
+
+Use `ObservabilityHooks` to track request/response events, errors, and retries:
+
+```python
+from oai_agent_client import AsyncAgentClient, ClientConfig
+from oai_agent_client._observability import ObservabilityHooks, ResponseEvent
+
+def log_metrics(event: ResponseEvent):
+    """Log response metrics (e.g., to Prometheus, DataDog, New Relic)."""
+    print(f"Request {event.request_id} took {event.response_time_ms:.2f}ms (status={event.status_code})")
+    # statsd.timing("agent_request_ms", event.response_time_ms)
+    # statsd.increment(f"agent_status_{event.status_code}")
+
+hooks = ObservabilityHooks(on_response=log_metrics)
+config = ClientConfig(url="http://localhost:8000", observability_hooks=hooks)
+
+async with AsyncAgentClient(config=config) as client:
+    result = await client.invoke("hello")
+```
+
+### 📈 Available Hook Events
+
+- **RequestEvent**: Emitted when a request starts (includes method, endpoint, payload_size, request_id)
+- **ResponseEvent**: Emitted on success (includes status_code, response_time_ms, response_size)
+- **ErrorEvent**: Emitted when a request fails (includes exception_type, is_retryable)
+- **RetryEvent**: Emitted before each retry (includes attempt number, delay_ms, reason)
+
+All events include `request_id` for end-to-end tracing. Hooks run asynchronously and failures are silently caught to avoid disrupting requests.
 ```
