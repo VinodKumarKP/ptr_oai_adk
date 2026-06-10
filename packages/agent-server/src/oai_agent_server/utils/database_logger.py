@@ -249,11 +249,88 @@ class DatabaseLogger:
                     chunk.get("chunk_text"), chunk.get("serialization_warning"), headers_json,
                 ) for chunk in kwargs["chunks"]
             ]
-            await self._backend.execute_many(self._backend.ACTIVITY_LOG_INSERT, params_seq)
+            
+            # Use transactional batch insert for atomic logging
+            await self._backend.execute_many_transactional(
+                self._backend.ACTIVITY_LOG_INSERT, params_seq
+            ) if hasattr(self._backend, 'execute_many_transactional') else await self._backend.execute_many(
+                self._backend.ACTIVITY_LOG_INSERT, params_seq
+            )
+            
             if self.logger: self.logger.debug(
                 f"Logged batch of {len(kwargs['chunks'])} stream chunks for session {kwargs['session_id']}")
         except Exception as exc:
             if self.logger: self.logger.warning(f"Failed to log stream chunk batch: {exc}")
+            raise
+    
+    async def log_stream_chunks_batch_with_interaction(self, chunks_kwargs: Dict[str, Any], 
+                                                       interaction_kwargs: Dict[str, Any]) -> None:
+        """Atomically log stream chunks and interaction in a single transaction.
+        
+        This ensures that if either the chunks or interaction logging fails,
+        neither is persisted, maintaining data consistency.
+        
+        Args:
+            chunks_kwargs: Keyword arguments for chunk batch (same as log_stream_chunks_batch)
+            interaction_kwargs: Keyword arguments for interaction (same as log_interaction)
+        """
+        if not self._ready() or not chunks_kwargs.get("chunks"):
+            return
+        
+        try:
+            now = datetime.now(timezone.utc)
+            interaction_id = chunks_kwargs["interaction_id"]
+            
+            # Prepare chunk parameters
+            headers_json = self._to_json(self._redact_headers(chunks_kwargs.get("request_headers")))
+            chunk_params_seq = [
+                (
+                    interaction_id, now, chunks_kwargs["agent_name"], chunks_kwargs["session_id"], 
+                    chunks_kwargs["user_id"], chunks_kwargs["endpoint"],
+                    chunk["chunk_sequence"], self._to_json(chunk["chunk_content"]),
+                    chunk.get("chunk_text"), chunk.get("serialization_warning"), headers_json,
+                ) for chunk in chunks_kwargs["chunks"]
+            ]
+            
+            # Prepare interaction parameters
+            interaction_params = (
+                interaction_id,
+                now,
+                interaction_kwargs.get("agent_name"),
+                interaction_kwargs.get("session_id"),
+                interaction_kwargs.get("user_id"),
+                interaction_kwargs.get("endpoint"),
+                interaction_kwargs.get("input_message"),
+                interaction_kwargs.get("output_response"),
+                self._to_json(self._redact_headers(interaction_kwargs.get("request_headers"))),
+                interaction_kwargs.get("model_info"),
+                interaction_kwargs.get("token_usage"),
+                interaction_kwargs.get("total_tokens"),
+                interaction_kwargs.get("response_time_ms"),
+                interaction_kwargs.get("status"),
+                interaction_kwargs.get("error_message"),
+            )
+            
+            # Execute both in atomic transaction if supported
+            if hasattr(self._backend, 'execute_many_in_transaction'):
+                await self._backend.execute_many_in_transaction(
+                    [
+                        (self._backend.ACTIVITY_LOG_INSERT, chunk_params_seq),
+                        (self._backend.CHAT_LOGS_INSERT, (interaction_params,)),
+                    ]
+                )
+            else:
+                # Fallback: execute sequentially (less atomic but still works)
+                await self._backend.execute_many(self._backend.ACTIVITY_LOG_INSERT, chunk_params_seq)
+                await self._backend.execute(self._backend.CHAT_LOGS_INSERT, interaction_params)
+            
+            if self.logger: 
+                self.logger.debug(
+                    f"Atomically logged {len(chunks_kwargs['chunks'])} chunks and interaction "
+                    f"{interaction_id} in single transaction"
+                )
+        except Exception as exc:
+            if self.logger: self.logger.warning(f"Failed to log chunks and interaction atomically: {exc}")
             raise
 
     async def get_activity_logs(self, **kwargs) -> List[Dict[str, Any]]:

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Request, Depends, UploadFile, File, Form, Backgro
 
 from oai_agent_server.models.requests import ChatRequest, StreamChatRequest
 from oai_agent_server.security.dependencies import verify_api_key
+from oai_agent_server.utils.file_manager import FileUploadManager
 
 try:
     from slowapi import Limiter
@@ -43,47 +44,6 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
         allowed_modes = ["chat"]
 
     if "chat" in allowed_modes:
-        def _save_files(files: List[UploadFile]) -> Tuple[List[str], Optional[str]]:
-            """Save uploaded files to a temporary directory."""
-            if not files:
-                return [], None
-            temp_dir = tempfile.mkdtemp()
-            file_paths = []
-            for file in files:
-                file_path = os.path.join(temp_dir, file.filename)
-                with open(file_path, "wb") as buffer:
-                    shutil.copyfileobj(file.file, buffer)
-                file_paths.append(file_path)
-            return file_paths, temp_dir
-
-        def _cleanup_files(temp_dir: Optional[str]):
-            """Cleanup temporary directory and files."""
-            if temp_dir and os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-
-        def _append_files_to_message(message: Union[str, dict], file_paths: List[str],
-                                     session_id: Optional[str] = None) -> Union[str, dict]:
-            """Append file paths and session ID to the message content."""
-            extra_content = ""
-            if file_paths:
-                extra_content += "\nUploaded Files:\n" + "\n".join(file_paths)
-
-            if session_id:
-                extra_content += f"\nSession ID: {session_id}"
-
-            if not extra_content:
-                return message
-
-            if isinstance(message, str):
-                return message + extra_content
-            elif isinstance(message, dict):
-                if "content" in message and isinstance(message["content"], str):
-                    message["content"] += extra_content
-                elif "text" in message and isinstance(message["text"], str):
-                    message["text"] += extra_content
-                # We don't need to add uploaded_files to message dict anymore as we pass it separately
-            return message
-
         @router.post("")
         @_maybe_limit(_chat_rate_limit)
         async def chat(request: Request, chat_request: ChatRequest, background_tasks: BackgroundTasks):
@@ -94,7 +54,9 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
             response shape isn't constrained by a Pydantic model.
             """
             original_message = chat_request.message
-            chat_request.message = _append_files_to_message(chat_request.message, [], chat_request.session_id)
+            chat_request.message = FileUploadManager.append_files_to_message(
+                chat_request.message, [], chat_request.session_id
+            )
             return await chat_service.process_chat(http_request=request,
                                                    chat_request=chat_request,
                                                    background_tasks=background_tasks,
@@ -133,10 +95,10 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                 files: List[UploadFile] = File(default=[])
         ):
             """Process a synchronous chat request with file uploads."""
-            file_paths, temp_dir = _save_files(files)
+            file_paths, temp_dir = await FileUploadManager.save_files(files)
 
             if temp_dir:
-                background_tasks.add_task(_cleanup_files, temp_dir)
+                background_tasks.add_task(FileUploadManager.cleanup, temp_dir)
 
             chat_request = ChatRequest(
                 message=message,
@@ -145,7 +107,9 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
             )
 
             original_message = chat_request.message
-            chat_request.message = _append_files_to_message(chat_request.message, file_paths, session_id)
+            chat_request.message = FileUploadManager.append_files_to_message(
+                chat_request.message, file_paths, session_id
+            )
             return await chat_service.process_chat(http_request=http_request,
                                                    chat_request=chat_request,
                                                    background_tasks=background_tasks,
@@ -159,7 +123,9 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                               background_tasks: BackgroundTasks):
             """Process a streaming chat request."""
             original_message = stream_request.message
-            stream_request.message = _append_files_to_message(stream_request.message, [], stream_request.session_id)
+            stream_request.message = FileUploadManager.append_files_to_message(
+                stream_request.message, [], stream_request.session_id
+            )
             return await chat_service.process_stream_chat(http_request=request,
                                                           stream_request=stream_request,
                                                           background_tasks=background_tasks,
@@ -200,10 +166,10 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                 files: List[UploadFile] = File(default=[])
         ):
             """Process a streaming chat request with file uploads."""
-            file_paths, temp_dir = _save_files(files)
+            file_paths, temp_dir = await FileUploadManager.save_files(files)
 
             if temp_dir:
-                background_tasks.add_task(_cleanup_files, temp_dir)
+                background_tasks.add_task(FileUploadManager.cleanup, temp_dir)
 
             stream_request = StreamChatRequest(
                 message=message,
@@ -213,7 +179,9 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
             )
 
             original_message = stream_request.message
-            stream_request.message = _append_files_to_message(stream_request.message, file_paths, session_id)
+            stream_request.message = FileUploadManager.append_files_to_message(
+                stream_request.message, file_paths, session_id
+            )
             return await chat_service.process_stream_chat(http_request=http_request,
                                                           stream_request=stream_request,
                                                           background_tasks=background_tasks,

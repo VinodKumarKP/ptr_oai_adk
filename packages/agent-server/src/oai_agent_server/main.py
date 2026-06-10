@@ -455,6 +455,15 @@ class AgentHTTPServer:
             await self.agent.initialize()
             self.logger.info(f"Agent '{self.agent_name}' initialized successfully")
             await self.db_logger.initialize()
+            
+            # Pre-initialize LLM judge service to eliminate first-request latency
+            if "monitoring" in self.allowed_modes:
+                try:
+                    await self.llm_judge_service.initialize_judge_agent()
+                    self.logger.info("LLM Judge service pre-initialized")
+                except Exception as e:
+                    self.logger.warning(f"Failed to pre-initialize judge service: {e}; will initialize on first request")
+            
             # Build the persistent A2A task store now that the DB backend is up.
             if (
                 _A2A_TASK_STORE_AVAILABLE

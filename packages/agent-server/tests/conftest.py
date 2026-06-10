@@ -88,6 +88,22 @@ if 'asyncpg' not in sys.modules:
     sys.modules['asyncpg'] = asyncpg
     sys.modules['asyncpg.pool'] = MagicMock()
 
+# Mock a2a module
+if 'a2a' not in sys.modules:
+    a2a = types.ModuleType('a2a')
+    a2a.__path__ = []
+    sys.modules['a2a'] = a2a
+    
+    a2a_server = types.ModuleType('a2a.server')
+    a2a_server.__path__ = []
+    sys.modules['a2a.server'] = a2a_server
+    
+    a2a_routes = types.ModuleType('a2a.server.routes')
+    a2a_routes.create_agent_card_routes = MagicMock(return_value=MagicMock())
+    a2a_routes.create_jsonrpc_routes = MagicMock(return_value=MagicMock())
+    a2a_routes.create_rest_routes = MagicMock(return_value=MagicMock())
+    sys.modules['a2a.server.routes'] = a2a_routes
+
 @pytest.fixture
 def mock_agent():
     agent = MockBaseAgent(agent_name="test_agent")
