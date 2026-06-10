@@ -474,6 +474,70 @@ class AsyncAgentClient:
         # Unreachable; the loop either returns or raises.
         raise _AsyncAgentClientUnreachable()  # pragma: no cover
 
+    async def _iter_sse_with_idle_timeout(self, event_source, resolved_id: str):
+        """Iterate SSE events with idle timeout detection.
+        
+        If stream_read_idle_timeout is configured, raises AgentTimeoutError if no event
+        is received within the timeout period.
+        
+        Args:
+            event_source: The connected SSE event source
+            resolved_id: Request ID for logging/errors
+            
+        Yields:
+            SSE event data as dict
+            
+        Raises:
+            AgentTimeoutError: If idle timeout is exceeded
+        """
+        idle_timeout = self.config.stream_read_idle_timeout
+        event_count = 0
+        sse_iter = event_source.aiter_sse()
+        
+        while True:
+            try:
+                # Get next SSE event, with optional timeout
+                if idle_timeout is not None:
+                    # Wrap in wait_for to detect idle periods
+                    sse = await asyncio.wait_for(
+                        sse_iter.__anext__(),
+                        timeout=idle_timeout
+                    )
+                else:
+                    # No timeout configured, read normally
+                    sse = await sse_iter.__anext__()
+                
+                data_str = sse.data
+                
+            except asyncio.TimeoutError:
+                raise AgentTimeoutError(
+                    f"Stream idle timeout exceeded ({idle_timeout}s) after {event_count} events. "
+                    f"No data received within the timeout window. Request ID: {resolved_id}",
+                    request_id=resolved_id,
+                )
+            except StopAsyncIteration:
+                # End of stream
+                break
+            
+            # Track events received
+            event_count += 1
+            
+            if data_str == "[DONE]":
+                break
+            if not data_str:
+                continue
+                
+            try:
+                yield json.loads(data_str)
+            except json.JSONDecodeError as e:
+                self.logger.debug(
+                    "SSE event data is not JSON, falling back to text (request_id=%s, raw: %r)",
+                    resolved_id,
+                    data_str[:100],
+                )
+                # Fallback to plain text content for non-JSON SSE data (for backward compat)
+                yield {"content": data_str}
+
     async def _stream_request(
         self,
         method: str,
@@ -518,22 +582,9 @@ class AsyncAgentClient:
                         resolved_id,
                         response.headers.get("Retry-After"),
                     )
-                async for sse in event_source.aiter_sse():
-                    data_str = sse.data
-                    if data_str == "[DONE]":
-                        break
-                    if not data_str:
-                        continue
-                    try:
-                        yield json.loads(data_str)
-                    except json.JSONDecodeError as e:
-                        self.logger.debug(
-                            "SSE event data is not JSON, falling back to text (request_id=%s, raw: %r)",
-                            resolved_id,
-                            data_str[:100],
-                        )
-                        # Fallback to plain text content for non-JSON SSE data (for backward compat)
-                        yield {"content": data_str}
+                # Use idle timeout-aware SSE iteration
+                async for chunk in self._iter_sse_with_idle_timeout(event_source, resolved_id):
+                    yield chunk
         except httpx.TimeoutException as e:
             raise AgentTimeoutError(
                 f"Stream timed out: {e}", request_id=rid
