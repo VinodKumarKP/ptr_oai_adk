@@ -35,6 +35,9 @@ from oai_agent_server.middleware.request_context import (
     setup_request_isolation, HeaderCaptureMiddleware,
 )
 from oai_agent_server.middleware.request_tracking import RequestTrackingMiddleware
+from oai_agent_server.middleware.observability import (
+    ObservabilityMiddleware, StreamingMetricsMiddleware
+)
 from oai_agent_server.routers.agent import create_agent_router
 from oai_agent_server.routers.chat import create_chat_router
 from oai_agent_server.routers.health import create_health_router
@@ -50,6 +53,10 @@ from oai_agent_server.services.llm_judge_service import LLMJudgeService
 from oai_agent_server.services.logging_service import LoggingService
 from oai_agent_server.services.token_service import TokenService
 from oai_agent_server.utils.database_logger import DatabaseLogger
+from oai_agent_server.utils.observability import ObservabilityManager, ObservabilityConfig
+from oai_agent_server.utils.health_check import (
+    HealthCheckCollector, create_database_health_check, create_llm_judge_health_check
+)
 
 try:
     from oai_agent_server.a2a.database_task_store import (
@@ -197,6 +204,15 @@ class AgentHTTPServer:
         _configure_structured_logging()
 
         self.db_logger = DatabaseLogger(logger=self.logger)
+        
+        # Initialize observability (OpenTelemetry + Prometheus)
+        observability_config = ObservabilityConfig()
+        observability_config.SERVICE_NAME = agent_name
+        self.observability_manager = ObservabilityManager(
+            config=observability_config,
+            logger=self.logger
+        )
+        self.health_check_collector = HealthCheckCollector()
 
         # A2A task store: proxy now, real store bound during startup() so the
         # router can be wired up before the DB backend is initialised.
@@ -277,6 +293,16 @@ class AgentHTTPServer:
             allow_headers=["*"],
         )
         self.app.add_middleware(LoggingMiddleware, logger=self.logger)
+        self.app.add_middleware(
+            StreamingMetricsMiddleware,
+            observability_manager=self.observability_manager,
+            logger=self.logger
+        )
+        self.app.add_middleware(
+            ObservabilityMiddleware,
+            observability_manager=self.observability_manager,
+            logger=self.logger
+        )
         self.app.add_middleware(
             HeaderCaptureMiddleware,
             logger=self.logger,
@@ -456,11 +482,23 @@ class AgentHTTPServer:
             self.logger.info(f"Agent '{self.agent_name}' initialized successfully")
             await self.db_logger.initialize()
             
+            # Register health check functions
+            self.health_check_collector.register_component_check(
+                "database",
+                create_database_health_check(self.db_logger)
+            )
+            
             # Pre-initialize LLM judge service to eliminate first-request latency
             if "monitoring" in self.allowed_modes:
                 try:
                     await self.llm_judge_service.initialize_judge_agent()
                     self.logger.info("LLM Judge service pre-initialized")
+                    
+                    # Register LLM judge health check
+                    self.health_check_collector.register_component_check(
+                        "llm_judge",
+                        create_llm_judge_health_check(self.llm_judge_service)
+                    )
                 except Exception as e:
                     self.logger.warning(f"Failed to pre-initialize judge service: {e}; will initialize on first request")
             
