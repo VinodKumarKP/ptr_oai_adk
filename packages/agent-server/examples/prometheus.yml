@@ -1,0 +1,40 @@
+# Prometheus configuration for OAI Agent Server
+# Scrapes metrics from the agent server and stores them for querying
+
+global:
+  scrape_interval: 15s      # Scrape targets every 15 seconds
+  evaluation_interval: 15s  # Evaluate rules every 15 seconds
+  external_labels:
+    monitor: 'oai-agent-server'
+
+# Alertmanager configuration (optional)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# Load rules once and periodically evaluate them
+rule_files:
+  # - "alert.rules.yml"  # Uncomment to add alert rules
+
+scrape_configs:
+  # OAI Agent Server metrics
+  # For local Python: use host.docker.internal (macOS/Windows) or localhost (Linux in Docker)
+  - job_name: 'oai-agent-server'
+    static_configs:
+      - targets: ['host.docker.internal:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Jaeger metrics (if available)
+  - job_name: 'jaeger'
+    static_configs:
+      - targets: ['jaeger:14269']
+    scrape_interval: 15s
+    scrape_timeout: 10s
