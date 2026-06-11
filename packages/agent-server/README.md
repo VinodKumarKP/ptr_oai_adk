@@ -16,7 +16,16 @@ A robust, FastAPI-based server for hosting and managing OAI Agents. This server 
 *   **Graceful Shutdown**: Handles server restarts and shutdowns gracefully, ensuring active requests complete.
 *   **Health Checks**: Standardized `/health` and `/status` endpoints for monitoring.
 
-## 📦 Installation
+## �️ Robustness & Resilience (Phase 4)
+
+*   **Circuit Breaker**: Automatic protection against cascading failures from upstream services. Fails fast, auto-recovers after configured timeout, prevents resource exhaustion.
+*   **Enhanced Retry Logic**: Intelligent retry strategies with exponential backoff (0.1s → 10s) and jitter to prevent thundering herd problems. Configurable per-service retry policies.
+*   **Agent Caching**: LRU cache with TTL for agent metadata (5-minute) and interaction logs (1-minute). Expected 40-60% cache hit rate on agent info, reducing database load.
+*   **API Versioning**: Support for multiple API versions (`/api/v1/`, `/api/v2/`, `/api/v3/`). Unversioned endpoints automatically route to the latest version for seamless upgrades.
+*   **Distributed Tracing**: OpenTelemetry integration with Jaeger for end-to-end request tracing and performance visualization.
+*   **Prometheus Metrics**: Detailed metrics instrumentation for monitoring throughput, latency, cache hit rates, and circuit breaker state transitions.
+
+## �📦 Installation
 
 You can install the server directly from the source:
 
@@ -101,6 +110,18 @@ The server is configured primarily via environment variables. The most commonly 
 | `AGENT_REINITIALIZE` | — | If `true` in a request header, triggers agent re-initialization. |
 | `AGENT_BASE_URL` | — | Public base URL for the agent, used to construct the Agent Card URL. |
 
+**Robustness & Resilience (Phase 4):**
+*   `CIRCUIT_BREAKER_FAILURE_THRESHOLD` (default `5`): Number of consecutive failures before opening circuit breaker.
+*   `CIRCUIT_BREAKER_SUCCESS_THRESHOLD` (default `2`): Number of successes in HALF_OPEN state to close circuit breaker.
+*   `CIRCUIT_BREAKER_TIMEOUT_SECONDS` (default `60`): Timeout in OPEN state before transitioning to HALF_OPEN.
+*   `RETRY_MAX_ATTEMPTS` (default `5`): Maximum number of retry attempts for transient failures.
+*   `RETRY_INITIAL_DELAY` (default `0.1`): Initial delay (seconds) for exponential backoff.
+*   `RETRY_MAX_DELAY` (default `10.0`): Maximum delay (seconds) cap for backoff strategy.
+*   `RETRY_JITTER_ENABLED` (default `true`): Enable jitter (±10%) on retry delays to prevent thundering herd.
+*   `AGENT_CACHE_MAX_AGENTS` (default `100`): Maximum number of agents to keep in LRU cache.
+*   `AGENT_CACHE_INFO_TTL` (default `300`): Time-to-live (seconds) for cached agent metadata.
+*   `AGENT_CACHE_LOGS_TTL` (default `60`): Time-to-live (seconds) for cached agent interaction logs.
+
 **Database logging:**
 *   `DB_LOGGING_ENABLED`: Set to `true` to enable database logging (default: `false`). Required to persist scheduled jobs, their results, and (when `A2A_TASK_STORE=database`) A2A tasks.
 *   `DB_TYPE`: The type of database to use (`postgres` or `sqlite`).
@@ -113,6 +134,23 @@ The server is configured primarily via environment variables. The most commonly 
 > Note: `/info` returns only a whitelisted subset of `agent_config` to avoid leaking secrets. Add safe field names via `INFO_EXTRA_FIELDS` when you need more.
 
 ## 📋 API Endpoints
+
+### API Versioning
+
+The server supports multiple API versions for backward compatibility and seamless upgrades:
+
+*   **Versioned Endpoints**: Use explicit version in URL (e.g., `/api/v1/chat`, `/api/v2/chat`).
+*   **Latest Version**: Omit version to use the latest available (e.g., `/api/chat` routes to the highest supported version).
+*   **Version Metadata**: Query `/api/info` to discover supported versions and current latest version.
+
+Example requests:
+```bash
+# Use specific version
+curl -X POST http://localhost:8000/api/v1/chat -H "api-token: your-token" -d '{"message": "hello"}'
+
+# Use latest version (recommended for new clients)
+curl -X POST http://localhost:8000/api/chat -H "api-token: your-token" -d '{"message": "hello"}'
+```
 
 ### Chat
 
@@ -215,7 +253,33 @@ Then, run the server:
 python -m oai_agent_server.cli my_agent
 ```
 
-## 🚀 Production Deployment
+## � Monitoring & Observability
+
+### Phase 4 Metrics
+
+The server exposes detailed metrics via Prometheus for monitoring robustness features:
+
+*   **Circuit Breaker State**: Track CLOSED/OPEN/HALF_OPEN transitions per service.
+*   **Retry Attempts**: Monitor retry success rates and backoff delays.
+*   **Cache Hit Rates**: View agent info cache (target 40-60%) and logs cache (target 20-40%) performance.
+*   **Request Latency**: Distributed tracing with OpenTelemetry shows end-to-end request flow.
+
+### Accessing Metrics
+
+*   **Prometheus**: Metrics exposed at `/metrics` (requires scraping configuration).
+*   **Health Check**: `GET /health` for liveness, `GET /ready` for readiness.
+*   **Status Endpoint**: `GET /status` returns detailed server status including uptime and active request count.
+
+### Debugging Phase 4 Features
+
+Enable detailed logging with `LOG_LEVEL=DEBUG` to observe:
+
+*   Circuit breaker state transitions
+*   Retry attempts and backoff timing
+*   Cache hits/misses and evictions
+*   API version routing decisions
+
+## �🚀 Production Deployment
 
 A few recommendations when running this server in a production environment:
 
@@ -229,3 +293,9 @@ A few recommendations when running this server in a production environment:
 *   **Multi-pod rate limiting.** slowapi defaults to in-process counters, so per-pod limits don't compose across replicas. Switch to a Redis-backed storage by constructing the `Limiter` with `storage_uri="redis://..."` (one-line change in `main.py`).
 *   **Trusted CIDRs.** Keep `FORCE_AUTH=true` in production. The `FORCE_AUTH=false` / `TRUSTED_CIDRS` bypass is a developer convenience only.
 *   **Readiness probes.** Wire your orchestrator (Kubernetes, ECS, etc.) to `GET /ready` rather than `/health` so traffic is only routed to a fully-initialised agent with a working DB connection.
+*   **Circuit Breaker Configuration.** Tune `CIRCUIT_BREAKER_FAILURE_THRESHOLD` and `CIRCUIT_BREAKER_TIMEOUT_SECONDS` based on your upstream service reliability. Start conservative (e.g., 5 failures, 60s timeout) and adjust based on observed patterns.
+*   **Retry Policy Tuning.** Monitor retry success rates with `LOG_LEVEL=DEBUG`. If most retries fail, increase `RETRY_MAX_DELAY` or adjust `CIRCUIT_BREAKER_SUCCESS_THRESHOLD` to recover faster.
+*   **Cache Optimization.** Monitor Prometheus metrics for cache hit rates:
+    *   Agent info cache target: 40-60% hit rate. If lower, increase `AGENT_CACHE_MAX_AGENTS` or `AGENT_CACHE_INFO_TTL`.
+    *   Logs cache target: 20-40% hit rate. If lower, increase `AGENT_CACHE_LOGS_TTL` (note: shorter TTL prioritizes freshness).
+*   **API Versioning Strategy.** Plan version lifecycle: announce deprecation periods, encourage clients to migrate to latest, then sunset old versions. Use version metadata (`/api/info`) to guide clients.

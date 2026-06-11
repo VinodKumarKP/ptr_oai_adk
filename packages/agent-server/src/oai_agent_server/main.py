@@ -57,6 +57,10 @@ from oai_agent_server.utils.observability import ObservabilityManager, Observabi
 from oai_agent_server.utils.health_check import (
     HealthCheckCollector, create_database_health_check, create_llm_judge_health_check
 )
+from oai_agent_server.utils.circuit_breaker import CircuitBreakerRegistry
+from oai_agent_server.utils.retry_strategy import RetryRegistry, create_http_retry_config
+from oai_agent_server.utils.agent_cache import AgentCacheManager
+from oai_agent_server.utils.api_versioning import APIVersionRegistry
 
 try:
     from oai_agent_server.a2a.database_task_store import (
@@ -213,6 +217,12 @@ class AgentHTTPServer:
             logger=self.logger
         )
         self.health_check_collector = HealthCheckCollector()
+        
+        # Initialize Phase 4 robustness features
+        self.circuit_breaker_registry = CircuitBreakerRegistry(self.logger)
+        self.retry_registry = RetryRegistry(self.logger)
+        self.agent_cache = AgentCacheManager(logger=self.logger)
+        self.api_version_registry = APIVersionRegistry(self.logger)
 
         # A2A task store: proxy now, real store bound during startup() so the
         # router can be wired up before the DB backend is initialised.
@@ -501,6 +511,33 @@ class AgentHTTPServer:
                     )
                 except Exception as e:
                     self.logger.warning(f"Failed to pre-initialize judge service: {e}; will initialize on first request")
+            
+            # Initialize Phase 4 robustness features (circuit breakers and retry policies)
+            # Register circuit breakers for common services
+            await self.circuit_breaker_registry.register(
+                "llm_service",
+                failure_threshold=5,
+                success_threshold=2,
+                timeout=60,
+            )
+            await self.circuit_breaker_registry.register(
+                "external_api",
+                failure_threshold=5,
+                success_threshold=2,
+                timeout=60,
+            )
+            
+            # Register retry policies for common services
+            self.retry_registry.register_policy(
+                "llm_service",
+                create_http_retry_config("llm_service", self.logger)
+            )
+            self.retry_registry.register_policy(
+                "external_api",
+                create_http_retry_config("external_api", self.logger)
+            )
+            
+            self.logger.info("Phase 4 robustness features initialized (circuit breakers, retry policies, caching, versioning)")
             
             # Build the persistent A2A task store now that the DB backend is up.
             if (

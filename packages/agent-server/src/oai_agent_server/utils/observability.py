@@ -9,6 +9,7 @@ Provides:
 
 import logging
 import time
+import os
 from contextlib import contextmanager
 from typing import Optional, Dict, Any
 from functools import wraps
@@ -16,33 +17,62 @@ from functools import wraps
 try:
     from opentelemetry import trace, metrics
     from opentelemetry.exporter.prometheus import PrometheusMetricReader
-    from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+    # Try to import Jaeger first, fall back to OTLP
+    try:
+        from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+        _JAEGER_AVAILABLE = True
+    except (ImportError, ModuleNotFoundError):
+        _JAEGER_AVAILABLE = False
+        # Fall back to OTLP which is more universally available
+        try:
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+            _OTLP_AVAILABLE = True
+        except (ImportError, ModuleNotFoundError):
+            _OTLP_AVAILABLE = False
+    
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.resources import Resource
     from prometheus_client import Counter, Histogram, Gauge
     _OTEL_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     _OTEL_AVAILABLE = False
+    _JAEGER_AVAILABLE = False
+    _OTLP_AVAILABLE = False
 
 
 class ObservabilityConfig:
-    """Configuration for observability stack."""
+    """Configuration for observability stack.
     
-    # OpenTelemetry
-    ENABLE_TRACING = True
-    JAEGER_AGENT_HOST = "localhost"
-    JAEGER_AGENT_PORT = 6831
-    SERVICE_NAME = "oai-agent-server"
-    SERVICE_VERSION = "3.0.0"
+    Reads from environment variables for flexibility:
+    - OTEL_ENABLED: Enable/disable OpenTelemetry tracing
+    - OTEL_EXPORTER_JAEGER_ENDPOINT: Jaeger gRPC endpoint (e.g., http://host:14250)
+    - OTEL_EXPORTER_JAEGER_AGENT_HOST: Jaeger agent host (UDP, fallback if no endpoint)
+    - OTEL_EXPORTER_JAEGER_AGENT_PORT: Jaeger agent port (UDP, fallback if no endpoint)
+    - OTEL_SERVICE_NAME: Service name for traces
+    - PROMETHEUS_ENABLED: Enable/disable Prometheus metrics
+    """
     
-    # Prometheus
-    ENABLE_METRICS = True
-    METRICS_PORT = 8001
-    
-    # Structured logging
-    ENABLE_STRUCTURED_LOGGING = True
+    def __init__(self):
+        """Initialize config from environment variables or defaults."""
+        # OpenTelemetry
+        self.ENABLE_TRACING = os.environ.get('OTEL_ENABLED', 'false').lower() == 'true'
+        
+        # Jaeger configuration - supports both UDP (agent) and gRPC (endpoint)
+        self.JAEGER_ENDPOINT = os.environ.get('OTEL_EXPORTER_JAEGER_ENDPOINT', None)
+        self.JAEGER_AGENT_HOST = os.environ.get('OTEL_EXPORTER_JAEGER_AGENT_HOST', 'localhost')
+        self.JAEGER_AGENT_PORT = int(os.environ.get('OTEL_EXPORTER_JAEGER_AGENT_PORT', '6831'))
+        
+        self.SERVICE_NAME = os.environ.get('OTEL_SERVICE_NAME', 'oai-agent-server')
+        self.SERVICE_VERSION = os.environ.get('OTEL_SERVICE_VERSION', '3.0.0')
+        
+        # Prometheus
+        self.ENABLE_METRICS = os.environ.get('PROMETHEUS_ENABLED', 'false').lower() == 'true'
+        self.METRICS_PORT = int(os.environ.get('PROMETHEUS_PORT', '8001'))
+        
+        # Structured logging
+        self.ENABLE_STRUCTURED_LOGGING = os.environ.get('LOG_FORMAT', 'json').lower() == 'json'
 
 
 class ObservabilityManager:
@@ -73,17 +103,55 @@ class ObservabilityManager:
         self._initialize_metrics()
     
     def _initialize_tracing(self) -> None:
-        """Initialize OpenTelemetry tracing."""
+        """Initialize OpenTelemetry tracing.
+        
+        Supports:
+        - Jaeger (if available) via gRPC endpoint or UDP agent
+        - OTLP (if Jaeger not available) as fallback
+        """
         if not _OTEL_AVAILABLE or not self.config.ENABLE_TRACING:
             self.logger.info("OpenTelemetry tracing disabled or not available")
             return
         
         try:
-            # Configure Jaeger exporter for distributed tracing
-            jaeger_exporter = JaegerExporter(
-                agent_host_name=self.config.JAEGER_AGENT_HOST,
-                agent_port=self.config.JAEGER_AGENT_PORT,
-            )
+            span_exporter = None
+            exporter_info = ""
+            
+            # Try to use Jaeger if available
+            if _JAEGER_AVAILABLE:
+                try:
+                    from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+                    if self.config.JAEGER_ENDPOINT:
+                        # Use gRPC endpoint (e.g., http://host:14250)
+                        span_exporter = JaegerExporter(
+                            collector_endpoint=self.config.JAEGER_ENDPOINT,
+                        )
+                        exporter_info = f"Jaeger gRPC: {self.config.JAEGER_ENDPOINT}"
+                    else:
+                        # Use UDP agent (traditional)
+                        span_exporter = JaegerExporter(
+                            agent_host_name=self.config.JAEGER_AGENT_HOST,
+                            agent_port=self.config.JAEGER_AGENT_PORT,
+                        )
+                        exporter_info = f"Jaeger agent: {self.config.JAEGER_AGENT_HOST}:{self.config.JAEGER_AGENT_PORT}"
+                except Exception as jaeger_error:
+                    self.logger.warning(f"Jaeger exporter failed: {jaeger_error}, falling back to OTLP")
+                    span_exporter = None
+            
+            # Fall back to OTLP if Jaeger not available
+            if not span_exporter and _OTLP_AVAILABLE:
+                try:
+                    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+                    # OTLP endpoint should be set via OTEL_EXPORTER_OTLP_ENDPOINT env var
+                    # Default: http://localhost:4317
+                    span_exporter = OTLPSpanExporter()
+                    exporter_info = "OTLP gRPC (fallback)"
+                except Exception as otlp_error:
+                    self.logger.warning(f"OTLP exporter failed: {otlp_error}")
+                    raise otlp_error
+            
+            if not span_exporter:
+                raise RuntimeError("No span exporter available (Jaeger and OTLP both unavailable)")
             
             # Create TracerProvider with resource information
             resource = Resource.create({
@@ -91,13 +159,13 @@ class ObservabilityManager:
                 "service.version": self.config.SERVICE_VERSION,
             })
             tracer_provider = TracerProvider(resource=resource)
-            tracer_provider.add_span_processor(BatchSpanProcessor(jaeger_exporter))
+            tracer_provider.add_span_processor(BatchSpanProcessor(span_exporter))
             
             # Set global tracer provider
             trace.set_tracer_provider(tracer_provider)
             self.tracer = trace.get_tracer(__name__)
             
-            self.logger.info(f"OpenTelemetry tracing initialized (Jaeger: {self.config.JAEGER_AGENT_HOST}:{self.config.JAEGER_AGENT_PORT})")
+            self.logger.info(f"OpenTelemetry tracing initialized ({exporter_info})")
         except Exception as e:
             self.logger.warning(f"Failed to initialize OpenTelemetry tracing: {e}")
     
