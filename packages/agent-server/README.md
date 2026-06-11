@@ -253,9 +253,38 @@ Then, run the server:
 python -m oai_agent_server.cli my_agent
 ```
 
-## � Monitoring & Observability
+## Monitoring & Observability (Phase 3 & 4)
 
-### Phase 4 Metrics
+For comprehensive observability including Jaeger distributed tracing, Prometheus metrics, and Grafana dashboards, see:
+
+**[OBSERVABILITY_GUIDE.md](./OBSERVABILITY_GUIDE.md)** - Complete guide including:
+- How to spin up Jaeger, Prometheus, and Grafana using Docker Compose
+- Using Jaeger for distributed tracing
+- Querying Prometheus for metrics
+- Creating Grafana dashboards
+- Debugging tips and performance considerations
+- Complete example workflow
+
+### Quick Start
+
+```bash
+cd packages/agent-server/examples
+docker compose up -d
+```
+
+Access:
+- **Jaeger**: http://localhost:16686
+- **Prometheus**: http://localhost:9090  
+- **Grafana**: http://localhost:3000
+
+### Available Metrics
+
+The server automatically exports:
+- `request_duration_seconds` - HTTP request latency histogram
+- `requests_total` - Total HTTP requests counter
+- `errors_total` - Total errors counter
+
+### Phase 4 Robustness Metrics
 
 The server exposes detailed metrics via Prometheus for monitoring robustness features:
 
