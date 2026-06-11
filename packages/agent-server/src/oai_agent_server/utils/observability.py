@@ -101,6 +101,7 @@ class ObservabilityManager:
         
         self._initialize_tracing()
         self._initialize_metrics()
+        self._setup_instrumentation()
     
     def _initialize_tracing(self) -> None:
         """Initialize OpenTelemetry tracing.
@@ -251,6 +252,27 @@ class ObservabilityManager:
             self.logger.debug("Prometheus metrics setup complete")
         except Exception as e:
             self.logger.warning(f"Failed to setup metrics: {e}")
+    
+    def _setup_instrumentation(self) -> None:
+        """Setup automatic instrumentation for FastAPI and other libraries."""
+        if not _OTEL_AVAILABLE:
+            return
+        
+        try:
+            # Instrument FastAPI automatically
+            from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+            FastAPIInstrumentor().instrument()
+            self.logger.debug("FastAPI instrumentation enabled")
+        except Exception as e:
+            self.logger.warning(f"Failed to instrument FastAPI: {e}")
+        
+        try:
+            # Instrument requests library
+            from opentelemetry.instrumentation.requests import RequestsInstrumentor
+            RequestsInstrumentor().instrument()
+            self.logger.debug("Requests instrumentation enabled")
+        except Exception as e:
+            self.logger.warning(f"Failed to instrument Requests: {e}")
     
     @contextmanager
     def trace_operation(self, operation_name: str, attributes: Optional[Dict[str, Any]] = None):

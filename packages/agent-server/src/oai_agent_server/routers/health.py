@@ -3,7 +3,7 @@ import time
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from oai_agent_server.middleware.request_context import get_original_environ, request_env, sanitize_for_logging
 from oai_agent_server.security.dependencies import verify_api_key
@@ -105,6 +105,22 @@ def create_health_router(agent_name, server_state, enable_request_isolation, all
                 "uptime": time.time() - getattr(server_state, 'start_time', time.time()),
                 "status": "shutting_down" if server_state.is_shutting_down else "running"
             }
+
+        @router.get("/metrics")
+        async def metrics(request: Request):
+            """Prometheus metrics endpoint. Exposestdout all collected metrics."""
+            try:
+                # Import prometheus_client to generate metrics
+                from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+                
+                # Generate metrics in Prometheus format
+                metrics_output = generate_latest()
+                return Response(content=metrics_output, media_type=CONTENT_TYPE_LATEST)
+            except Exception as e:
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": f"Failed to generate metrics: {str(e)}"}
+                )
 
         @router.get("/check-env", dependencies=[Depends(verify_api_key)])
         async def check_environment():
