@@ -14,7 +14,9 @@ knowledge_base:
       model_id: "bedrock/amazon.titan-embed-text-v1"
       region_name: "us-west-2"
     data_sources:
-      - path: "docs/sample_policy.pdf"
+      - path:
+          - "docs/sample_policy.pdf"
+          - "docs/leave_policy.pdf"
     text_splitter:
       type: "recursive_character"
       chunk_size: 1000
