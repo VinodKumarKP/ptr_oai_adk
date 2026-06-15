@@ -13,14 +13,6 @@ from oai_agent_core.components.output_parser.output_model_registry import Output
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.base_model_configuration_manager import BaseModelConfigurationManager
 from oai_agent_core.macros import MacroProcessor
-from oai_agent_core.mixins.agent_mixins import (
-    SkillsMixin,
-    KnowledgeBaseMixin,
-    ToolsMixin,
-    MemoryMixin,
-    MessageProcessingMixin,
-    ObservabilityMixin
-)
 from oai_agent_core.services import (
     ConfigResolverService,
     ModelService,
@@ -33,15 +25,7 @@ from oai_agent_core.services import (
 )
 
 
-class BaseAgent(
-    SkillsMixin,
-    KnowledgeBaseMixin,
-    ToolsMixin,
-    MemoryMixin,
-    MessageProcessingMixin,
-    ObservabilityMixin,
-    ABC
-):
+class BaseAgent(ABC):
     """Abstract base class for all agent framework implementations.
 
     Provides unified interface and shared functionality across different agent frameworks
