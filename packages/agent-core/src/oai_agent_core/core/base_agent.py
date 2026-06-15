@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional, Type
 from oai_agent_core.components.configuration.model_config import ConfigManager
 from oai_agent_core.components.configuration.model_config import config_manager
 from oai_agent_core.components.observability.langfuse_observability_manager import LangfuseObservabilityManager
-from oai_agent_core.components.observability.tracing import trace_span, configure_tracing
+from oai_agent_core.components.observability.tracing import trace_span, traced, configure_tracing
 from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.base_model_configuration_manager import BaseModelConfigurationManager
@@ -549,7 +549,8 @@ class BaseAgent(ABC):
                 pull_target = self.skill_registry.skills_cache_dir
                 self.logger.info(f"Pulling missing skills from registry into: {pull_target}")
 
-                with trace_span("agent.pull_skills", agent_name=self.agent_name,
+                with trace_span("agent.pull_skills", level="debug",
+                                agent_name=self.agent_name,
                                 skill_count=len(all_required_skills)):
                     for skill_name in all_required_skills:
                         try:
@@ -565,7 +566,7 @@ class BaseAgent(ABC):
             # ======= STEP 3: DISCOVER ALL SKILLS (LOCAL + PULLED) FROM SAME DIRECTORY =======
             # Both local and pulled skills are in skill_dir, discover them all together
             self.logger.info(f"Discovering all skills from: {skill_dir}")
-            with trace_span("agent.discover_skills", agent_name=self.agent_name):
+            with trace_span("agent.discover_skills", level="debug", agent_name=self.agent_name):
                 self.skill_registry.discover_skills(skills_dir=skill_dir)
             self.logger.info(f"Discovered {len(self.skill_registry.skills)} skill(s)")
 
@@ -586,7 +587,8 @@ class BaseAgent(ABC):
         async def _init_structured_output_models():
             structured_output_models_props = self.agent_config.get("structured_output", {})
             if structured_output_models_props:
-                with trace_span("agent.load_structured_output", agent_name=self.agent_name):
+                with trace_span("agent.load_structured_output", level="debug",
+                                agent_name=self.agent_name):
                     self.output_model_registry.discover_output_models(
                         output_model_dir=structured_output_models_props.get('script_dir')
                     )
@@ -650,6 +652,7 @@ class BaseAgent(ABC):
 
         return new_config
 
+    @traced("agent.memory.context", level="debug")
     def _get_conversation_context(self, current_message: str) -> str:
         """Retrieve and format relevant conversation context.
 
@@ -686,6 +689,7 @@ class BaseAgent(ABC):
             self.logger.warning("Could not retrieve conversation context: %s", e)
             return ""
 
+    @traced("agent.guardrail.input")
     def _guardrail_input_message(self, message: str) -> str:
         """Apply input validation guardrails to user message.
 
@@ -703,6 +707,7 @@ class BaseAgent(ABC):
             return self.guardrails_manager.validate_input(message)
         return message
 
+    @traced("agent.guardrail.output")
     def _guardrail_output_message(self, message: str) -> str:
         """Apply output validation guardrails to agent response.
 
@@ -720,6 +725,7 @@ class BaseAgent(ABC):
             return self.guardrails_manager.validate_output(message)
         return message
 
+    @traced("agent.augment_message", level="debug")
     def _augment_message(self, message: str, original_query: str = None) -> str:
         """Augment message with knowledge base and conversation context.
 

@@ -5,7 +5,7 @@ from typing import List, AsyncGenerator, Optional, Dict, Any
 
 from langchain_core.runnables import RunnableConfig
 from oai_agent_core.core.base_agent import BaseAgent
-from oai_agent_core.components.observability.tracing import traced
+from oai_agent_core.components.observability.tracing import traced, trace_span
 from oai_agent_core.core.constants import Constants
 from oai_agent_core.processing.message_formatter import MessageFormatter
 
@@ -421,21 +421,23 @@ class LangGraphAgent(BaseAgent):
         formatted_message = self._augment_message(formatted_message, original_query=user_message)
 
         try:
-            result = await self.agent.ainvoke(
-                {"messages": [{"role": "user", "content": formatted_message}]},
-                config=self._generate_runnable_config(config)
-            )
+            with trace_span("agent.llm.invoke", agent_name=self.agent_name):
+                result = await self.agent.ainvoke(
+                    {"messages": [{"role": "user", "content": formatted_message}]},
+                    config=self._generate_runnable_config(config)
+                )
 
-            response = self.result_extractor.format_response(
-                result,
-                session_id=self.session_id,
-                model_id=getattr(self.llm, 'model_name') or getattr(self.llm, 'model', 'unknown'),
-                model_provider=self.agent_config.get('cloud_provider', 'langchain'),
-                include_raw=config.get('include_raw', False) if config else False,
-                input_message=formatted_message if config and config.get('include_input_message', False) else None,
-                original_message=actual_original_message if config and config.get('include_original_message', False) else None,
-                final=True
-            )
+            with trace_span("agent.format_response", level="debug", agent_name=self.agent_name):
+                response = self.result_extractor.format_response(
+                    result,
+                    session_id=self.session_id,
+                    model_id=getattr(self.llm, 'model_name') or getattr(self.llm, 'model', 'unknown'),
+                    model_provider=self.agent_config.get('cloud_provider', 'langchain'),
+                    include_raw=config.get('include_raw', False) if config else False,
+                    input_message=formatted_message if config and config.get('include_input_message', False) else None,
+                    original_message=actual_original_message if config and config.get('include_original_message', False) else None,
+                    final=True
+                )
 
             # Save turn to memory store
             if self.memory_store:

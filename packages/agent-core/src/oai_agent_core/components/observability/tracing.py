@@ -54,6 +54,41 @@ except ImportError:
 # Guards one-time, lazy auto-configuration of a TracerProvider from env.
 _auto_init_attempted = False
 
+# --- Trace levels (mirrors logging) ---------------------------------------
+# A span is emitted only when its level is >= the active threshold, exactly like
+# logging: at threshold INFO, INFO spans emit and DEBUG spans are skipped; at
+# threshold DEBUG, everything emits. Set via the AGENT_TRACE_LEVEL env var
+# (DEBUG / INFO / WARNING) or programmatically via set_trace_level().
+DEBUG = 10
+INFO = 20
+WARNING = 30
+
+_LEVEL_NAMES = {"debug": DEBUG, "info": INFO, "warning": WARNING}
+
+
+def _coerce_level(level) -> int:
+    if isinstance(level, int):
+        return level
+    return _LEVEL_NAMES.get(str(level).lower(), INFO)
+
+
+_trace_level_threshold = _coerce_level(os.environ.get("AGENT_TRACE_LEVEL", "info"))
+
+
+def set_trace_level(level) -> None:
+    """Set the active trace level threshold (e.g. "debug", "info", or an int).
+
+    Spans below this level become no-ops. Useful to flip verbosity at runtime,
+    e.g. ``set_trace_level("debug")`` to capture detailed spans.
+    """
+    global _trace_level_threshold
+    _trace_level_threshold = _coerce_level(level)
+
+
+def get_trace_level() -> int:
+    """Return the active trace level threshold as an int."""
+    return _trace_level_threshold
+
 
 def is_tracing_available() -> bool:
     """Return True if the OpenTelemetry API is importable."""
@@ -145,27 +180,31 @@ def _ensure_provider_from_env() -> None:
 
 
 @contextmanager
-def trace_span(name, attributes=None, **attribute_kwargs):
+def trace_span(name, attributes=None, level=INFO, **attribute_kwargs):
     """Run a block inside an OpenTelemetry span set as the current span.
 
     The span becomes the active span for the duration of the block, so any spans
     started by callees (including across ``await`` boundaries and within
     ``asyncio.gather`` tasks scheduled inside the block) nest underneath it.
 
-    No-op when OpenTelemetry is not installed. On exception the span records the
-    error and is marked as failed before the exception propagates, so failures
-    are visible in the trace.
+    No-op when OpenTelemetry is not installed, or when ``level`` is below the
+    active threshold (see ``set_trace_level`` / ``AGENT_TRACE_LEVEL``). On
+    exception the span records the error and is marked as failed before the
+    exception propagates, so failures are visible in the trace.
 
     Args:
         name: Span name (e.g. ``"agent.ainvoke"``).
         attributes: Optional dict of span attributes.
+        level: Span verbosity level (``DEBUG``/``INFO``/``WARNING`` or the
+            equivalent string). The span is skipped when it is below the active
+            threshold — DEBUG spans only appear when the threshold is DEBUG.
         **attribute_kwargs: Additional span attributes as keyword arguments.
             ``None`` values are skipped.
 
     Yields:
-        The active span, or ``None`` when tracing is unavailable.
+        The active span, or ``None`` when tracing is unavailable / suppressed.
     """
-    if not _OTEL_AVAILABLE:
+    if not _OTEL_AVAILABLE or _coerce_level(level) < _trace_level_threshold:
         yield None
         return
 
@@ -188,7 +227,7 @@ def trace_span(name, attributes=None, **attribute_kwargs):
             raise
 
 
-def traced(name):
+def traced(name, level=INFO):
     """Decorator that wraps a method in a span.
 
     Works on:
@@ -200,15 +239,17 @@ def traced(name):
 
     When applied to a method, the first positional argument is assumed to be
     ``self`` and its ``agent_name`` attribute (when present) is attached to the
-    span. No-op when OpenTelemetry is not installed.
+    span. ``level`` controls verbosity (see ``trace_span``): mark detailed
+    helpers ``level="debug"`` so they only appear when the threshold is DEBUG.
+    No-op when OpenTelemetry is not installed or the level is below threshold.
 
     Usage::
 
-        @traced("agent.ainvoke")
+        @traced("agent.ainvoke")                       # important -> INFO
         async def ainvoke(self, user_message, config=None):
             ...
 
-        @traced("agent.build_prompt")
+        @traced("agent.build_prompt", level="debug")   # detailed -> DEBUG only
         def build_prompt(self, ...):
             ...
     """
@@ -219,7 +260,7 @@ def traced(name):
         if inspect.isasyncgenfunction(func):
             @functools.wraps(func)
             async def async_gen_wrapper(*args, **kwargs):
-                with trace_span(name, agent_name=_agent_name(args)):
+                with trace_span(name, level=level, agent_name=_agent_name(args)):
                     async for item in func(*args, **kwargs):
                         yield item
             return async_gen_wrapper
@@ -227,13 +268,13 @@ def traced(name):
         if inspect.iscoroutinefunction(func):
             @functools.wraps(func)
             async def async_wrapper(*args, **kwargs):
-                with trace_span(name, agent_name=_agent_name(args)):
+                with trace_span(name, level=level, agent_name=_agent_name(args)):
                     return await func(*args, **kwargs)
             return async_wrapper
 
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
-            with trace_span(name, agent_name=_agent_name(args)):
+            with trace_span(name, level=level, agent_name=_agent_name(args)):
                 return func(*args, **kwargs)
         return sync_wrapper
 
