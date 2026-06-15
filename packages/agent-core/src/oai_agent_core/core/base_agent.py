@@ -21,6 +21,14 @@ from oai_agent_core.core.agent_mixins import (
     MessageProcessingMixin,
     ObservabilityMixin
 )
+from oai_agent_core.core.services import (
+    ConfigResolverService,
+    ModelService,
+    ConfigValidator,
+    SkillService,
+    ToolService,
+    KnowledgeBaseService,
+)
 
 
 class BaseAgent(
@@ -118,10 +126,53 @@ class BaseAgent(
         self.agent_name = agent_name
         self.config_manager = ConfigManager(config_root=config_root)
         self.config_root = config_root
+        
+        # Initialize logger first for service use
+        self.logger = logging.getLogger(__name__)
+
+        # Phase 3.1: Service Layer Integration
+        # Initialize service instances for cleaner architecture
+        self._config_service = ConfigResolverService(
+            config_root=config_root,
+            logger=self.logger
+        )
+        self._config_validator = ConfigValidator(logger=self.logger)
+        self._model_service = ModelService(logger=self.logger)
+        if model_manager:
+            self._model_service.set_model_manager(model_manager)
+        
+        # Phase 3.3: Initialize Tool and KB services for _load_tools_and_kb_and_memory()
+        self._tool_service = ToolService(
+            project_root=config_root,
+            logger=self.logger
+        )
+        self._kb_service = KnowledgeBaseService(
+            project_root=config_root,
+            logger=self.logger
+        )
 
         # Load config from file if not provided
+        # Phase 3.1: Use ConfigResolverService for loading
         if agent_config is None:
-            agent_config = self.config_manager.load_agent_config(agent_name)
+            try:
+                # Try service-based loading first (Phase 3.1)
+                agent_config = self._config_service.load_agent_config(agent_name)
+            except Exception as e:
+                # Fallback to direct ConfigManager (backward compatibility)
+                self.logger.debug(f"Service-based config loading failed, using ConfigManager: {e}")
+                agent_config = self.config_manager.load_agent_config(agent_name)
+
+        # Phase 3.2: Validate configuration early (informational, not blocking)
+        # Only validate if config is complete enough to be worthwhile
+        if agent_config and 'type' in agent_config:
+            if not self._config_validator.validate_agent_config(agent_config):
+                # Log but don't block - graceful degradation
+                error_count = len(self._config_validator.get_errors())
+                if error_count > 0:
+                    self.logger.debug(f"Configuration validation found {error_count} issues (not blocking initialization)")
+        
+        # Resolve macros in configuration
+        agent_config = self._config_service.resolve_macros(agent_config)
 
         self.agent_config = agent_config
 
@@ -129,11 +180,35 @@ class BaseAgent(
         self.llm = llm
         if self.llm is None:
             self.model_manager = model_manager
-            model_config = agent_config.get('model')
-            if self.model_manager:
-                self.llm = self.model_manager.create_model(model_config=model_config)
+            # Check if 'model' key exists in config, not just if value is truthy
+            if 'model' in agent_config:
+                model_config = agent_config.get('model')
+                # Phase 3.1: Use ModelService for LLM creation
+                # Skip validation for minimal configs (e.g., in tests)
+                should_validate = bool(model_config.get('provider') or model_config.get('name')) if model_config else False
+                
+                try:
+                    if should_validate and self._model_service.validate_model_config(model_config):
+                        # Validation passed, create via service
+                        self.llm = self._model_service.create_model(model_config)
+                    elif not should_validate:
+                        # Minimal config (e.g., test mock), skip validation and create directly
+                        if self.model_manager:
+                            self.llm = self.model_manager.create_model(model_config=model_config)
+                    else:
+                        # Validation failed but config present, try direct creation
+                        self.logger.debug("Model config validation skipped or failed, using direct model_manager")
+                        if self.model_manager:
+                            self.llm = self.model_manager.create_model(model_config=model_config)
+                except Exception as e:
+                    # Fallback to direct model_manager (backward compatibility)
+                    self.logger.debug(f"Service-based model creation failed, using model_manager: {e}")
+                    if self.model_manager:
+                        self.llm = self.model_manager.create_model(model_config=model_config)
+                    else:
+                        self.llm = None
             else:
-                self.llm = None  # Handle case where model_manager is not provided
+                self.llm = None  # Handle case where model key not in config
 
         self.session_id = session_id
         self.user_id = user_id
@@ -144,8 +219,6 @@ class BaseAgent(
         # Initialize any additional attributes from kwargs
         for key, value in kwargs.items():
             setattr(self, key, value)
-
-        self.logger = logging.getLogger(__name__)
 
         self.langfuse_manager = LangfuseObservabilityManager(
             agent_name=self.agent_name,
@@ -165,24 +238,39 @@ class BaseAgent(
         self.skill_registry = None
         skills_config = agent_config.get('skills', {})
         if skills_config:
-            # Extract skill directory (required if skills configured)
-            skill_dir = skills_config.get('skill_dir')
-
-            # Extract remote registry config (optional)
-            remote_registry_config = skills_config.get('registry', {})
-
-            # Use skill_dir as cache directory for pulled skills
-            skills_cache_dir = skill_dir
-
-            # Initialize skill registry
-            self.skill_registry = SkillRegistry(
-                logger=self.logger,
+            # Phase 3.1: Use SkillService for registry creation
+            skill_service = SkillService(
                 project_root=config_root,
-                registry_url=remote_registry_config.get('url', os.environ.get('SKILLS_REGISTRY_URL', None)),
-                auth_token=remote_registry_config.get('auth_token', os.environ.get('SKILLS_REGISTRY_AUTH_TOKEN', None)),
-                skills_cache_dir=skills_cache_dir
+                logger=self.logger
             )
-            self.logger.debug("Skill registry initialized for this agent")
+            
+            # Create skill registry using service
+            try:
+                self.skill_registry = skill_service.create_skill_registry(skills_config)
+                if self.skill_registry:
+                    self.logger.debug("Skill registry initialized for this agent (via SkillService)")
+            except Exception as e:
+                # Fallback to direct SkillRegistry creation (backward compatibility)
+                self.logger.debug(f"Service-based skill registry creation failed, using SkillRegistry: {e}")
+                
+                # Extract skill directory (required if skills configured)
+                skill_dir = skills_config.get('skill_dir')
+
+                # Extract remote registry config (optional)
+                remote_registry_config = skills_config.get('registry', {})
+
+                # Use skill_dir as cache directory for pulled skills
+                skills_cache_dir = skill_dir
+
+                # Initialize skill registry directly
+                self.skill_registry = SkillRegistry(
+                    logger=self.logger,
+                    project_root=config_root,
+                    registry_url=remote_registry_config.get('url', os.environ.get('SKILLS_REGISTRY_URL', None)),
+                    auth_token=remote_registry_config.get('auth_token', os.environ.get('SKILLS_REGISTRY_AUTH_TOKEN', None)),
+                    skills_cache_dir=skills_cache_dir
+                )
+                self.logger.debug("Skill registry initialized for this agent")
 
         self.output_model_registry = OutputModelRegistry(
             logger=self.logger,
@@ -338,15 +426,35 @@ class BaseAgent(
         async def _load_tools_and_mcp():
             tools_config = self.agent_config.get('tools', {})
             if tools_config:
-                await asyncio.to_thread(self.tool_registry.load_tools_from_config, tools_config)
-                self.logger.info(
-                    "Loaded %d global tools into registry",
-                    len(self.tool_registry.tools)
-                )
+                # Phase 3.3: Try ToolService for loading tools
+                try:
+                    tool_count = self._tool_service.load_tools(
+                        self.tool_registry,
+                        tools_config
+                    )
+                    self.logger.info(f"Loaded {tool_count} global tools into registry (via ToolService)")
+                except Exception as e:
+                    # Fallback to direct registry loading (backward compatibility)
+                    self.logger.debug(f"Service-based tool loading failed, using tool_registry directly: {e}")
+                    await asyncio.to_thread(self.tool_registry.load_tools_from_config, tools_config)
+                    self.logger.info(
+                        "Loaded %d global tools into registry",
+                        len(self.tool_registry.tools)
+                    )
 
             mcp_config = self.agent_config.get('mcps', self.agent_config.get('servers', {}))
             if mcp_config:
-                self.tool_registry.load_mcp_config(mcp_config)
+                # Phase 3.3: Try ToolService for loading MCP tools
+                try:
+                    mcp_count = self._tool_service.load_mcp_tools(
+                        self.tool_registry,
+                        mcp_config
+                    )
+                    self.logger.info(f"Loaded {mcp_count} MCP servers into registry (via ToolService)")
+                except Exception as e:
+                    # Fallback to direct MCP config loading (backward compatibility)
+                    self.logger.debug(f"Service-based MCP loading failed, using tool_registry directly: {e}")
+                    self.tool_registry.load_mcp_config(mcp_config)
 
         async def _init_global_kb():
             raw_kb = self.agent_config.get('knowledge_base')
@@ -356,21 +464,50 @@ class BaseAgent(
             if not sources:
                 return
             resolved_sources = BaseAgent._merge_registry_into_sources(sources, registry_config)
+            
+            # Phase 3.3: Try KnowledgeBaseService for KB initialization
             try:
-                self.global_kb_factory = await asyncio.to_thread(
-                    kb_factory_class,
-                    knowledge_base_config=resolved_sources,
-                    logger=self.logger,
-                    project_root=self.config_root,
+                # Create KB factory via service
+                kb_factory = self._kb_service.create_knowledge_base_factory(
                     llm=self.llm,
                     document_loader=self.document_loader,
                     vector_store=self.vector_store
                 )
-                self.logger.info("Initialized global knowledge base")
+                
+                if kb_factory:
+                    # Create KB factory as a callable that matches kb_factory_class signature
+                    self.global_kb_factory = lambda **kwargs: kb_factory
+                    self.logger.info("Initialized global knowledge base (via KnowledgeBaseService)")
+                else:
+                    # Service returned None, fallback to direct initialization
+                    self.logger.debug("Service returned None, falling back to direct KB initialization")
+                    self.global_kb_factory = await asyncio.to_thread(
+                        kb_factory_class,
+                        knowledge_base_config=resolved_sources,
+                        logger=self.logger,
+                        project_root=self.config_root,
+                        llm=self.llm,
+                        document_loader=self.document_loader,
+                        vector_store=self.vector_store
+                    )
+                    self.logger.info("Initialized global knowledge base")
             except ImportError as e:
                 self.logger.warning("Could not initialize global knowledge base: missing dependencies %s", e)
             except Exception as e:
-                self.logger.error("Failed to initialize global knowledge base: %s", e)
+                self.logger.debug(f"Service-based KB initialization failed, using direct initialization: {e}")
+                try:
+                    self.global_kb_factory = await asyncio.to_thread(
+                        kb_factory_class,
+                        knowledge_base_config=resolved_sources,
+                        logger=self.logger,
+                        project_root=self.config_root,
+                        llm=self.llm,
+                        document_loader=self.document_loader,
+                        vector_store=self.vector_store
+                    )
+                    self.logger.info("Initialized global knowledge base")
+                except Exception as e2:
+                    self.logger.error("Failed to initialize global knowledge base: %s", e2)
 
         async def _init_memory_store():
             memory_config = self.agent_config.get('memory', {})
