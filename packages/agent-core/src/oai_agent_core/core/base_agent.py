@@ -21,7 +21,7 @@ from oai_agent_core.mixins.agent_mixins import (
     MessageProcessingMixin,
     ObservabilityMixin
 )
-from oai_agent_core.core.services import (
+from oai_agent_core.services import (
     ConfigResolverService,
     ModelService,
     ConfigValidator,

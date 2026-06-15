@@ -319,7 +319,7 @@ class FunctionStrategy(ToolLoadingStrategy):
             Dictionary of function_name -> function
         """
         module_name = tool_config.get('module')
-        function_list = tool_config.get('function_list', [])
+        function_list = tool_config.get('function_list')  # None if not specified
         function_params = tool_config.get('function_params', {})
         base_path = tool_config.get('base_path')
         
@@ -335,14 +335,39 @@ class FunctionStrategy(ToolLoadingStrategy):
             
             # Get the functions as a dictionary
             functions = {}
-            for func_name in function_list:
-                func = getattr(functions_module, func_name, None)
-                if func is None:
-                    self.logger.warning(
-                        f"Function '{func_name}' not found in module {module_name}"
-                    )
+            
+            # If function_list is specified, load only those functions
+            if function_list:
+                for func_name in function_list:
+                    func = getattr(functions_module, func_name, None)
+                    if func is None:
+                        self.logger.warning(
+                            f"Function '{func_name}' not found in module {module_name}"
+                        )
+                    else:
+                        functions[func_name] = func
+            else:
+                # If function_list is not specified, load all functions from the module
+                # using the registry's get_module_functions method
+                if hasattr(registry, 'get_module_functions'):
+                    funcs_list = registry.get_module_functions(functions_module, function_list=None)
+                    for func in funcs_list:
+                        # Extract the function name - try multiple attributes for compatibility
+                        func_name = None
+                        if hasattr(func, 'name'):
+                            func_name = func.name
+                        elif hasattr(func, '__name__'):
+                            func_name = func.__name__
+                        else:
+                            func_name = str(func)
+                        functions[func_name] = func
                 else:
-                    functions[func_name] = func
+                    # Fallback: manually get all callables from the module
+                    for name in dir(functions_module):
+                        if not name.startswith('_'):
+                            obj = getattr(functions_module, name, None)
+                            if callable(obj) and not isinstance(obj, type):
+                                functions[name] = obj
             
             self.logger.debug(
                 f"Loaded {len(functions)} functions from {module_name}"

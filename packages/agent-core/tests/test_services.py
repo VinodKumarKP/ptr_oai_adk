@@ -5,7 +5,7 @@ to verify correct behavior and error handling.
 """
 
 import logging
-from oai_agent_core.core.services import (
+from oai_agent_core.services import (
     ConfigResolverService,
     KnowledgeBaseService,
     ToolService,
