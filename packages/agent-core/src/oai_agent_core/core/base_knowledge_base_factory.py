@@ -2,17 +2,12 @@
 
 import logging
 import os
-import hashlib
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Callable
 
 from oai_agent_core.components.vector_store.vector_store_factory import VectorStoreFactory
 from oai_agent_core.utils.prompt_analyzer import PromptAnalyzer
 from oai_agent_core.utils.env_resolver import ConfigResolver
-from oai_agent_core.core.exceptions import (
-    VectorStoreCreationError,
-    EmbeddingError,
-)
 
 
 class BaseKnowledgeBaseFactory(ABC):

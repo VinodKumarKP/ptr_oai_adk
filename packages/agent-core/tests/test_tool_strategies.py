@@ -5,8 +5,7 @@ to verify correct behavior and error handling.
 """
 
 import pytest
-from unittest.mock import MagicMock, Mock, patch
-import os
+from unittest.mock import MagicMock, patch
 from oai_agent_core.core.tool_strategies import (
     FrameworkToolStrategy,
     PythonClassStrategy,
@@ -14,10 +13,9 @@ from oai_agent_core.core.tool_strategies import (
     MCPStrategy,
     ToolLoadingContext,
 )
-from oai_agent_core.core.exceptions import (
+from oai_agent_core.utils.exceptions import (
     ToolLoadingError,
     ToolConfigurationError,
-    MCPLoadingError,
 )
 
 

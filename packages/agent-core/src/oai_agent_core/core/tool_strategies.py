@@ -35,9 +35,8 @@ import sys
 import subprocess
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List, Callable
-from pathlib import Path
 
-from oai_agent_core.core.exceptions import (
+from oai_agent_core.utils.exceptions import (
     ToolLoadingError,
     ToolConfigurationError,
     MCPLoadingError,

@@ -4,8 +4,6 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 
-from oai_agent_core.core.exceptions import OutputSerializationError
-
 
 class OutputSerializer:
     """Handles serialization and storage of agent execution outputs.

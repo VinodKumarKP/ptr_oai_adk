@@ -4,8 +4,6 @@ Tests each service independently with mocked dependencies
 to verify correct behavior and error handling.
 """
 
-import pytest
-from unittest.mock import MagicMock, Mock, patch, call
 import logging
 from oai_agent_core.core.services import (
     ConfigResolverService,
@@ -14,11 +12,6 @@ from oai_agent_core.core.services import (
     SkillService,
     ModelService,
     ObservabilityService,
-)
-from oai_agent_core.core.exceptions import (
-    ConfigurationError,
-    ToolLoadingError,
-    KnowledgeBaseError,
 )
 
 

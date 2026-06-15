@@ -12,10 +12,9 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 
 from oai_agent_core.utils.dynamic_class_loader import DynamicClassLoader
-from oai_agent_core.core.exceptions import (
+from oai_agent_core.utils.exceptions import (
     ToolLoadingError,
     ToolConfigurationError,
-    ToolExecutionError,
     MCPLoadingError,
 )
 from oai_agent_core.core.tool_strategies import (
