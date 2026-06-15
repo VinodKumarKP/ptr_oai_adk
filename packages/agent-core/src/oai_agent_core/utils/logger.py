@@ -30,7 +30,7 @@ import time
 
 # Import the standard logging setup from logging_config
 try:
-    from oai_agent_core.core.logging_config import get_logger as _get_logger_from_config
+    from oai_agent_core.utils.logging_config import get_logger as _get_logger_from_config
 except ImportError:
     _get_logger_from_config = None
 

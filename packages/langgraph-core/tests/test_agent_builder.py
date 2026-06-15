@@ -3,7 +3,7 @@ import asyncio
 from unittest.mock import MagicMock, patch, AsyncMock
 from oai_agent_core.langgraph_core.builders.agent_builder import AgentBuilder
 from oai_agent_core.langgraph_core.components.registry.tool_registry import LangChainToolRegistry
-from oai_agent_core.core.constants import Constants
+from oai_agent_core.utils.constants import Constants
 
 @pytest.fixture
 def mock_llm():

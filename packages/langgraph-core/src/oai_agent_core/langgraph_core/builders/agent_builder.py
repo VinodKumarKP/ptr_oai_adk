@@ -12,7 +12,7 @@ from langgraph_supervisor import create_supervisor
 from oai_agent_core.builders.base_agent_builder import BaseAgentBuilder
 from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
-from oai_agent_core.core.constants import Constants
+from oai_agent_core.utils.constants import Constants
 
 from oai_agent_core.langgraph_core.components.configuration.model_config import \
     LangChainModelConfigurationManager as ModelConfigurationManager
@@ -105,7 +105,6 @@ class AgentBuilder(BaseAgentBuilder):
             skill_list = self.skill_registry.get_skills(skills)
             system_prompt = f"{system_prompt}\n{self.skill_registry.generate_skills_prompt(skill_list)}"
             from langchain_community.tools.shell.tool import ShellTool
-            from tempfile import TemporaryDirectory
             from langchain_community.tools.file_management import ReadFileTool, WriteFileTool
             tools.append(ReadFileTool())
             tools.append(WriteFileTool())
