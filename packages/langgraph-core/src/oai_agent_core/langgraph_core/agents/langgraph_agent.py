@@ -5,7 +5,7 @@ from typing import List, AsyncGenerator, Optional, Dict, Any
 
 from langchain_core.runnables import RunnableConfig
 from oai_agent_core.core.base_agent import BaseAgent
-from oai_agent_core.components.observability.tracing import traced, trace_span
+from oai_agent_core.components.observability.tracing import traced, trace_span, traced_stream
 from oai_agent_core.core.constants import Constants
 from oai_agent_core.processing.message_formatter import MessageFormatter
 
@@ -123,6 +123,7 @@ class LangGraphAgent(BaseAgent):
             }
             self.config.update(updated_config)
 
+    @traced("agent.initialize")
     async def initialize(self) -> None:
         """Initialize the agent system based on configuration.
 
@@ -304,10 +305,14 @@ class LangGraphAgent(BaseAgent):
         final_response_content = ""
 
         try:
-            async for chunk in self.agent.astream(
-                    {"messages": [{"role": "user", "content": formatted_message}]},
-                    stream_mode="values",
-                    config=self._generate_runnable_config(config)
+            async for chunk in traced_stream(
+                    "agent.llm.invoke",
+                    self.agent.astream(
+                        {"messages": [{"role": "user", "content": formatted_message}]},
+                        stream_mode="values",
+                        config=self._generate_runnable_config(config)
+                    ),
+                    agent_name=self.agent_name,
             ):
                 verbose = config.get('verbose', False) if config else False
                 if verbose:

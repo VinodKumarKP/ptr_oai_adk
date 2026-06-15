@@ -36,7 +36,7 @@ import asyncio
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from oai_agent_core.core.base_agent import BaseAgent
-from oai_agent_core.components.observability.tracing import traced
+from oai_agent_core.components.observability.tracing import traced, trace_span, traced_stream
 from oai_agent_core.core.constants import Constants
 from oai_agent_core.processing.message_formatter import MessageFormatter
 from oai_agent_core.processing.output_serializer import OutputSerializer
@@ -329,18 +329,20 @@ class AnthropicAgent(BaseAgent):
         config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Async invoke — returns a formatted ADK response dict."""
-        raw = await self.process_request(user_message, config)
+        with trace_span("agent.llm.invoke", agent_name=self.agent_name):
+            raw = await self.process_request(user_message, config)
         include_raw = config.get("include_raw", False) if config else False
 
-        response = self.result_extractor.format_response(
-            result=raw["result"],
-            session_id=self.session_id,
-            model_id=self.model_kwargs.get("model", ""),
-            model_provider=self.model_manager.get_model_info().get("provider", "anthropic"),
-            include_raw=include_raw,
-            input_message=raw["input_message"] if config and config.get("include_input_message") else None,
-            original_message=user_message if config and config.get("include_original_message") else None,
-        )
+        with trace_span("agent.format_response", level="debug", agent_name=self.agent_name):
+            response = self.result_extractor.format_response(
+                result=raw["result"],
+                session_id=self.session_id,
+                model_id=self.model_kwargs.get("model", ""),
+                model_provider=self.model_manager.get_model_info().get("provider", "anthropic"),
+                include_raw=include_raw,
+                input_message=raw["input_message"] if config and config.get("include_input_message") else None,
+                original_message=user_message if config and config.get("include_original_message") else None,
+            )
 
         if self.memory_store:
             self.memory_store.add_turn(
@@ -386,7 +388,7 @@ class AnthropicAgent(BaseAgent):
         last_chunk = None
 
         try:
-            async for chunk in self.orchestration_builder.stream(
+            _stream = self.orchestration_builder.stream(
                 pattern=crew_config.get("pattern", "single"),
                 agent_definitions=self.agent_definitions,
                 user_message=formatted,
@@ -397,7 +399,9 @@ class AnthropicAgent(BaseAgent):
                 structured_output_model=structured_output_model,
                 session_id=self.session_id,
                 user_id=self.user_id,
-            ):
+            )
+            async for chunk in traced_stream("agent.llm.invoke", _stream,
+                                             agent_name=self.agent_name):
                 # Apply output guardrail on final chunk
                 if chunk.get("final") and "content" in chunk:
                     chunk["content"]["text"] = self._guardrail_output_message(

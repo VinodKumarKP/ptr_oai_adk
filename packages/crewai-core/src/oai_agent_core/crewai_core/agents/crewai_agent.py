@@ -11,7 +11,7 @@ from typing import Optional, List, Any, Dict, AsyncGenerator
 
 from crewai import LLM, Crew, Flow
 from oai_agent_core.core.base_agent import BaseAgent
-from oai_agent_core.components.observability.tracing import traced
+from oai_agent_core.components.observability.tracing import traced, trace_span
 from oai_agent_core.core.constants import Constants
 from oai_agent_core.processing.message_formatter import MessageFormatter
 from oai_agent_core.processing.output_serializer import OutputSerializer
@@ -450,26 +450,28 @@ class CrewAIAgent(BaseAgent):
             Dictionary containing the formatted response with content,
             token usage, and model information
         """
-        result = await self.process_request(user_message, config)
+        with trace_span("agent.llm.invoke", agent_name=self.agent_name):
+            result = await self.process_request(user_message, config)
         session_id = result.get('session_id')
         final_result = result.get('result')
         input_message = result.get('input_message')
         original_message = config.get('original_message', user_message) if config else user_message
 
-        response = self.result_extractor.get_response(
-            session_id=session_id,
-            final_result=final_result
-        )
+        with trace_span("agent.format_response", level="debug", agent_name=self.agent_name):
+            response = self.result_extractor.get_response(
+                session_id=session_id,
+                final_result=final_result
+            )
 
-        response = self.result_extractor.format_response(
-            response,
-            session_id=self.session_id,
-            model_id=getattr(self.llm, 'model', 'unknown'),
-            model_provider=self.agent_config.get('cloud_provider', 'crewai'),
-            include_raw=config.get('include_raw', False) if config else False,
-            input_message=input_message if config and config.get('include_input_message', False) else None,
-            original_message=original_message if config and config.get('include_original_message', False) else None
-        )
+            response = self.result_extractor.format_response(
+                response,
+                session_id=self.session_id,
+                model_id=getattr(self.llm, 'model', 'unknown'),
+                model_provider=self.agent_config.get('cloud_provider', 'crewai'),
+                include_raw=config.get('include_raw', False) if config else False,
+                input_message=input_message if config and config.get('include_input_message', False) else None,
+                original_message=original_message if config and config.get('include_original_message', False) else None
+            )
 
         response['content']['text'] = self._guardrail_output_message(response['content']['text'])
         return response
@@ -505,7 +507,8 @@ class CrewAIAgent(BaseAgent):
         Yields:
             Dictionary chunks with step outputs
         """
-        result = await self.process_request(user_message, config)
+        with trace_span("agent.llm.invoke", agent_name=self.agent_name):
+            result = await self.process_request(user_message, config)
         session_id = result.get('session_id')
         final_result = result.get('result')
         input_message = result.get('input_message')

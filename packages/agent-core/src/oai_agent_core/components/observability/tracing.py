@@ -170,6 +170,10 @@ def configure_tracing(default_service_name=None) -> None:
             endpoint,
             service_name,
         )
+        # Route OpenLIT GenAI auto-instrumentation into this same provider so its
+        # LLM/tool spans land in the configured backend(s) and nest under the
+        # agent spans. No-op if openlit isn't installed.
+        instrument_openlit(application_name=service_name)
     except Exception as exc:
         logger.debug("Failed to auto-configure OpenTelemetry tracing: %s", exc)
 
@@ -177,6 +181,154 @@ def configure_tracing(default_service_name=None) -> None:
 # Backwards-compatible alias for the lazy, no-default call used by ``trace_span``.
 def _ensure_provider_from_env() -> None:
     configure_tracing()
+
+
+def _get_or_create_provider(service_name=None):
+    """Return the active SDK ``TracerProvider``, creating+installing one if only a
+    proxy (no provider) is present. Returns ``None`` if the SDK isn't available."""
+    from opentelemetry.trace import ProxyTracerProvider
+
+    current = trace.get_tracer_provider()
+    if not isinstance(current, ProxyTracerProvider):
+        return current
+    try:
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+    except ImportError:
+        return None
+    provider = TracerProvider(
+        resource=Resource.create({"service.name": service_name or "oai-agent-core"})
+    )
+    trace.set_tracer_provider(provider)
+    return provider
+
+
+def add_otlp_exporter(endpoint, headers=None, protocol="grpc", service_name=None) -> bool:
+    """Add an OTLP span exporter to the global ``TracerProvider``.
+
+    Lets a single provider fan out to multiple backends (e.g. Jaeger *and*
+    Langfuse) — every span is then sent to all configured exporters. Creates the
+    provider if none exists yet. No-op (returns ``False``) when the OTel SDK /
+    OTLP exporter isn't installed.
+
+    Args:
+        endpoint: OTLP endpoint URL.
+        headers: Optional dict of headers (e.g. auth) for the exporter.
+        protocol: ``"grpc"`` (default, e.g. Jaeger :4317) or ``"http"`` (e.g.
+            Langfuse ``/api/public/otel``).
+        service_name: ``service.name`` to use if a provider must be created.
+    """
+    if not _OTEL_AVAILABLE or not endpoint:
+        return False
+    try:
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        if str(protocol).lower() == "http":
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+                OTLPSpanExporter,
+            )
+        else:
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+                OTLPSpanExporter,
+            )
+    except ImportError:
+        logger.debug("OTLP exporter/SDK not installed; cannot add exporter -> %s", endpoint)
+        return False
+
+    try:
+        provider = _get_or_create_provider(service_name)
+        if provider is None or not hasattr(provider, "add_span_processor"):
+            return False
+        provider.add_span_processor(
+            BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, headers=headers))
+        )
+        logger.info("Added OTLP span exporter (%s) -> %s", protocol, endpoint)
+        return True
+    except Exception as exc:
+        logger.debug("Failed to add OTLP exporter -> %s: %s", endpoint, exc)
+        return False
+
+
+# Guards one-time OpenLIT instrumentation.
+_openlit_instrumented = False
+
+
+def instrument_openlit(application_name=None, environment=None, traces_only=True) -> bool:
+    """Route OpenLIT GenAI auto-instrumentation into the global ``TracerProvider``.
+
+    OpenLIT emits OTel spans for LLM / embedding / vector / tool calls. When
+    ``openlit.init`` is called **without** an ``otlp_endpoint``, it attaches its
+    instrumentation to the already-configured global ``TracerProvider`` — so its
+    spans flow into whatever exporters that provider has (Jaeger and/or Langfuse)
+    and nest under the surrounding agent spans, rather than OpenLIT managing its
+    own separate export pipeline.
+
+    Therefore a real provider must already be set (e.g. via ``configure_tracing``
+    or ``add_otlp_exporter``) before calling this. Runs at most once per process.
+    No-op if ``openlit`` isn't installed.
+
+    Args:
+        application_name: OpenLIT application name.
+        environment: Deployment environment label.
+        traces_only: When True (default), OpenLIT's metric and event/log export
+            are disabled. This matters for trace-only backends like Jaeger, whose
+            OTLP collector rejects non-trace signals (producing
+            ``BadStatusLine`` / "failed to export logs/metrics" errors). LLM token
+            and cost data still appear as **span attributes**, so nothing is lost
+            in the trace view. Set False when the backend (e.g. Langfuse, an OTel
+            Collector) also ingests OTLP metrics/logs.
+    """
+    global _openlit_instrumented
+    if _openlit_instrumented or not _OTEL_AVAILABLE:
+        return False
+    try:
+        import inspect
+
+        import openlit
+    except ImportError:
+        logger.debug("openlit not installed; skipping GenAI auto-instrumentation")
+        return False
+
+    # Ensure a real provider is installed so OpenLIT emits into it (not its own).
+    if _get_or_create_provider(application_name) is None:
+        logger.debug("No tracer provider available; skipping OpenLIT init")
+        return False
+
+    # No otlp_endpoint -> OpenLIT uses the existing global provider/exporters.
+    init_kwargs = {
+        "application_name": application_name or "oai-agent-core",
+        "environment": environment or os.environ.get("ENVIRONMENT", "production"),
+        "disable_batch": True,
+    }
+    if traces_only:
+        # Jaeger (and most trace backends) only accept OTLP traces. Disabling
+        # metric/event export avoids noisy transient export failures when those
+        # signals are pushed to a trace-only collector. The OTel SDK env knobs
+        # are the reliable switch (OpenLIT's disable_* flags don't fully prevent
+        # the exporters in all versions); we only set them if the user hasn't.
+        os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
+        os.environ.setdefault("OTEL_LOGS_EXPORTER", "none")
+        init_kwargs.update(
+            disable_metrics=True,
+            disable_events=True,
+            evals_logs_export=False,
+        )
+    # Drop any kwargs this openlit version doesn't support, for forward/back-compat.
+    supported = set(inspect.signature(openlit.init).parameters)
+    init_kwargs = {k: v for k, v in init_kwargs.items() if k in supported}
+
+    try:
+        openlit.init(**init_kwargs)
+        _openlit_instrumented = True
+        logger.info(
+            "OpenLIT GenAI instrumentation enabled (-> global tracer provider, "
+            "traces_only=%s)",
+            traces_only,
+        )
+        return True
+    except Exception as exc:
+        logger.debug("Failed to initialise OpenLIT: %s", exc)
+        return False
 
 
 @contextmanager
@@ -225,6 +377,26 @@ def trace_span(name, attributes=None, level=INFO, **attribute_kwargs):
             span.record_exception(exc)
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             raise
+
+
+async def traced_stream(name, source, level=INFO, **attributes):
+    """Wrap an async iterator in a span kept open for the whole stream.
+
+    Use this to trace a streaming call (e.g. an LLM/graph ``astream``) where the
+    work happens incrementally as items are pulled. The span stays active while
+    the underlying source produces items, so spans created by it (including
+    OpenLIT's per-LLM-call spans) nest underneath. No-op span when tracing is
+    unavailable / below threshold — items still pass through.
+
+    Usage::
+
+        async for chunk in traced_stream("agent.llm.invoke", graph.astream(...),
+                                         agent_name=self.agent_name):
+            ...
+    """
+    with trace_span(name, level=level, **attributes):
+        async for item in source:
+            yield item
 
 
 def traced(name, level=INFO):

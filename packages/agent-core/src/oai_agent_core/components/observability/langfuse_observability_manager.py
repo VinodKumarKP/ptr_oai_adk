@@ -134,31 +134,64 @@ class LangfuseObservabilityManager:
             self.logger.error(f"Failed to initialize Langfuse client: {e}", exc_info=True)
 
     def _setup_instrumentation(self) -> None:
-        """Set up OpenInference instrumentation for automatic tracing.
+        """Set up OpenLIT GenAI instrumentation for automatic tracing.
 
         This method ensures instrumentation is only initialized once per process,
-        using a class-level flag to prevent duplicate setup. It configures OpenLIT
-        to send traces to the Langfuse OTLP endpoint.
+        using a class-level flag to prevent duplicate setup.
+
+        Behaviour:
+
+        - **Langfuse only** (``OTEL_EXPORTER_OTLP_ENDPOINT`` unset): unchanged —
+          OpenLIT exports directly to the Langfuse OTLP endpoint.
+        - **Jaeger also configured** (``OTEL_EXPORTER_OTLP_ENDPOINT`` set): OpenLIT
+          is routed into the shared global TracerProvider, and Langfuse is added
+          as an *additional* OTLP exporter on that provider. Spans then fan out to
+          both Jaeger (local) and Langfuse, nesting under the agent spans.
         """
         if not self.client or LangfuseObservabilityManager._instrumented:
             return
 
         try:
-            import openlit
+            import openlit  # noqa: F401  (presence check; init happens below)
 
             auth_string = f"{os.environ['LANGFUSE_PUBLIC_KEY']}:{os.environ['LANGFUSE_SECRET_KEY']}"
             langfuse_auth = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
+            langfuse_otlp = os.environ['LANGFUSE_HOST'] + '/api/public/otel'
 
-            openlit.init(
-                disable_batch=True,
-                environment=os.environ.get('ENVIRONMENT', 'production'),
-                application_name=self.agent_name,
-                otlp_headers=f"Authorization=Basic {langfuse_auth}",
-                otlp_endpoint=os.environ['LANGFUSE_HOST'] + '/api/public/otel'
-            )
+            if os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT'):
+                # Unified pipeline: one provider exporting to both Jaeger and
+                # Langfuse, with OpenLIT feeding into it.
+                from oai_agent_core.components.observability import tracing
+
+                tracing.configure_tracing(default_service_name=self.agent_name)
+                tracing.add_otlp_exporter(
+                    endpoint=langfuse_otlp,
+                    headers={"Authorization": f"Basic {langfuse_auth}"},
+                    protocol="http",
+                    service_name=self.agent_name,
+                )
+                tracing.instrument_openlit(
+                    application_name=self.agent_name,
+                    environment=os.environ.get('ENVIRONMENT', 'production'),
+                )
+                self.logger.info(
+                    "OpenLIT instrumentation initialized (Jaeger + Langfuse)"
+                )
+            else:
+                # Langfuse-only: original behaviour, OpenLIT exports straight to
+                # the Langfuse OTLP endpoint.
+                import openlit
+
+                openlit.init(
+                    disable_batch=True,
+                    environment=os.environ.get('ENVIRONMENT', 'production'),
+                    application_name=self.agent_name,
+                    otlp_headers=f"Authorization=Basic {langfuse_auth}",
+                    otlp_endpoint=langfuse_otlp,
+                )
+                self.logger.info("OpenLIT instrumentation initialized (Langfuse)")
 
             LangfuseObservabilityManager._instrumented = True
-            self.logger.info("OpenInference instrumentation initialized")
 
         except ImportError:
             self.logger.debug(

@@ -205,7 +205,43 @@ if 'oai_agent_core' not in sys.modules:
     mock_skills_registry.SkillRegistry = MagicMock()
     sys.modules['oai_agent_core.components.skills.skill_registry'] = mock_skills_registry
     components.SkillRegistry = MagicMock()
-    
+
+    # Observability tracing — real no-op primitives (decorator / context manager /
+    # async generator), not MagicMock, since they're applied at class-definition
+    # and iteration time. Stubs the cross-package agent-core observability module.
+    from contextlib import contextmanager as _contextmanager
+
+    def _mock_traced(name, level=20):
+        def _decorator(func):
+            return func
+        return _decorator
+
+    @_contextmanager
+    def _mock_trace_span(name, attributes=None, level=20, **kwargs):
+        yield None
+
+    async def _mock_traced_stream(name, source, level=20, **kwargs):
+        async for item in source:
+            yield item
+
+    observability = types.ModuleType('oai_agent_core.components.observability')
+    observability.__path__ = []
+    tracing_module = types.ModuleType('oai_agent_core.components.observability.tracing')
+    tracing_module.traced = _mock_traced
+    tracing_module.trace_span = _mock_trace_span
+    tracing_module.traced_stream = _mock_traced_stream
+    tracing_module.configure_tracing = lambda *a, **k: None
+    tracing_module.instrument_openlit = lambda *a, **k: False
+    tracing_module.add_otlp_exporter = lambda *a, **k: False
+    tracing_module.set_trace_level = lambda *a, **k: None
+    tracing_module.get_trace_level = lambda: 20
+    tracing_module.is_tracing_available = lambda: False
+    tracing_module.DEBUG, tracing_module.INFO, tracing_module.WARNING = 10, 20, 30
+    observability.tracing = tracing_module
+    sys.modules['oai_agent_core.components.observability'] = observability
+    sys.modules['oai_agent_core.components.observability.tracing'] = tracing_module
+    components.observability = observability
+
     # Model Config Manager
     mock_model_config = types.ModuleType('oai_agent_core.core.base_model_configuration_manager')
     class MockBaseModelConfigurationManager:

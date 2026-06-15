@@ -230,3 +230,50 @@ sys.modules['oai_agent_core.processing.base_result_extractor'] = base_result_ext
 sys.modules['oai_agent_core.components'] = MagicMock()
 sys.modules['oai_agent_core.components.output_parser'] = MagicMock()
 sys.modules['oai_agent_core.components.output_parser.output_model_registry'] = MagicMock()
+
+# Mock the observability tracing module with working no-op primitives. The real
+# module lives in agent-core; in unit tests we stub it so the agent imports
+# cleanly without the cross-package observability code on the path. Note these
+# must be real callables (decorator / context manager / async generator), not
+# MagicMocks, since they are applied at class-definition and iteration time.
+from contextlib import contextmanager as _contextmanager
+
+_TRACE_DEBUG, _TRACE_INFO, _TRACE_WARNING = 10, 20, 30
+
+
+def _mock_traced(name, level=_TRACE_INFO):
+    def _decorator(func):
+        return func
+    return _decorator
+
+
+@_contextmanager
+def _mock_trace_span(name, attributes=None, level=_TRACE_INFO, **kwargs):
+    yield None
+
+
+async def _mock_traced_stream(name, source, level=_TRACE_INFO, **kwargs):
+    async for item in source:
+        yield item
+
+
+_observability_pkg = types.ModuleType('oai_agent_core.components.observability')
+_observability_pkg.__path__ = []
+_tracing_module = types.ModuleType('oai_agent_core.components.observability.tracing')
+_tracing_module.traced = _mock_traced
+_tracing_module.trace_span = _mock_trace_span
+_tracing_module.traced_stream = _mock_traced_stream
+_tracing_module.configure_tracing = lambda *a, **k: None
+_tracing_module.instrument_openlit = lambda *a, **k: False
+_tracing_module.add_otlp_exporter = lambda *a, **k: False
+_tracing_module.set_trace_level = lambda *a, **k: None
+_tracing_module.get_trace_level = lambda: _TRACE_INFO
+_tracing_module.is_tracing_available = lambda: False
+_tracing_module.DEBUG = _TRACE_DEBUG
+_tracing_module.INFO = _TRACE_INFO
+_tracing_module.WARNING = _TRACE_WARNING
+_observability_pkg.tracing = _tracing_module
+
+sys.modules['oai_agent_core.components.observability'] = _observability_pkg
+sys.modules['oai_agent_core.components.observability.tracing'] = _tracing_module
+sys.modules['oai_agent_core.components'].observability = _observability_pkg

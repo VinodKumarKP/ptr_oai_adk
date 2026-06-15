@@ -9,7 +9,7 @@ import asyncio
 from typing import Optional, Any, Dict, AsyncGenerator
 
 from oai_agent_core.core.base_agent import BaseAgent
-from oai_agent_core.components.observability.tracing import traced
+from oai_agent_core.components.observability.tracing import traced, trace_span, traced_stream
 from oai_agent_core.core.constants import Constants
 from oai_agent_core.processing.message_formatter import MessageFormatter
 from oai_agent_core.processing.output_serializer import OutputSerializer
@@ -381,20 +381,22 @@ class StrandsAgent(BaseAgent):
         Returns:
             Formatted response dictionary
         """
-        result = await self.process_request(user_message, config)
+        with trace_span("agent.llm.invoke", agent_name=self.agent_name):
+            result = await self.process_request(user_message, config)
         session_id = result.get('session_id')
         final_result = result.get('result')
 
-        response = self.result_extractor.format_response(
-            result=final_result,
-            session_id=session_id,
-            model_id=self.model_manager.default_config['model_id'],
-            model_provider=self.model_manager.get_model_info()['provider'],
-            include_raw=config.get('include_raw', False) if config else False,
-            input_message=result.get('input_message', None) if config and config.get('include_input_message',
-                                                                                     False) else None,
-            original_message=user_message if config and config.get('include_original_message', False) else None
-        )
+        with trace_span("agent.format_response", level="debug", agent_name=self.agent_name):
+            response = self.result_extractor.format_response(
+                result=final_result,
+                session_id=session_id,
+                model_id=self.model_manager.default_config['model_id'],
+                model_provider=self.model_manager.get_model_info()['provider'],
+                include_raw=config.get('include_raw', False) if config else False,
+                input_message=result.get('input_message', None) if config and config.get('include_input_message',
+                                                                                         False) else None,
+                original_message=user_message if config and config.get('include_original_message', False) else None
+            )
 
         if self.memory_store:
             self.memory_store.add_turn(session_id=self.session_id,
@@ -522,7 +524,10 @@ class StrandsAgent(BaseAgent):
                 token_usage = {}
                 result = {}
 
-                async for chunk in agent.stream_async(formatted_message, stream_complete_only=True):
+                async for chunk in traced_stream(
+                        "agent.llm.invoke",
+                        agent.stream_async(formatted_message, stream_complete_only=True),
+                        agent_name=self.agent_name):
                     result = chunk
                     if 'data' in chunk:
                         content += chunk['data']
@@ -633,10 +638,13 @@ class StrandsAgent(BaseAgent):
                 if verbose:
                     allowed_events.append("multiagent_node_stream")
 
-                async for event in self.multi_agent_system.stream_async(
-                        formatted_message,
-                        stream_complete_only=True
-                ):
+                async for event in traced_stream(
+                        "agent.llm.invoke",
+                        self.multi_agent_system.stream_async(
+                            formatted_message,
+                            stream_complete_only=True
+                        ),
+                        agent_name=self.agent_name):
                     event_type = event.get("type", "")
                     if event_type in allowed_events:
                         formatted = self._format_stream_event(event,

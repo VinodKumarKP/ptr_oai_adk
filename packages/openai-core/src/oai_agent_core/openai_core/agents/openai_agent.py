@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List
 
 from oai_agent_core.core.base_agent import BaseAgent
-from oai_agent_core.components.observability.tracing import traced
+from oai_agent_core.components.observability.tracing import traced, trace_span, traced_stream
 from oai_agent_core.core.constants import Constants
 from oai_agent_core.processing.message_formatter import MessageFormatter
 from oai_agent_core.processing.output_serializer import OutputSerializer
@@ -376,21 +376,23 @@ class OpenAIAgent(BaseAgent):
         Returns:
             The agent's response formatted by ResultExtractor.
         """
-        result_dict = await self.process_request(user_message, config)
+        with trace_span("agent.llm.invoke", agent_name=self.agent_name):
+            result_dict = await self.process_request(user_message, config)
         result = result_dict['result']
 
         user_message = config.get('original_message', user_message) if config else user_message
 
-        response = self.result_extractor.format_response(
-            result,
-            session_id=self.session_id,
-            model_id=getattr(self.llm, 'model', 'unknown'),
-            model_provider=self.agent_config.get('cloud_provider', 'openai'),
-            include_raw=config.get('include_raw', False) if config else False,
-            input_message=result_dict.get('input_message', None) if config and config.get('include_input_message',
-                                                                                          False) else None,
-            original_message=user_message if config and config.get('include_original_message', False) else None
-        )
+        with trace_span("agent.format_response", level="debug", agent_name=self.agent_name):
+            response = self.result_extractor.format_response(
+                result,
+                session_id=self.session_id,
+                model_id=getattr(self.llm, 'model', 'unknown'),
+                model_provider=self.agent_config.get('cloud_provider', 'openai'),
+                include_raw=config.get('include_raw', False) if config else False,
+                input_message=result_dict.get('input_message', None) if config and config.get('include_input_message',
+                                                                                              False) else None,
+                original_message=user_message if config and config.get('include_original_message', False) else None
+            )
 
         if self.memory_store:
             self.memory_store.add_turn(session_id=self.session_id,
@@ -474,7 +476,9 @@ class OpenAIAgent(BaseAgent):
         async with self._mcp_context():
             result = Runner.run_streamed(self.agent, message)
 
-            async for event in result.stream_events():
+            async for event in traced_stream(
+                    "agent.llm.invoke", result.stream_events(),
+                    agent_name=self.agent_name):
                 final = False
                 content: Optional[Dict[str, Any]] = None
                 # We'll ignore the raw responses event deltas
