@@ -28,6 +28,8 @@ from oai_agent_core.core.services import (
     SkillService,
     ToolService,
     KnowledgeBaseService,
+    MemoryService,
+    GuardrailsService,
 )
 
 
@@ -147,6 +149,16 @@ class BaseAgent(
             logger=self.logger
         )
         self._kb_service = KnowledgeBaseService(
+            project_root=config_root,
+            logger=self.logger
+        )
+        
+        # Phase 3.6: Initialize Memory and Guardrails services
+        self._memory_service = MemoryService(
+            project_root=config_root,
+            logger=self.logger
+        )
+        self._guardrails_service = GuardrailsService(
             project_root=config_root,
             logger=self.logger
         )
@@ -512,32 +524,79 @@ class BaseAgent(
         async def _init_memory_store():
             memory_config = self.agent_config.get('memory', {})
             if memory_config:
-                # Import here to avoid circular dependencies or early import issues
-                from oai_agent_core.core.base_memory_store import BaseMemoryStore
-
-                # Create a concrete implementation of BaseMemoryStore
-                class ConfigurableMemoryStore(BaseMemoryStore):
-                    pass
-
+                # Phase 3.6: Try MemoryService for memory store initialization
                 try:
-                    self.memory_store = ConfigurableMemoryStore(
+                    store = self._memory_service.create_memory_store(
                         memory_config=memory_config,
-                        logger=self.logger,
-                        project_root=self.config_root,
                         llm=self.llm
                     )
-                    self.logger.info("Initialized memory store")
+                    if store:
+                        self.memory_store = store
+                        self.logger.info("Initialized memory store (via MemoryService)")
+                    else:
+                        # Service returned None, fallback to direct initialization
+                        self.logger.debug("Service returned None, falling back to direct memory store initialization")
+                        from oai_agent_core.core.base_memory_store import BaseMemoryStore
+
+                        class ConfigurableMemoryStore(BaseMemoryStore):
+                            pass
+
+                        self.memory_store = ConfigurableMemoryStore(
+                            memory_config=memory_config,
+                            logger=self.logger,
+                            project_root=self.config_root,
+                            llm=self.llm
+                        )
+                        self.logger.info("Initialized memory store")
                 except Exception as e:
-                    self.logger.error("Failed to initialize memory store: %s", e)
+                    # Fallback to direct initialization
+                    self.logger.debug(f"Service-based memory store initialization failed, using direct: {e}")
+                    try:
+                        from oai_agent_core.core.base_memory_store import BaseMemoryStore
+
+                        class ConfigurableMemoryStore(BaseMemoryStore):
+                            pass
+
+                        self.memory_store = ConfigurableMemoryStore(
+                            memory_config=memory_config,
+                            logger=self.logger,
+                            project_root=self.config_root,
+                            llm=self.llm
+                        )
+                        self.logger.info("Initialized memory store")
+                    except Exception as e2:
+                        self.logger.error("Failed to initialize memory store: %s", e2)
 
         async def _init_guardrails():
             guardrails_config = self.agent_config.get('guardrails', {})
             if guardrails_config:
-                from oai_agent_core.components.guardrails.guardrails_manager import GuardrailManager
-                self.guardrails_manager = GuardrailManager(self.config_root,
-                                                           guardrails_config,
-                                                           logger=self.logger)
-                if guardrails_config.get('enable_agent_validation', True):
+                # Phase 3.6: Try GuardrailsService for guardrails manager initialization
+                try:
+                    manager = self._guardrails_service.create_guardrails_manager(guardrails_config)
+                    if manager:
+                        self.guardrails_manager = manager
+                        self.logger.info("Initialized guardrails manager (via GuardrailsService)")
+                    else:
+                        # Service returned None, fallback to direct initialization
+                        self.logger.debug("Service returned None, falling back to direct guardrails initialization")
+                        from oai_agent_core.components.guardrails.guardrails_manager import GuardrailManager
+                        self.guardrails_manager = GuardrailManager(self.config_root,
+                                                                   guardrails_config,
+                                                                   logger=self.logger)
+                except Exception as e:
+                    # Fallback to direct initialization
+                    self.logger.debug(f"Service-based guardrails initialization failed, using direct: {e}")
+                    try:
+                        from oai_agent_core.components.guardrails.guardrails_manager import GuardrailManager
+                        self.guardrails_manager = GuardrailManager(self.config_root,
+                                                                   guardrails_config,
+                                                                   logger=self.logger)
+                    except Exception as e2:
+                        self.logger.error("Failed to initialize guardrails manager: %s", e2)
+                        return
+                
+                # Apply guardrails prompt to system prompt if validation is enabled
+                if self.guardrails_manager and guardrails_config.get('enable_agent_validation', True):
                     if len(self.agent_config.get('agent_list', [])) > 1:
                         self.agent_config[
                             'system_prompt'] = f"{self.agent_config.get('system_prompt', '')}\n{self.guardrails_manager.get_guardrails_prompt()}"
