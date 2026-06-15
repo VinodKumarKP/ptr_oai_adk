@@ -4,10 +4,9 @@ Tests BaseAgent's interaction with all mixins to verify they work
 together correctly without conflicts.
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from oai_agent_core.core.base_agent import BaseAgent
-from oai_agent_core.core.agent_mixins import (
+from oai_agent_core.mixins.agent_mixins import (
     SkillsMixin,
     KnowledgeBaseMixin,
     ToolsMixin,

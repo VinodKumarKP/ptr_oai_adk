@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List
 
 from oai_agent_core.core.base_agent import BaseAgent
-from oai_agent_core.utils.constants import Constants
+from oai_agent_core.core.constants import Constants
 from oai_agent_core.processing.message_formatter import MessageFormatter
 from oai_agent_core.processing.output_serializer import OutputSerializer
 

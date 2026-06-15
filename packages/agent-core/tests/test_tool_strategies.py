@@ -6,7 +6,7 @@ to verify correct behavior and error handling.
 
 import pytest
 from unittest.mock import MagicMock, patch
-from oai_agent_core.core.tool_strategies import (
+from oai_agent_core.strategies.tool_strategies import (
     FrameworkToolStrategy,
     PythonClassStrategy,
     FunctionStrategy,
@@ -50,7 +50,7 @@ class TestFrameworkToolStrategy:
         
         config = {'module': 'crewai_tools'}
         
-        with patch('oai_agent_core.core.tool_strategies.DynamicClassLoader') as mock_loader:
+        with patch('oai_agent_core.strategies.tool_strategies.DynamicClassLoader') as mock_loader:
             mock_tool = MagicMock()
             mock_loader.dynamic_import.return_value = mock_tool
             
@@ -65,7 +65,7 @@ class TestFrameworkToolStrategy:
         
         config = {'module': 'nonexistent_framework'}
         
-        with patch('oai_agent_core.core.tool_strategies.DynamicClassLoader') as mock_loader:
+        with patch('oai_agent_core.strategies.tool_strategies.DynamicClassLoader') as mock_loader:
             mock_loader.dynamic_import.side_effect = ImportError("Module not found")
             
             with pytest.raises(ToolLoadingError):
@@ -106,7 +106,7 @@ class TestPythonClassStrategy:
         mock_tool_instance = MagicMock()
         mock_tool_class.return_value = mock_tool_instance
         
-        with patch('oai_agent_core.core.tool_strategies.DynamicClassLoader') as mock_loader:
+        with patch('oai_agent_core.strategies.tool_strategies.DynamicClassLoader') as mock_loader:
             mock_loader.dynamic_import.return_value = mock_tool_class
             
             result = strategy.load('test_tool', config, MagicMock())
@@ -124,7 +124,7 @@ class TestPythonClassStrategy:
         mock_tool_class = MagicMock()
         mock_tool_class.side_effect = TypeError("Unexpected keyword argument 'invalid'")
         
-        with patch('oai_agent_core.core.tool_strategies.DynamicClassLoader') as mock_loader:
+        with patch('oai_agent_core.strategies.tool_strategies.DynamicClassLoader') as mock_loader:
             mock_loader.dynamic_import.return_value = mock_tool_class
             
             with pytest.raises(ToolConfigurationError):

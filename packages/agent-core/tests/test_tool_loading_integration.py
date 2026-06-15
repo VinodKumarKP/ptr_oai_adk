@@ -4,9 +4,8 @@ Tests the complete tool loading workflow with multiple strategies
 working together to load different types of tools.
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
-from oai_agent_core.core.tool_strategies import (
+from unittest.mock import MagicMock
+from oai_agent_core.strategies.tool_strategies import (
     FrameworkToolStrategy,
     PythonClassStrategy,
     FunctionStrategy,

@@ -4,9 +4,8 @@ Tests each mixin independently with mocked dependencies to verify
 single responsibility and correct behavior.
 """
 
-import pytest
-from unittest.mock import MagicMock, Mock, patch, call
-from oai_agent_core.core.agent_mixins import (
+from unittest.mock import MagicMock
+from oai_agent_core.mixins.agent_mixins import (
     SkillsMixin,
     KnowledgeBaseMixin,
     ToolsMixin,

@@ -12,7 +12,7 @@ from langgraph_supervisor import create_supervisor
 from oai_agent_core.builders.base_agent_builder import BaseAgentBuilder
 from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
-from oai_agent_core.utils.constants import Constants
+from oai_agent_core.core.constants import Constants
 
 from oai_agent_core.langgraph_core.components.configuration.model_config import \
     LangChainModelConfigurationManager as ModelConfigurationManager

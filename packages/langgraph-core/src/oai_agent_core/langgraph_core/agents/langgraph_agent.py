@@ -5,7 +5,7 @@ from typing import List, AsyncGenerator, Optional, Dict, Any
 
 from langchain_core.runnables import RunnableConfig
 from oai_agent_core.core.base_agent import BaseAgent
-from oai_agent_core.utils.constants import Constants
+from oai_agent_core.core.constants import Constants
 from oai_agent_core.processing.message_formatter import MessageFormatter
 
 from oai_agent_core.langgraph_core.builders.agent_builder import AgentBuilder

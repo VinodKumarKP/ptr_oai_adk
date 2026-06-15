@@ -17,7 +17,7 @@ from oai_agent_core.utils.exceptions import (
     ToolConfigurationError,
     MCPLoadingError,
 )
-from oai_agent_core.core.tool_strategies import (
+from oai_agent_core.strategies.tool_strategies import (
     ToolLoadingContext,
     FrameworkToolStrategy,
     PythonClassStrategy,

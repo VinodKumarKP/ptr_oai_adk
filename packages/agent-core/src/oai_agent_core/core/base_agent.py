@@ -13,7 +13,7 @@ from oai_agent_core.components.output_parser.output_model_registry import Output
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.base_model_configuration_manager import BaseModelConfigurationManager
 from oai_agent_core.macros import MacroProcessor
-from oai_agent_core.core.agent_mixins import (
+from oai_agent_core.mixins.agent_mixins import (
     SkillsMixin,
     KnowledgeBaseMixin,
     ToolsMixin,
