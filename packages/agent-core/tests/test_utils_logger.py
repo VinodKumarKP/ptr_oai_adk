@@ -23,16 +23,18 @@ def logger(log_dir):
     )
 
 def test_get_logger():
-    with patch('logging.getLogger') as mock_get_logger:
-        mock_logger = MagicMock()
-        mock_get_logger.return_value = mock_logger
-        
-        logger = get_logger()
-        
-        mock_get_logger.assert_called_with('agent_logger')
-        mock_logger.handlers.clear.assert_called()
-        assert mock_logger.propagate is False
-        assert mock_logger.addHandler.call_count == 2 # File and Console
+    # Patch _get_logger_from_config to None to test the original implementation
+    with patch('oai_agent_core.utils.logger._get_logger_from_config', None):
+        with patch('logging.getLogger') as mock_get_logger:
+            mock_logger = MagicMock()
+            mock_get_logger.return_value = mock_logger
+            
+            logger = get_logger()
+            
+            mock_get_logger.assert_called_with('agent_logger')
+            mock_logger.handlers.clear.assert_called()
+            assert mock_logger.propagate is False
+            assert mock_logger.addHandler.call_count == 2 # File and Console
 
 def test_logger_init(logger, log_dir):
     assert logger.name == "test_logger"

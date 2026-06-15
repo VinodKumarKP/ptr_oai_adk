@@ -18,6 +18,13 @@ from oai_agent_core.core.exceptions import (
     ToolExecutionError,
     MCPLoadingError,
 )
+from oai_agent_core.core.tool_strategies import (
+    ToolLoadingContext,
+    FrameworkToolStrategy,
+    PythonClassStrategy,
+    FunctionStrategy,
+    MCPStrategy,
+)
 
 
 class BaseToolRegistry(ABC):
@@ -46,6 +53,7 @@ class BaseToolRegistry(ABC):
         Args:
             logger: Optional logger instance (creates default if None)
             project_root: Optional project root directory path
+            enable_lazy_loading: Optional flag for lazy tool loading
         """
         self.tools: Dict[str, Any] = {}
         self.logger = logger or logging.getLogger(__name__)
@@ -56,6 +64,17 @@ class BaseToolRegistry(ABC):
         self.enable_lazy_loading = enable_lazy_loading
         self.available_mcp_tools = {}
         self.tools["shell"] = self.shell
+        
+        # Initialize tool loading context with all available strategies
+        self.tool_context = ToolLoadingContext(
+            strategies=[
+                FrameworkToolStrategy(logger=self.logger),
+                PythonClassStrategy(logger=self.logger),
+                FunctionStrategy(logger=self.logger),
+                MCPStrategy(logger=self.logger),
+            ],
+            logger=self.logger
+        )
 
     def is_iterable(self, obj) -> bool:
         if isinstance(obj, list | tuple | set | dict):  # Fast path for common types
@@ -121,32 +140,24 @@ class BaseToolRegistry(ABC):
     def load_mcp_config(self, mcp_config: Dict[str, Any]) -> Any:
         """Load MCP configuration into tool registry for later retrieval.
 
-        This method processes MCP configurations, resolving environment variables
-        and headers, and stores them in `self.mcp_configs`.
+        Uses MCPStrategy to validate and prepare MCP server configurations,
+        resolving environment variables and paths as needed.
 
         Args:
             mcp_config: Dictionary of MCP server configurations.
                         Keys are server names, values are config dicts containing
                         'command', 'args', 'env' (for stdio) or 'url', 'headers' (for http/sse).
         """
-        for mcp_name, mcp in mcp_config.items():
-            env = os.environ.copy()
-            resolved_env = self.update_env(mcp.get('env', {}))
-            resolved_headers = self.update_env(mcp.get('headers', {}))
-
-            env.update(resolved_env)
-            env.update(resolved_headers)
-
-            if 'command' in mcp:
-                mcp['command'] = self.which(mcp['command'])
-                if 'headers' in mcp:
-                    mcp.pop('headers')
-                mcp['env'] = env
-            elif 'url' in mcp:
-                if 'env' in mcp:
-                    mcp.pop('env')
-                mcp['headers'] = env
-            self.mcp_configs[mcp_name] = mcp
+        for mcp_name, mcp_server_config in mcp_config.items():
+            try:
+                # Use MCPStrategy to validate and resolve the MCP configuration
+                resolved_config = self.tool_context.load_mcp(mcp_name, mcp_server_config, self)
+                self.mcp_configs[mcp_name] = resolved_config
+                self.logger.debug(f"Loaded MCP configuration for '{mcp_name}'")
+            except MCPLoadingError as e:
+                self.logger.error(f"Failed to load MCP '{mcp_name}': {e}")
+            except Exception as e:
+                self.logger.error(f"Unexpected error loading MCP '{mcp_name}': {e}", exc_info=True)
 
     @abstractmethod
     def load_mcp_tools_from_config(self, mcp_config: Dict[str, Any], agent_name: Optional[str] = None) -> Any:
@@ -219,10 +230,12 @@ class BaseToolRegistry(ABC):
             except (ToolLoadingError, ToolConfigurationError) as e:
                 self.logger.error(f"Failed to load tool '{tool_name}': {e}")
             except Exception as e:
-                self.logger.error(f"Unexpected error loading tool '{tool_name}': {e}", exc_info=True)
+                self.logger.error(f"Failed to load tool '{tool_name}': {e}", exc_info=True)
 
     def _load_single_tool(self, tool_name: str, tool_config: Any) -> None:
         """Load a single tool based on its configuration.
+
+        Dispatches to the appropriate loading method based on the tool configuration type.
 
         Args:
             tool_name: Name of the tool
@@ -232,15 +245,13 @@ class BaseToolRegistry(ABC):
             self.logger.warning(f"Invalid tool configuration for '{tool_name}': expected dict")
             return
 
-        # Determine tool type and load accordingly
-        if 'module' in tool_config:
-            self._load_module_tool(tool_name, tool_config)
-        elif 'function' in tool_config:
+        # Dispatch based on configuration type
+        if 'function' in tool_config:
             self._load_function_tool(tool_name, tool_config)
+        elif 'module' in tool_config or 'url' in tool_config or 'command' in tool_config:
+            self._load_module_tool(tool_name, tool_config)
         else:
-            self.logger.warning(
-                f"Tool '{tool_name}' has no 'module' or 'function' specified"
-            )
+            self.logger.warning(f"Tool '{tool_name}' has no 'module' or 'function' specified in config")
 
     def _load_module_tool(self, tool_name: str, tool_config: Dict[str, Any]) -> None:
         """Load a tool from a Python module.
