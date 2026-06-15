@@ -476,10 +476,6 @@ class _LazyTaskStoreProxy(TaskStore):  # type: ignore[misc]
     """
 
     def __init__(self) -> None:
-        if not _A2A_SDK_AVAILABLE:
-            raise ImportError(
-                "_LazyTaskStoreProxy requires 'a2a-sdk[http-server]' to be installed."
-            )
         self._delegate: Optional[TaskStore] = None
         self._ready = asyncio.Event()
 
@@ -489,6 +485,10 @@ class _LazyTaskStoreProxy(TaskStore):  # type: ignore[misc]
         self._ready.set()
 
     async def _wait(self) -> "TaskStore":
+        if not _A2A_SDK_AVAILABLE:
+            raise ImportError(
+                "_LazyTaskStoreProxy requires 'a2a-sdk[http-server]' to be installed."
+            )
         if self._delegate is None:
             await self._ready.wait()
         assert self._delegate is not None
