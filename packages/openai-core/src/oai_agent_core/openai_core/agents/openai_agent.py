@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List
 
 from oai_agent_core.core.base_agent import BaseAgent
+from oai_agent_core.components.observability.tracing import traced
 from oai_agent_core.core.constants import Constants
 from oai_agent_core.processing.message_formatter import MessageFormatter
 from oai_agent_core.processing.output_serializer import OutputSerializer
@@ -364,6 +365,7 @@ class OpenAIAgent(BaseAgent):
 
         return result
 
+    @traced("agent.ainvoke")
     async def ainvoke(self, user_message: str, config: Optional[Dict[str, Any]] = None):
         """Asynchronously invoke the agent and get the full response.
 
@@ -411,6 +413,7 @@ class OpenAIAgent(BaseAgent):
         """
         return asyncio.run(self.ainvoke(user_message, config))
 
+    @traced("agent.astream")
     async def astream(self, user_message: str, config: Optional[Dict[str, Any]] = None):
         """Asynchronously stream the agent's response.
 

@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional, Type
 from oai_agent_core.components.configuration.model_config import ConfigManager
 from oai_agent_core.components.configuration.model_config import config_manager
 from oai_agent_core.components.observability.langfuse_observability_manager import LangfuseObservabilityManager
+from oai_agent_core.components.observability.tracing import trace_span, configure_tracing
 from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.base_model_configuration_manager import BaseModelConfigurationManager
@@ -112,7 +113,12 @@ class BaseAgent(ABC):
         self.agent_name = agent_name
         self.config_manager = ConfigManager(config_root=config_root)
         self.config_root = config_root
-        
+
+        # Auto-configure tracing (if OTEL_EXPORTER_OTLP_ENDPOINT is set and the
+        # host hasn't already set up a provider) using the agent name as the
+        # service.name shown in Jaeger/Tempo. No-op otherwise.
+        configure_tracing(default_service_name=agent_name)
+
         # Initialize logger first for service use
         self.logger = logging.getLogger(__name__)
 
@@ -422,13 +428,15 @@ class BaseAgent(ABC):
         async def _load_tools_and_mcp():
             tools_config = self.agent_config.get('tools', {})
             if tools_config:
-                tool_count = self._tool_service.load_tools(self.tool_registry, tools_config)
-                self.logger.info(f"Loaded {tool_count} global tools into registry")
+                with trace_span("agent.load_tools", agent_name=self.agent_name):
+                    tool_count = self._tool_service.load_tools(self.tool_registry, tools_config)
+                    self.logger.info(f"Loaded {tool_count} global tools into registry")
 
             mcp_config = self.agent_config.get('mcps', self.agent_config.get('servers', {}))
             if mcp_config:
-                mcp_count = self._tool_service.load_mcp_tools(self.tool_registry, mcp_config)
-                self.logger.info(f"Loaded {mcp_count} MCP servers into registry")
+                with trace_span("agent.load_mcp", agent_name=self.agent_name):
+                    mcp_count = self._tool_service.load_mcp_tools(self.tool_registry, mcp_config)
+                    self.logger.info(f"Loaded {mcp_count} MCP servers into registry")
 
         async def _init_global_kb():
             raw_kb = self.agent_config.get('knowledge_base')
@@ -439,37 +447,40 @@ class BaseAgent(ABC):
                 return
             resolved_sources = BaseAgent._merge_registry_into_sources(sources, registry_config)
 
-            try:
-                self.global_kb_factory = await asyncio.to_thread(
-                    self._kb_service.create_knowledge_base_factory,
-                    kb_factory_class,
-                    resolved_sources,
-                    self.llm,
-                    self.document_loader,
-                    self.vector_store,
-                )
-                self.logger.info("Initialized global knowledge base")
-            except ImportError as e:
-                self.logger.warning("Could not initialize global knowledge base: missing dependencies %s", e)
-            except Exception as e:
-                self.logger.error("Failed to initialize global knowledge base: %s", e)
+            with trace_span("agent.load_kb", agent_name=self.agent_name):
+                try:
+                    self.global_kb_factory = await asyncio.to_thread(
+                        self._kb_service.create_knowledge_base_factory,
+                        kb_factory_class,
+                        resolved_sources,
+                        self.llm,
+                        self.document_loader,
+                        self.vector_store,
+                    )
+                    self.logger.info("Initialized global knowledge base")
+                except ImportError as e:
+                    self.logger.warning("Could not initialize global knowledge base: missing dependencies %s", e)
+                except Exception as e:
+                    self.logger.error("Failed to initialize global knowledge base: %s", e)
 
         async def _init_memory_store():
             memory_config = self.agent_config.get('memory', {})
             if memory_config:
-                self.memory_store = self._memory_service.create_memory_store(
-                    memory_config=memory_config,
-                    llm=self.llm
-                )
-                if self.memory_store:
-                    self.logger.info("Initialized memory store")
+                with trace_span("agent.load_memory", agent_name=self.agent_name):
+                    self.memory_store = self._memory_service.create_memory_store(
+                        memory_config=memory_config,
+                        llm=self.llm
+                    )
+                    if self.memory_store:
+                        self.logger.info("Initialized memory store")
 
         async def _init_guardrails():
             guardrails_config = self.agent_config.get('guardrails', {})
             if guardrails_config:
-                self.guardrails_manager = self._guardrails_service.create_guardrails_manager(
-                    guardrails_config
-                )
+                with trace_span("agent.load_guardrails", agent_name=self.agent_name):
+                    self.guardrails_manager = self._guardrails_service.create_guardrails_manager(
+                        guardrails_config
+                    )
                 if not self.guardrails_manager:
                     return
                 self.logger.info("Initialized guardrails manager")
@@ -538,21 +549,24 @@ class BaseAgent(ABC):
                 pull_target = self.skill_registry.skills_cache_dir
                 self.logger.info(f"Pulling missing skills from registry into: {pull_target}")
 
-                for skill_name in all_required_skills:
-                    try:
-                        self.logger.info(f"  • Pulling '{skill_name}'...")
-                        success = await self.skill_registry.pull_skill(skill_name)
-                        if success:
-                            self.logger.info(f"    ✓ Successfully pulled '{skill_name}'")
-                        else:
-                            self.logger.warning(f"    ⚠ Failed to pull skill '{skill_name}'")
-                    except Exception as e:
-                        self.logger.warning(f"    ⚠ Error pulling skill '{skill_name}': {e}")
+                with trace_span("agent.pull_skills", agent_name=self.agent_name,
+                                skill_count=len(all_required_skills)):
+                    for skill_name in all_required_skills:
+                        try:
+                            self.logger.info(f"  • Pulling '{skill_name}'...")
+                            success = await self.skill_registry.pull_skill(skill_name)
+                            if success:
+                                self.logger.info(f"    ✓ Successfully pulled '{skill_name}'")
+                            else:
+                                self.logger.warning(f"    ⚠ Failed to pull skill '{skill_name}'")
+                        except Exception as e:
+                            self.logger.warning(f"    ⚠ Error pulling skill '{skill_name}': {e}")
 
             # ======= STEP 3: DISCOVER ALL SKILLS (LOCAL + PULLED) FROM SAME DIRECTORY =======
             # Both local and pulled skills are in skill_dir, discover them all together
             self.logger.info(f"Discovering all skills from: {skill_dir}")
-            self.skill_registry.discover_skills(skills_dir=skill_dir)
+            with trace_span("agent.discover_skills", agent_name=self.agent_name):
+                self.skill_registry.discover_skills(skills_dir=skill_dir)
             self.logger.info(f"Discovered {len(self.skill_registry.skills)} skill(s)")
 
             # Log summary
@@ -572,23 +586,26 @@ class BaseAgent(ABC):
         async def _init_structured_output_models():
             structured_output_models_props = self.agent_config.get("structured_output", {})
             if structured_output_models_props:
-                self.output_model_registry.discover_output_models(
-                    output_model_dir=structured_output_models_props.get('script_dir')
-                )
+                with trace_span("agent.load_structured_output", agent_name=self.agent_name):
+                    self.output_model_registry.discover_output_models(
+                        output_model_dir=structured_output_models_props.get('script_dir')
+                    )
 
 
         async def _augment_system_prompt_task():
             self.agent_config = self._augment_system_prompt(self.agent_config)
 
 
-        await asyncio.gather(_load_tools_and_mcp(),
-                             _init_global_kb(),
-                             _init_memory_store(),
-                             _init_guardrails(),
-                             _init_environment_vars(),
-                             _init_agent_skills(),
-                             _init_structured_output_models(),
-                             _augment_system_prompt_task())
+        with trace_span("agent.load_resources", agent_name=self.agent_name,
+                        agent_type=self.agent_type):
+            await asyncio.gather(_load_tools_and_mcp(),
+                                 _init_global_kb(),
+                                 _init_memory_store(),
+                                 _init_guardrails(),
+                                 _init_environment_vars(),
+                                 _init_agent_skills(),
+                                 _init_structured_output_models(),
+                                 _augment_system_prompt_task())
 
     def _augment_system_prompt(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively process and resolve macros in system prompts.

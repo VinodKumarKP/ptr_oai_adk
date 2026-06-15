@@ -5,6 +5,7 @@ from typing import List, AsyncGenerator, Optional, Dict, Any
 
 from langchain_core.runnables import RunnableConfig
 from oai_agent_core.core.base_agent import BaseAgent
+from oai_agent_core.components.observability.tracing import traced
 from oai_agent_core.core.constants import Constants
 from oai_agent_core.processing.message_formatter import MessageFormatter
 
@@ -271,6 +272,7 @@ class LangGraphAgent(BaseAgent):
         formatted = self.message_formatter.format_message(user_message, inputs)
         return formatted if formatted is not None else user_message
 
+    @traced("agent.astream")
     async def astream(
             self,
             user_message: str,
@@ -390,6 +392,7 @@ class LangGraphAgent(BaseAgent):
                 "session_id": self.session_id
             }
 
+    @traced("agent.ainvoke")
     async def ainvoke(
             self,
             user_message: str,

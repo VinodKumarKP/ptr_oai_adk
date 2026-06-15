@@ -58,12 +58,22 @@ guardrails = [
     "guardrails-ai @ git+https://github.com/guardrails-ai/guardrails.git@v0.10.0"
 ]
 
+# Distributed tracing. The API alone is enough to emit spans into a provider the
+# host configures. The SDK + OTLP exporter are needed for agent-core to
+# auto-configure a provider from OTEL_EXPORTER_OTLP_ENDPOINT when the host hasn't.
+tracing = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0"
+]
+
 # All optional dependencies
 all = [
     "oai-agent-core[chromadb]",
     "oai-agent-core[postgres]",
     "oai-agent-core[s3]",
-    "oai-agent-core[guardrails]"
+    "oai-agent-core[guardrails]",
+    "oai-agent-core[tracing]"
 ]
 
 [tool.hatch.version]

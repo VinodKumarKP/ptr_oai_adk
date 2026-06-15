@@ -9,6 +9,7 @@ import asyncio
 from typing import Optional, Any, Dict, AsyncGenerator
 
 from oai_agent_core.core.base_agent import BaseAgent
+from oai_agent_core.components.observability.tracing import traced
 from oai_agent_core.core.constants import Constants
 from oai_agent_core.processing.message_formatter import MessageFormatter
 from oai_agent_core.processing.output_serializer import OutputSerializer
@@ -365,6 +366,7 @@ class StrandsAgent(BaseAgent):
 
         return result
 
+    @traced("agent.ainvoke")
     async def ainvoke(
             self,
             user_message: str,
@@ -419,6 +421,7 @@ class StrandsAgent(BaseAgent):
         """
         return asyncio.run(self.ainvoke(user_message, config))
 
+    @traced("agent.astream")
     async def astream(
             self,
             user_message: str,
