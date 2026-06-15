@@ -234,7 +234,8 @@ class BaseToolRegistry(ABC):
     def _load_single_tool(self, tool_name: str, tool_config: Any) -> None:
         """Load a single tool based on its configuration.
 
-        Dispatches to the appropriate loading method based on the tool configuration type.
+        Uses ToolLoadingContext with strategies to load tools based on configuration type.
+        Strategies handle dispatching for framework tools, class tools, and function tools.
 
         Args:
             tool_name: Name of the tool
@@ -244,39 +245,82 @@ class BaseToolRegistry(ABC):
             self.logger.warning(f"Invalid tool configuration for '{tool_name}': expected dict")
             return
 
-        # Dispatch based on configuration type
-        if 'function' in tool_config:
-            self._load_function_tool(tool_name, tool_config)
-        elif 'module' in tool_config or 'url' in tool_config or 'command' in tool_config:
-            self._load_module_tool(tool_name, tool_config)
-        else:
-            self.logger.warning(f"Tool '{tool_name}' has no 'module' or 'function' specified in config")
+        try:
+            # Use strategy pattern via ToolLoadingContext
+            # Strategies will determine the appropriate loading method based on config
+            tool = self.tool_context.load_tool(tool_name, tool_config, self)
+
+            # Handle None returns (strategy couldn't load the tool)
+            if tool is None:
+                self.logger.warning(f"Failed to load tool '{tool_name}': returned None")
+                return
+
+            # Handle different return types from strategies
+            if isinstance(tool, dict):
+                # FunctionStrategy returns dict of functions
+                # Register each function individually
+                func_list = []
+                for func_name, func_obj in tool.items():
+                    # All items from strategy dict should be registered as tools
+                    # They may be StructuredTool, plain functions, or other callable objects
+                    self.tools[func_name] = func_obj
+                    func_list.append(func_obj)
+                    
+                    # Get documentation
+                    doc = None
+                    if hasattr(func_obj, 'description'):
+                        doc = func_obj.description
+                    elif hasattr(func_obj, '__doc__'):
+                        doc = inspect.getdoc(func_obj)
+                    doc = doc or "No description"
+                    doc_preview = doc.split('\n')[0][:60] if doc else "No description"
+                    self.logger.info(f"✅ Loaded tool: {func_name} - {doc_preview}")
+
+                # Track in custom_modules for get_tools_for_agent
+                if func_list:
+                    module_name = tool_config.get('module', tool_name)
+                    self.custom_modules[module_name] = func_list
+                    self.custom_modules[tool_name] = func_list
+                    self.logger.info(f"✅ Successfully loaded {len(func_list)} tool(s) from {module_name}")
+
+            elif tool and callable(tool) and not isinstance(tool, type):
+                # Single function or callable
+                # Check if it's a function that needs framework decoration
+                if not (hasattr(tool, '__wrapped__') and tool.__wrapped__ is not None) and \
+                   not self._is_framework_tool_type(tool):
+                    # Wrap with framework decorator
+                    tool = self._get_framework_tool_decorator()(tool)
+
+                self.tools[tool_name] = tool
+                doc = inspect.getdoc(tool) or "No description"
+                doc_preview = doc.split('\n')[0][:60]
+                self.logger.info(f"✅ Loaded tool: {tool_name} - {doc_preview}")
+            else:
+                # Class-based tool or module with functions
+                self.tools[tool_name] = tool
+                self.logger.info(f"✅ Loaded tool: {tool_name}")
+
+        except (ToolLoadingError, ToolConfigurationError) as e:
+            self.logger.error(f"Failed to load tool '{tool_name}': {e}")
+        except Exception as e:
+            self.logger.error(f"Failed to load tool '{tool_name}': {e}", exc_info=True)
 
     def _load_module_tool(self, tool_name: str, tool_config: Dict[str, Any]) -> None:
         """Load a tool from a Python module.
+
+        This method is kept for backward compatibility but now delegates to
+        the strategy pattern used by _load_single_tool, which dispatches to:
+        - FrameworkToolStrategy: for framework built-in tools
+        - PythonClassStrategy: for custom class-based tools
+        - FunctionStrategy: for module-based function tools
 
         Args:
             tool_name: Name of the tool
             tool_config: Configuration containing module path and optional class name
         """
-        module_name = tool_config['module']
-        class_name = tool_config.get('class', None)
-        function_list = tool_config.get('function_list', [])
-        base_path = tool_config.get('base_path', None)
-
-        if base_path:
-            base_path = self._resolve_base_path(base_path)
-            sys.path.insert(0, os.path.expanduser(base_path))
-
-        # Check if it's a framework-specific tool
-        if self._is_framework_builtin_tool(module_name):
-            self._load_framework_builtin_tool(tool_name, module_name)
-        elif class_name is None:
-            # Load functions from module
-            function_params = tool_config.get('function_params', {})
-            self._load_tools_from_module(module_name, function_list, function_params, tool_name)
-        else:
-            self._load_custom_module_tool(tool_name, tool_config, module_name)
+        # Delegate to _load_single_tool which uses the strategy pattern
+        # This ensures consistent behavior across all loading paths
+        self._load_single_tool(tool_name, tool_config)
 
     def _resolve_base_path(self, base_path: str) -> str:
         """Resolve the base path, handling relative paths from project root.
@@ -574,34 +618,32 @@ class BaseToolRegistry(ABC):
     def _load_function_tool(self, tool_name: str, tool_config: Dict[str, Any]) -> None:
         """Load a custom function-based tool.
 
-        This feature is not yet implemented. Use module-based tools instead.
+        Uses FunctionStrategy to load functions by path or from module.
+
+        This method is kept for backward compatibility but now delegates to
+        the strategy pattern used by _load_single_tool.
 
         Args:
             tool_name: Name of the tool
             tool_config: Configuration containing function reference
 
-        Raises:
-            NotImplementedError: Function-based tools are not supported. Use module-based
-                tools with 'module' and 'function_list' config instead.
+        Example (both now supported via FunctionStrategy):
+            # Load single function by path
+            tools:
+              my_tool:
+                function: my_module.my_function
 
-        Example:
-            Instead of (not supported):
-                tools:
-                  my_tool:
-                    function: my_module.my_function
-
-            Use this (supported):
-                tools:
-                  my_tool:
-                    module: my_module
-                    function_list:
-                      - my_function
+            # Load multiple functions from module
+            tools:
+              my_tools:
+                module: my_module
+                function_list:
+                  - func1
+                  - func2
         """
-        func_name = tool_config.get('function', 'unknown')
-        raise NotImplementedError(
-            f"Function-based tools are not supported: '{func_name}'. "
-            f"Use module-based tools instead with 'module' and 'function_list' configuration."
-        )
+        # Delegate to _load_single_tool which uses FunctionStrategy
+        # This ensures consistent behavior
+        self._load_single_tool(tool_name, tool_config)
 
     def get_tools_for_agent(self, tool_names: Any) -> List[Any]:
         """Get tool instances for an agent based on configured tool names.

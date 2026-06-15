@@ -193,78 +193,100 @@ class TestLoadSingleTool:
     
     def test_load_single_tool_module_based(self, registry):
         config = {"module": "test_module", "class": "TestClass"}
+        mock_tool = MagicMock()
         
-        with patch.object(registry, '_load_module_tool') as mock_load:
+        # Mock the strategy pattern call instead of _load_module_tool
+        with patch.object(registry.tool_context, 'load_tool', return_value=mock_tool) as mock_load:
             registry._load_single_tool("test_tool", config)
             
-        mock_load.assert_called_once_with("test_tool", config)
+        mock_load.assert_called_once_with("test_tool", config, registry)
+        assert registry.tools["test_tool"] == mock_tool
     
     def test_load_single_tool_function_based(self, registry):
         config = {"function": "test_function"}
+        mock_tool = MagicMock()
         
-        with patch.object(registry, '_load_function_tool') as mock_load:
+        # Mock the strategy pattern call instead of _load_function_tool
+        with patch.object(registry.tool_context, 'load_tool', return_value=mock_tool) as mock_load:
             registry._load_single_tool("test_tool", config)
             
-        mock_load.assert_called_once_with("test_tool", config)
+        mock_load.assert_called_once_with("test_tool", config, registry)
+        assert registry.tools["test_tool"] == mock_tool
     
     def test_load_single_tool_no_module_or_function(self, registry):
         config = {"invalid": "config"}
         
+        # With strategy pattern, invalid config raises ToolConfigurationError
+        # which is caught and logged as an error (not warning)
         registry._load_single_tool("test_tool", config)
-        assert "has no 'module' or 'function' specified" in registry.logger.warning_calls[0]
+        # Check error was logged instead of warning
+        assert len(registry.logger.error_calls) > 0
 
 
 class TestLoadModuleTool:
-    """Test module-based tool loading"""
+    """Test module-based tool loading - now delegated to strategy pattern"""
     
     @pytest.fixture
     def registry(self):
         return ConcreteToolRegistry(logger=MockLogger())
     
     def test_load_module_tool_builtin(self, registry):
+        """Test that _load_module_tool delegates to strategy pattern"""
         config = {"module": "framework_tools"}
+        mock_tool = MagicMock()
         
-        with patch.object(registry, '_load_framework_builtin_tool') as mock_load:
+        # Mock the strategy context instead of the old methods
+        with patch.object(registry.tool_context, 'load_tool', return_value=mock_tool):
             registry._load_module_tool("test_tool", config)
             
-        mock_load.assert_called_once_with("test_tool", "framework_tools")
+        # Verify tool was registered
+        assert registry.tools["test_tool"] == mock_tool
     
     def test_load_module_tool_custom_functions(self, registry):
+        """Test that _load_module_tool delegates to strategy pattern"""
         config = {
             "module": "custom_module",
             "function_list": ["func1", "func2"],
             "function_params": {"func1": {"param": "value"}}
         }
+        mock_tool = MagicMock()
         
-        with patch.object(registry, '_load_tools_from_module') as mock_load:
+        # Mock the strategy context
+        with patch.object(registry.tool_context, 'load_tool', return_value=mock_tool):
             registry._load_module_tool("test_tool", config)
             
-        mock_load.assert_called_once_with("custom_module", ["func1", "func2"], {"func1": {"param": "value"}}, "test_tool")
+        # Verify tool was registered
+        assert registry.tools["test_tool"] == mock_tool
     
     def test_load_module_tool_custom_class(self, registry):
+        """Test that _load_module_tool delegates to strategy pattern"""
         config = {
             "module": "custom_module",
             "class": "CustomClass"
         }
+        mock_tool = MagicMock()
         
-        with patch.object(registry, '_load_custom_module_tool') as mock_load:
+        # Mock the strategy context
+        with patch.object(registry.tool_context, 'load_tool', return_value=mock_tool):
             registry._load_module_tool("test_tool", config)
             
-        mock_load.assert_called_once_with("test_tool", config, "custom_module")
+        # Verify tool was registered
+        assert registry.tools["test_tool"] == mock_tool
     
     def test_load_module_tool_with_base_path(self, registry):
+        """Test that base_path is handled by strategy pattern"""
         config = {
             "module": "custom_module",
             "base_path": "./custom/path"
         }
+        mock_tool = MagicMock()
         
-        with patch.object(registry, '_resolve_base_path', return_value="/resolved/path"), \
-             patch.object(registry, '_load_tools_from_module') as mock_load:
-            
+        # Mock the strategy context
+        with patch.object(registry.tool_context, 'load_tool', return_value=mock_tool):
             registry._load_module_tool("test_tool", config)
             
-        # Check that sys.path was modified
-        assert "/resolved/path" in sys.path or sys.path[0] == "/resolved/path"
+        # Verify tool was registered (base_path handling is now in strategy)
+        assert registry.tools["test_tool"] == mock_tool
 
 
 class TestResolveBasePath:
@@ -578,18 +600,23 @@ class TestLoadCustomModuleTool:
 
 
 class TestLoadFunctionTool:
-    """Test function-based tool loading"""
+    """Test function-based tool loading - now supported via FunctionStrategy"""
     
     @pytest.fixture
     def registry(self):
         return ConcreteToolRegistry(logger=MockLogger())
     
-    def test_load_function_tool_not_implemented(self, registry):
+    def test_load_function_tool_supported(self, registry):
+        """Test that function-based tools are now supported via strategy pattern"""
         config = {"function": "test_function"}
-
-        with pytest.raises(NotImplementedError, match="Function-based tools are not supported"):
+        mock_tool = MagicMock()
+        
+        # Function-based tools are now supported via FunctionStrategy
+        with patch.object(registry.tool_context, 'load_tool', return_value=mock_tool):
             registry._load_function_tool("test_tool", config)
-
+        
+        # Verify tool was registered
+        assert registry.tools["test_tool"] == mock_tool
 
 class TestGetToolsForAgent:
     """Test tool retrieval for agents"""
