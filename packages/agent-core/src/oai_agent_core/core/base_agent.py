@@ -422,35 +422,13 @@ class BaseAgent(ABC):
         async def _load_tools_and_mcp():
             tools_config = self.agent_config.get('tools', {})
             if tools_config:
-                # Phase 3.3: Try ToolService for loading tools
-                try:
-                    tool_count = self._tool_service.load_tools(
-                        self.tool_registry,
-                        tools_config
-                    )
-                    self.logger.info(f"Loaded {tool_count} global tools into registry (via ToolService)")
-                except Exception as e:
-                    # Fallback to direct registry loading (backward compatibility)
-                    self.logger.debug(f"Service-based tool loading failed, using tool_registry directly: {e}")
-                    await asyncio.to_thread(self.tool_registry.load_tools_from_config, tools_config)
-                    self.logger.info(
-                        "Loaded %d global tools into registry",
-                        len(self.tool_registry.tools)
-                    )
+                tool_count = self._tool_service.load_tools(self.tool_registry, tools_config)
+                self.logger.info(f"Loaded {tool_count} global tools into registry")
 
             mcp_config = self.agent_config.get('mcps', self.agent_config.get('servers', {}))
             if mcp_config:
-                # Phase 3.3: Try ToolService for loading MCP tools
-                try:
-                    mcp_count = self._tool_service.load_mcp_tools(
-                        self.tool_registry,
-                        mcp_config
-                    )
-                    self.logger.info(f"Loaded {mcp_count} MCP servers into registry (via ToolService)")
-                except Exception as e:
-                    # Fallback to direct MCP config loading (backward compatibility)
-                    self.logger.debug(f"Service-based MCP loading failed, using tool_registry directly: {e}")
-                    self.tool_registry.load_mcp_config(mcp_config)
+                mcp_count = self._tool_service.load_mcp_tools(self.tool_registry, mcp_config)
+                self.logger.info(f"Loaded {mcp_count} MCP servers into registry")
 
         async def _init_global_kb():
             raw_kb = self.agent_config.get('knowledge_base')
@@ -460,125 +438,42 @@ class BaseAgent(ABC):
             if not sources:
                 return
             resolved_sources = BaseAgent._merge_registry_into_sources(sources, registry_config)
-            
-            # Phase 3.3: Try KnowledgeBaseService for KB initialization
+
             try:
-                # Create KB factory via service
-                kb_factory = self._kb_service.create_knowledge_base_factory(
-                    llm=self.llm,
-                    document_loader=self.document_loader,
-                    vector_store=self.vector_store
+                self.global_kb_factory = await asyncio.to_thread(
+                    self._kb_service.create_knowledge_base_factory,
+                    kb_factory_class,
+                    resolved_sources,
+                    self.llm,
+                    self.document_loader,
+                    self.vector_store,
                 )
-                
-                if kb_factory:
-                    # Create KB factory as a callable that matches kb_factory_class signature
-                    self.global_kb_factory = lambda **kwargs: kb_factory
-                    self.logger.info("Initialized global knowledge base (via KnowledgeBaseService)")
-                else:
-                    # Service returned None, fallback to direct initialization
-                    self.logger.debug("Service returned None, falling back to direct KB initialization")
-                    self.global_kb_factory = await asyncio.to_thread(
-                        kb_factory_class,
-                        knowledge_base_config=resolved_sources,
-                        logger=self.logger,
-                        project_root=self.config_root,
-                        llm=self.llm,
-                        document_loader=self.document_loader,
-                        vector_store=self.vector_store
-                    )
-                    self.logger.info("Initialized global knowledge base")
+                self.logger.info("Initialized global knowledge base")
             except ImportError as e:
                 self.logger.warning("Could not initialize global knowledge base: missing dependencies %s", e)
             except Exception as e:
-                self.logger.debug(f"Service-based KB initialization failed, using direct initialization: {e}")
-                try:
-                    self.global_kb_factory = await asyncio.to_thread(
-                        kb_factory_class,
-                        knowledge_base_config=resolved_sources,
-                        logger=self.logger,
-                        project_root=self.config_root,
-                        llm=self.llm,
-                        document_loader=self.document_loader,
-                        vector_store=self.vector_store
-                    )
-                    self.logger.info("Initialized global knowledge base")
-                except Exception as e2:
-                    self.logger.error("Failed to initialize global knowledge base: %s", e2)
+                self.logger.error("Failed to initialize global knowledge base: %s", e)
 
         async def _init_memory_store():
             memory_config = self.agent_config.get('memory', {})
             if memory_config:
-                # Phase 3.6: Try MemoryService for memory store initialization
-                try:
-                    store = self._memory_service.create_memory_store(
-                        memory_config=memory_config,
-                        llm=self.llm
-                    )
-                    if store:
-                        self.memory_store = store
-                        self.logger.info("Initialized memory store (via MemoryService)")
-                    else:
-                        # Service returned None, fallback to direct initialization
-                        self.logger.debug("Service returned None, falling back to direct memory store initialization")
-                        from oai_agent_core.core.base_memory_store import BaseMemoryStore
-
-                        class ConfigurableMemoryStore(BaseMemoryStore):
-                            pass
-
-                        self.memory_store = ConfigurableMemoryStore(
-                            memory_config=memory_config,
-                            logger=self.logger,
-                            project_root=self.config_root,
-                            llm=self.llm
-                        )
-                        self.logger.info("Initialized memory store")
-                except Exception as e:
-                    # Fallback to direct initialization
-                    self.logger.debug(f"Service-based memory store initialization failed, using direct: {e}")
-                    try:
-                        from oai_agent_core.core.base_memory_store import BaseMemoryStore
-
-                        class ConfigurableMemoryStore(BaseMemoryStore):
-                            pass
-
-                        self.memory_store = ConfigurableMemoryStore(
-                            memory_config=memory_config,
-                            logger=self.logger,
-                            project_root=self.config_root,
-                            llm=self.llm
-                        )
-                        self.logger.info("Initialized memory store")
-                    except Exception as e2:
-                        self.logger.error("Failed to initialize memory store: %s", e2)
+                self.memory_store = self._memory_service.create_memory_store(
+                    memory_config=memory_config,
+                    llm=self.llm
+                )
+                if self.memory_store:
+                    self.logger.info("Initialized memory store")
 
         async def _init_guardrails():
             guardrails_config = self.agent_config.get('guardrails', {})
             if guardrails_config:
-                # Phase 3.6: Try GuardrailsService for guardrails manager initialization
-                try:
-                    manager = self._guardrails_service.create_guardrails_manager(guardrails_config)
-                    if manager:
-                        self.guardrails_manager = manager
-                        self.logger.info("Initialized guardrails manager (via GuardrailsService)")
-                    else:
-                        # Service returned None, fallback to direct initialization
-                        self.logger.debug("Service returned None, falling back to direct guardrails initialization")
-                        from oai_agent_core.components.guardrails.guardrails_manager import GuardrailManager
-                        self.guardrails_manager = GuardrailManager(self.config_root,
-                                                                   guardrails_config,
-                                                                   logger=self.logger)
-                except Exception as e:
-                    # Fallback to direct initialization
-                    self.logger.debug(f"Service-based guardrails initialization failed, using direct: {e}")
-                    try:
-                        from oai_agent_core.components.guardrails.guardrails_manager import GuardrailManager
-                        self.guardrails_manager = GuardrailManager(self.config_root,
-                                                                   guardrails_config,
-                                                                   logger=self.logger)
-                    except Exception as e2:
-                        self.logger.error("Failed to initialize guardrails manager: %s", e2)
-                        return
-                
+                self.guardrails_manager = self._guardrails_service.create_guardrails_manager(
+                    guardrails_config
+                )
+                if not self.guardrails_manager:
+                    return
+                self.logger.info("Initialized guardrails manager")
+
                 # Apply guardrails prompt to system prompt if validation is enabled
                 if self.guardrails_manager and guardrails_config.get('enable_agent_validation', True):
                     if len(self.agent_config.get('agent_list', [])) > 1:
