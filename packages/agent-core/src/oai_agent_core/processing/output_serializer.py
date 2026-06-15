@@ -4,6 +4,8 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 
+from oai_agent_core.core.exceptions import OutputSerializationError
+
 
 class OutputSerializer:
     """Handles serialization and storage of agent execution outputs.
@@ -54,8 +56,8 @@ class OutputSerializer:
         if hasattr(obj, '__dict__'):
             try:
                 return obj.__dict__
-            except Exception as e:
-                self.logger.warning(f"Failed to serialize __dict__: {e}")
+            except (AttributeError, TypeError) as e:
+                self.logger.warning(f"Failed to access __dict__: {e}")
                 return {'content': str(obj), '_serialization_fallback': True}
 
         return {
@@ -101,6 +103,8 @@ class OutputSerializer:
                 f"(total: {len(self.session_outputs[session_id])})"
             )
 
+        except (TypeError, ValueError) as e:
+            self.logger.error(f"Invalid output data for session '{session_id}': {e}")
         except Exception as e:
             self.logger.error(
                 f"Failed to write output to session '{session_id}': {e}",

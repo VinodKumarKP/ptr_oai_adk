@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import re
+import subprocess
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -142,8 +143,11 @@ class SkillRegistry:
             self.logger.info(
                 f"Loaded metadata for {len(self.skill_metadata_cache)} skills from registry"
             )
+        except (httpx.HTTPError, asyncio.TimeoutError) as e:
+            self.logger.warning(f"Failed to load remote skill metadata (network error): {e}")
+            self.logger.info("Continuing with local-only skills discovery")
         except Exception as e:
-            self.logger.warning(f"Failed to load remote skill metadata: {e}")
+            self.logger.warning(f"Failed to load remote skill metadata: {e}", exc_info=True)
             self.logger.info("Continuing with local-only skills discovery")
 
     async def _load_remote_skill_metadata(self):
@@ -192,8 +196,10 @@ class SkillRegistry:
 
         except httpx.HTTPError as e:
             self.logger.error(f"HTTP error loading skill metadata: {e}")
+        except asyncio.TimeoutError as e:
+            self.logger.error(f"Timeout loading skill metadata: {e}")
         except Exception as e:
-            self.logger.error(f"Error loading skill metadata: {e}")
+            self.logger.error(f"Unexpected error loading skill metadata: {e}", exc_info=True)
 
     async def get_skill_metadata(self, skill_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -231,6 +237,9 @@ class SkillRegistry:
                 self.logger.debug(f"Fetched metadata for skill: {skill_name}")
                 return metadata
 
+        except (httpx.HTTPError, asyncio.TimeoutError) as e:
+            self.logger.debug(f"Failed to fetch metadata for '{skill_name}' (network error): {e}")
+            return None
         except Exception as e:
             self.logger.debug(f"Failed to fetch metadata for '{skill_name}': {e}")
             return None
@@ -330,6 +339,11 @@ class SkillRegistry:
             )
             return True
 
+        except (OSError, IOError) as e:
+            self.logger.error(
+                f"Failed to clone skill '{skill_name}' from GitHub (file/command error): {e}"
+            )
+            return False
         except Exception as e:
             self.logger.error(
                 f"Failed to clone skill '{skill_name}' from GitHub: {e}",
@@ -439,9 +453,14 @@ class SkillRegistry:
                 )
                 return False
 
+        except (OSError, IOError) as e:
+            self.logger.error(
+                f"Error pulling skill '{skill_name}' (file/network error): {e}"
+            )
+            return False
         except Exception as e:
             self.logger.error(
-                f"Error pulling skill '{skill_name}' from GitHub: {e}",
+                f"Unexpected error pulling skill '{skill_name}': {e}",
                 exc_info=True
             )
             return False
@@ -479,6 +498,9 @@ class SkillRegistry:
                 )
                 return versions
 
+        except (httpx.HTTPError, asyncio.TimeoutError) as e:
+            self.logger.error(f"Failed to list versions for '{skill_name}' (network error): {e}")
+            return []
         except Exception as e:
             self.logger.error(f"Failed to list versions for '{skill_name}': {e}")
             return []
@@ -533,6 +555,10 @@ class SkillRegistry:
                 )
                 return True
 
+        except (httpx.HTTPError, asyncio.TimeoutError) as e:
+            # Non-critical - don't fail if usage reporting fails
+            self.logger.debug(f"Failed to report usage (network error): {e}")
+            return False
         except Exception as e:
             # Non-critical - don't fail if usage reporting fails
             self.logger.debug(f"Failed to report usage: {e}")
@@ -602,8 +628,10 @@ class SkillRegistry:
 
             except (ParseError, ValidationError) as e:
                 self.logger.warning(f"Skipping invalid skill in {skill_dir}: {e}")
+            except (OSError, IOError) as e:
+                self.logger.error(f"Failed to read skill in {skill_dir} (file error): {e}")
             except Exception as e:
-                self.logger.error(f"An unexpected error occurred while parsing skill in {skill_dir}: {e}")
+                self.logger.error(f"Unexpected error parsing skill in {skill_dir}: {e}", exc_info=True)
 
         self.logger.info(f"Discovery complete. Found {len(self.skills)} skills.")
 

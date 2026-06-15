@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 
 from oai_agent_core.utils.dynamic_class_loader import DynamicClassLoader
+from oai_agent_core.core.exceptions import (
+    ToolLoadingError,
+    ToolConfigurationError,
+    ToolExecutionError,
+    MCPLoadingError,
+)
 
 
 class BaseToolRegistry(ABC):
@@ -108,8 +114,9 @@ class BaseToolRegistry(ABC):
             }
         except subprocess.TimeoutExpired:
             raise TimeoutError("The shell command timed out after 15 seconds.")
-        except Exception as e:
-            return {"stdout": "", "stderr": f"An unexpected error occurred: {str(e)}", "return_code": 1}
+        except (OSError, IOError) as e:
+            self.logger.debug(f"Shell command execution failed: {e}")
+            return {"stdout": "", "stderr": f"Shell command error: {str(e)}", "return_code": 1}
 
     def load_mcp_config(self, mcp_config: Dict[str, Any]) -> Any:
         """Load MCP configuration into tool registry for later retrieval.
@@ -209,8 +216,10 @@ class BaseToolRegistry(ABC):
         for tool_name, tool_config in tools_config.items():
             try:
                 self._load_single_tool(tool_name, tool_config)
-            except Exception as e:
+            except (ToolLoadingError, ToolConfigurationError) as e:
                 self.logger.error(f"Failed to load tool '{tool_name}': {e}")
+            except Exception as e:
+                self.logger.error(f"Unexpected error loading tool '{tool_name}': {e}", exc_info=True)
 
     def _load_single_tool(self, tool_name: str, tool_config: Any) -> None:
         """Load a single tool based on its configuration.
@@ -363,6 +372,11 @@ class BaseToolRegistry(ABC):
                 f"❌ Failed to import module '{module_name}': {e}\n"
                 f"   Make sure the module is installed and accessible."
             )
+        except (AttributeError, TypeError, KeyError) as e:
+            self.logger.error(
+                f"❌ Invalid tool configuration in module '{module_name}': {e}",
+                exc_info=True
+            )
         except Exception as e:
             self.logger.error(
                 f"❌ Unexpected error loading tools from '{module_name}': {e}",
@@ -433,8 +447,11 @@ class BaseToolRegistry(ABC):
                 else:
                     self.logger.debug(f"  ⏭️ Skipped: {name} (external)")
 
-            except Exception as e:
+            except (AttributeError, TypeError) as e:
                 self.logger.debug(f"  ⚠️  Error checking {name}: {e}")
+                continue
+            except Exception as e:
+                self.logger.debug(f"  ⚠️  Unexpected error checking {name}: {e}")
                 continue
 
         function_names = [self._get_function_name(f) for f in functions]

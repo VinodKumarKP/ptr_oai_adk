@@ -54,3 +54,78 @@ class Constants:
     MESSAGE_TYPE_HANDOFF = "handoff"
     MESSAGE_TYPE_SYSTEM = "system"
     MESSAGE_TYPE_USER = "user"
+
+
+from enum import Enum
+
+
+class ConfigKeys(Enum):
+    """Top-level agent configuration keys.
+    
+    These are the main configuration sections supported in agent YAML files.
+    Using an Enum prevents typos and enables IDE autocomplete.
+    
+    Example:
+        >>> config_keys = ConfigKeys.KNOWLEDGE_BASE.value
+        >>> # Access: config.get(ConfigKeys.KNOWLEDGE_BASE.value)
+    """
+    TYPE = "type"
+    MODEL = "model"
+    TOOLS = "tools"
+    KNOWLEDGE_BASE = "knowledge_base"
+    MEMORY = "memory"
+    GUARDRAILS = "guardrails"
+    SKILLS = "skills"
+    OBSERVABILITY = "observability"
+    EXTENSIONS = "extensions"
+
+
+class KnowledgeBaseConfigKeys(Enum):
+    """Knowledge base section configuration keys."""
+    SOURCES = "sources"
+    DATA_SOURCES = "data_sources"
+    VECTOR_STORE_TYPE = "vector_store_type"
+    REGISTRY = "registry"
+    REGISTRY_URL = "registry_url"
+    AUTH_TOKEN = "auth_token"
+    EMBEDDING_MODEL = "embedding_model"
+    COLLECTION_NAME = "collection_name"
+    CHUNK_SIZE = "chunk_size"
+    CHUNK_OVERLAP = "chunk_overlap"
+
+
+class ToolConfigKeys(Enum):
+    """Tools section configuration keys."""
+    FRAMEWORK_TOOLS = "framework_tools"
+    CUSTOM_TOOLS = "custom_tools"
+    MCP_TOOLS = "mcp_tools"
+    SHELL_ENABLED = "shell_enabled"
+
+
+class MemoryConfigKeys(Enum):
+    """Memory section configuration keys."""
+    TYPE = "type"
+    STORE_TYPE = "store_type"
+    PERSIST = "persist"
+    DB_PATH = "db_path"
+    MAX_MESSAGES = "max_messages"
+
+
+class GuardrailConfigKeys(Enum):
+    """Guardrails section configuration keys."""
+    ENABLED = "enabled"
+    POLICIES = "policies"
+    INPUT_RULES = "input_rules"
+    OUTPUT_RULES = "output_rules"
+
+
+class ModelConfigKeys(Enum):
+    """Model configuration keys."""
+    NAME = "name"
+    PROVIDER = "provider"
+    TEMPERATURE = "temperature"
+    TOP_P = "top_p"
+    MAX_TOKENS = "max_tokens"
+    API_KEY = "api_key"
+    ENDPOINT = "endpoint"
+

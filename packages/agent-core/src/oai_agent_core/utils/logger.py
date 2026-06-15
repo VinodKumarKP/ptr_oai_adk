@@ -4,6 +4,12 @@ Logger - Advanced logging solution with rotating files and structured output
 This module provides a comprehensive logging solution designed for production
 applications with features like rotating files, structured logging, and
 performance monitoring.
+
+Note: For basic logging setup, prefer using logging_config module:
+    >>> from oai_agent_core.core.logging_config import setup_logging, get_logger
+    >>> setup_logging(log_level=logging.INFO)
+    
+This module is useful for advanced features like performance tracking and JSON formatting.
 """
 
 import json
@@ -22,6 +28,13 @@ from logging.handlers import RotatingFileHandler
 import sys
 import time
 
+# Import the standard logging setup from logging_config
+try:
+    from oai_agent_core.core.logging_config import get_logger as _get_logger_from_config
+except ImportError:
+    _get_logger_from_config = None
+
+
 def get_logger() -> logging.Logger:
     """
     Get a configured logger instance with file and console handlers.
@@ -31,7 +44,15 @@ def get_logger() -> logging.Logger:
     
     Returns:
         logging.Logger: Configured logger instance.
+        
+    Deprecated:
+        Use logging_config.get_logger() or logging_config.setup_logging() instead.
     """
+    # Try to use the standard logging_config setup if available
+    if _get_logger_from_config:
+        return _get_logger_from_config('agent_logger')
+    
+    # Fallback to original implementation
     logger = logging.getLogger('agent_logger')  # Use named logger instead of root
 
     logger.handlers.clear()  # Clear existing handlers
@@ -458,7 +479,11 @@ def create_agent_logger(name: str = "AgentClient",
                         enable_json: bool = False,
                         enable_performance: bool = True) -> Logger:
     """
-    Factory function to create a pre-configured AgentLogger
+    Factory function to create a pre-configured AgentLogger.
+    
+    For application-wide logging setup, use logging_config.setup_logging() instead:
+        >>> from oai_agent_core.core.logging_config import setup_logging
+        >>> setup_logging(log_level=logging.INFO, log_file='logs/agent.log')
 
     Args:
         name: Logger name
@@ -469,6 +494,15 @@ def create_agent_logger(name: str = "AgentClient",
 
     Returns:
         Configured AgentLogger instance
+        
+    Example:
+        >>> # For advanced features (performance tracking, JSON logging)
+        >>> logger = create_agent_logger('MyAgent', enable_performance=True)
+        >>> 
+        >>> with logger.track_performance('my_operation'):
+        >>>     # do work
+        >>>     pass
+        >>> logger.log_performance_stats('my_operation')
     """
     return Logger(
         name=name,

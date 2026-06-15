@@ -9,6 +9,10 @@ from typing import Dict, Any, List, Optional, Callable
 from oai_agent_core.components.vector_store.vector_store_factory import VectorStoreFactory
 from oai_agent_core.utils.prompt_analyzer import PromptAnalyzer
 from oai_agent_core.utils.env_resolver import ConfigResolver
+from oai_agent_core.core.exceptions import (
+    VectorStoreCreationError,
+    EmbeddingError,
+)
 
 
 class BaseKnowledgeBaseFactory(ABC):
@@ -338,8 +342,11 @@ class BaseKnowledgeBaseFactory(ABC):
                 embedding_function=embeddings,
                 **vector_store_settings
             )
+        except (TypeError, ValueError, KeyError) as e:
+            self.logger.error(f"Invalid vector store configuration for {name}: {e}")
+            return
         except Exception as e:
-            self.logger.error(f"Failed to create vector store for {name}: {e}")
+            self.logger.error(f"Failed to create vector store for {name}: {e}", exc_info=True)
             return
 
         # Load Documents
@@ -656,6 +663,9 @@ class BaseKnowledgeBaseFactory(ABC):
         except ImportError:
             self.logger.warning("Could not import litellm. Please install litellm.")
             return None
+        except (TypeError, ValueError) as e:
+            self.logger.error(f"Invalid LiteLLM embeddings configuration: {e}")
+            return None
         except Exception as e:
-            self.logger.error(f"Error creating LiteLLM embeddings: {e}")
+            self.logger.error(f"Unexpected error creating LiteLLM embeddings: {e}", exc_info=True)
             return None
