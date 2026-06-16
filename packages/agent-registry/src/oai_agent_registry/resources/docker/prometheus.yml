@@ -20,33 +20,14 @@ scrape_configs:
   #   static_configs:
   #     - targets: ['jaeger:8888']
 
-  # Auto-discover agent containers deployed by the registry via the Docker API.
-  # Every agent container is labelled (oai.scrape / oai.metrics.port /
-  # oai.metrics.path) by the registry's compose generator, so newly deployed
-  # agents are scraped automatically on the next discovery refresh — no edits
-  # to this file are needed.
+  # Agents are discovered from a target file the registry maintains. The registry
+  # is the single source of truth for every agent's endpoint — whether it deployed
+  # the agent as a container or it was registered externally via /register — and
+  # rewrites this file on register/deregister/startup. Newly registered agents are
+  # picked up on the next refresh; no edits to this file are needed.
   - job_name: 'oai-agents'
-    docker_sd_configs:
-      - host: unix:///var/run/docker.sock
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/agents.json
         refresh_interval: 15s
-    relabel_configs:
-      # Keep only containers that opted in to scraping.
-      - source_labels: [__meta_docker_container_label_oai_scrape]
-        regex: 'true'
-        action: keep
-      # Scrape <container_ip>:<metrics_port> on the agent network.
-      - source_labels:
-          - __meta_docker_network_ip
-          - __meta_docker_container_label_oai_metrics_port
-        separator: ':'
-        target_label: __address__
-      # Honour a custom metrics path if set (defaults to /metrics).
-      - source_labels: [__meta_docker_container_label_oai_metrics_path]
-        regex: '(.+)'
-        target_label: __metrics_path__
-      # Friendly labels: agent service name + container name.
-      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
-        target_label: agent
-      - source_labels: [__meta_docker_container_name]
-        regex: '/?(.*)'
-        target_label: container
+    metrics_path: /metrics

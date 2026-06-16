@@ -9,7 +9,8 @@ import logging
 import os
 import time
 from datetime import datetime
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Tuple, Union
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import HTTPException, Request
@@ -228,12 +229,69 @@ class AgentRegistry:
         except Exception as exc:
             logger.warning("auto_start_infra: Postgres readiness check failed: %s", exc)
 
+    # ── Prometheus file-based service discovery ─────────────────────────────
+
+    @staticmethod
+    def _endpoint_host_port(cfg: Any) -> Tuple[Optional[str], Optional[Any]]:
+        """Resolve an agent's (host, port) for a Prometheus scrape target.
+
+        Loopback hosts are rewritten to ``host.docker.internal`` so the
+        Prometheus container can reach agents (or registry-deployed containers
+        that publish their port) running on the host.
+        """
+        endpoint = getattr(cfg, "endpoint", None)
+        port = getattr(cfg, "port", None)
+        host = None
+        if endpoint:
+            raw = endpoint if "://" in endpoint else f"http://{endpoint}"
+            parsed = urlparse(raw)
+            host = parsed.hostname
+            port = parsed.port or port
+        if host in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+            host = "host.docker.internal"
+        return host, port
+
+    def _write_prometheus_targets(self) -> None:
+        """Write Prometheus file_sd targets for all enabled agents.
+
+        The registry is the single source of truth for every agent's endpoint —
+        whether the agent was deployed as a container or registered externally —
+        so it emits the scrape-target list. Prometheus (running as a container)
+        watches this file via ``file_sd_configs``. Written atomically so
+        Prometheus never reads a partial file.
+        """
+        build_dir = getattr(self, "_build_dir", None)
+        if not build_dir:
+            return
+        try:
+            targets_dir = os.path.join(build_dir, "targets")
+            os.makedirs(targets_dir, exist_ok=True)
+
+            entries = []
+            for name, cfg in self.agents.items():
+                if getattr(cfg, "enabled", True) is False:
+                    continue
+                host, port = self._endpoint_host_port(cfg)
+                if not host or not port:
+                    continue
+                entries.append({"targets": [f"{host}:{port}"], "labels": {"agent": name}})
+
+            path = os.path.join(targets_dir, "agents.json")
+            tmp_path = f"{path}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as fh:
+                json.dump(entries, fh, indent=2)
+            os.replace(tmp_path, path)
+            logger.info("Wrote %d Prometheus scrape target(s) to %s", len(entries), path)
+        except Exception as exc:
+            logger.warning("Failed to write Prometheus targets: %s", exc)
+
     async def initialize(self):
         """Initialize the registry: HTTP client, infra, database, deployers, status checks."""
         self.client = httpx.AsyncClient()
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
         build_dir = os.path.abspath(os.path.join(current_dir, "..", "resources", "docker"))
+        self._build_dir = build_dir
 
         # Optional: start infra services (postgres, valkey) before DB init.
         # Sequence: generate compose → docker compose up -d postgres valkey → TCP-poll postgres.
@@ -248,6 +306,10 @@ class AgentRegistry:
             await self._sync_agents_to_db()
         else:
             logger.warning("RegistryDatabaseLogger could not be initialized.")
+
+        # Emit the initial Prometheus scrape-target list from all known agents
+        # (config seeds + those loaded from Postgres).
+        self._write_prometheus_targets()
 
         seed_configs = self._build_seed_configs_from_agents()
 
@@ -633,6 +695,7 @@ class AgentRegistry:
         self.agents[agent_name] = agent_config
         logger.info("Registered agent '%s' at %s.", agent_name, agent_config.endpoint)
         await self._persist_agent_to_db(agent_name, agent_config)
+        self._write_prometheus_targets()
 
         return JSONResponse({"message": f"Agent '{agent_name}' registered successfully."})
 
@@ -670,6 +733,7 @@ class AgentRegistry:
             self.agents[agent_name] = agent_config
             logger.info("Registered agent '%s' at %s.", agent_name, agent_config.endpoint)
             await self._persist_agent_to_db(agent_name, agent_config)
+            self._write_prometheus_targets()
             yield f"data: ✅ Agent '{agent_name}' registered successfully.\n\n"
         except Exception as exc:
             yield f"data: ❌ Error during registration: {exc}\n\n"
@@ -686,6 +750,7 @@ class AgentRegistry:
         self.agents[agent_name].enabled = False
         logger.info("Deactivating agent '%s'.", agent_name)
         await self.db_logger.deregister_agent(agent_name=agent_name)
+        self._write_prometheus_targets()
 
         return JSONResponse({"message": f"Agent '{agent_name}' deactivated successfully."})
 

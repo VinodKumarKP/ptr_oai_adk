@@ -104,14 +104,6 @@ class DockerComposeManager(BaseDockerComposeManager, BaseDeployer):  # type: ign
             "build": {"context": ".", "dockerfile": dockerfile, "args": build_args},
             "container_name": f"agent-{service_name.replace('_', '-')}",
             "ports": [f"{port}:{port}"],
-            # Labels consumed by Prometheus Docker service discovery so newly
-            # deployed agents are scraped automatically (see resources/docker/
-            # prometheus.yml -> job 'oai-agents').
-            "labels": {
-                "oai.scrape": "true",
-                "oai.metrics.port": str(port),
-                "oai.metrics.path": "/metrics",
-            },
             "volumes": volumes,
             "environment": self._build_environment_list(
                 service_name, port, env_overrides, base_url, local_registry_url
@@ -239,9 +231,6 @@ class DockerComposeManager(BaseDockerComposeManager, BaseDeployer):  # type: ign
         services["prometheus"] = {
             "image": "prom/prometheus:latest",
             "container_name": "agent-prometheus",
-            # Run as root so the container can read the host Docker socket used by
-            # docker_sd_configs (the default 'nobody' user gets permission denied).
-            "user": "root",
             "command": [
                 "--config.file=/etc/prometheus/prometheus.yml",
                 "--storage.tsdb.path=/prometheus",
@@ -252,8 +241,9 @@ class DockerComposeManager(BaseDockerComposeManager, BaseDeployer):  # type: ign
             "volumes": [
                 "./prometheus.yml:/etc/prometheus/prometheus.yml:ro",
                 "prometheus_data:/prometheus",
-                # Read-only Docker socket for service discovery of agent containers.
-                "/var/run/docker.sock:/var/run/docker.sock:ro",
+                # file_sd target list maintained by the registry (host writes,
+                # Prometheus reads). No Docker socket / root needed.
+                "./targets:/etc/prometheus/targets:ro",
             ],
             "restart": "unless-stopped",
         }
