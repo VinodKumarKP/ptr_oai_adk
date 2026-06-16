@@ -45,22 +45,22 @@ scheduler = ["apscheduler"]
 # OTLP span export to Jaeger/collector, FastAPI/requests auto-instrumentation, and
 # the prometheus_client backing the /metrics endpoint.
 observability = [
-    "opentelemetry-sdk>=1.20.0",
-    "opentelemetry-exporter-otlp>=1.20.0",
-    "opentelemetry-instrumentation-fastapi>=0.41b0",
-    "opentelemetry-instrumentation-requests>=0.41b0",
-    "prometheus-client>=0.17.0",
+    "opentelemetry-sdk==1.42.1",
+    "opentelemetry-exporter-otlp==1.42.1",
+    "opentelemetry-instrumentation-fastapi==0.63b1",
+    "opentelemetry-instrumentation-requests==0.63b1",
+    "prometheus-client==0.24.1",
 ]
 all = [
     "aiosqlite",
     "asyncpg",
     "a2a-sdk[http-server]==1.0.2",
     "apscheduler",
-    "opentelemetry-sdk>=1.20.0",
-    "opentelemetry-exporter-otlp>=1.20.0",
-    "opentelemetry-instrumentation-fastapi>=0.41b0",
-    "opentelemetry-instrumentation-requests>=0.41b0",
-    "prometheus-client>=0.17.0",
+    "opentelemetry-sdk==1.42.1",
+    "opentelemetry-exporter-otlp==1.42.1",
+    "opentelemetry-instrumentation-fastapi==0.63b1",
+    "opentelemetry-instrumentation-requests==0.63b1",
+    "prometheus-client==0.24.1",
 ]
 
 [tool.hatch.metadata]
