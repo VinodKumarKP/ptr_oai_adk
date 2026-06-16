@@ -51,6 +51,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         client_ip = request.client.host if request.client else "unknown"
         
+        # Skip instrumentation for observability-internal paths to avoid
+        # self-referential metric inflation (Prometheus scrapes, health probes).
+        if path in ("/metrics", "/health", "/ready", "/status"):
+            return await call_next(request)
+        
         # Tracing context
         trace_attributes = {
             "http.method": method,

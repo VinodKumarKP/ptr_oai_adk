@@ -86,8 +86,9 @@ async def verify_api_key(
         AuthenticationException: If token is missing or invalid.
         HTTPException: If authentication service is unavailable.
     """
-    # Bypass authentication for /health, /ready and /status endpoints
-    if request.url.path in ["/health", "/ready", "/status"]:
+    # Bypass authentication for /health, /ready, /status and /metrics endpoints
+    # /metrics must be unauthenticated so Prometheus can scrape it without credentials
+    if request.url.path in ["/health", "/ready", "/status", "/metrics"]:
         return True
 
     # 1. Check if Auth is globally enabled

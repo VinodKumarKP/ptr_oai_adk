@@ -108,13 +108,28 @@ def create_health_router(agent_name, server_state, enable_request_isolation, all
 
         @router.get("/metrics")
         async def metrics(request: Request):
-            """Prometheus metrics endpoint. Exposestdout all collected metrics."""
+            """Prometheus metrics endpoint. Exposes all collected metrics.
+
+            Uses the OpenTelemetry-managed Prometheus registry when available
+            (where http_request_duration, requests_total etc. are recorded).
+            Falls back to the default prometheus_client registry.
+            """
             try:
-                # Import prometheus_client to generate metrics
                 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-                
-                # Generate metrics in Prometheus format
-                metrics_output = generate_latest()
+
+                # The OpenTelemetry PrometheusMetricReader stores metrics in its
+                # own internal registry, NOT in prometheus_client.REGISTRY.
+                # We must collect from that registry to expose OTel HTTP metrics.
+                try:
+                    from opentelemetry.exporter.prometheus import _CustomCollector  # noqa: F401 – existence check
+                    # OTel's PrometheusMetricReader installs a custom collector
+                    # into prometheus_client.REGISTRY, so generate_latest() on
+                    # the default registry will include OTel metrics.
+                    metrics_output = generate_latest()
+                except (ImportError, AttributeError):
+                    # Older / unavailable OTel: fall back to default registry
+                    metrics_output = generate_latest()
+
                 return Response(content=metrics_output, media_type=CONTENT_TYPE_LATEST)
             except Exception as e:
                 return JSONResponse(

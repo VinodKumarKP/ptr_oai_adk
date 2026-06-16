@@ -171,32 +171,59 @@ class ObservabilityManager:
             self.logger.warning(f"Failed to initialize OpenTelemetry tracing: {e}")
     
     def _initialize_metrics(self) -> None:
-        """Initialize Prometheus metrics."""
+        """Initialize Prometheus metrics.
+        
+        Reuses an already-installed global MeterProvider when one exists (e.g.
+        set by oai_agent_core, openlit, or FastAPI instrumentation before this
+        class is instantiated).  Only creates a new MeterProvider + 
+        PrometheusMetricReader when no real SDK provider is active yet.
+        
+        Background: OTel silently ignores a second set_meter_provider() call
+        ("Overriding … is not allowed"), so if we always create a new provider
+        the new PrometheusMetricReader ends up orphaned — its private registry
+        never appears in generate_latest() output.
+        """
         if not _OTEL_AVAILABLE or not self.config.ENABLE_METRICS:
             self.logger.info("Prometheus metrics disabled or not available")
             return
         
         try:
-            # Prometheus metrics reader
-            prometheus_reader = PrometheusMetricReader()
-            
-            # Create MeterProvider
-            resource = Resource.create({
-                "service.name": self.config.SERVICE_NAME,
-                "service.version": self.config.SERVICE_VERSION,
-            })
-            meter_provider = MeterProvider(resource=resource, metric_readers=[prometheus_reader])
-            
-            # Set global meter provider
-            metrics.set_meter_provider(meter_provider)
-            self.meter = metrics.get_meter(__name__)
-            
-            # Define metrics
+            from opentelemetry.sdk.metrics import MeterProvider as SDKMeterProvider
+
+            existing_provider = metrics.get_meter_provider()
+            provider_is_real = isinstance(existing_provider, SDKMeterProvider)
+
+            if provider_is_real:
+                # A real provider already exists (set by oai_agent_core, openlit,
+                # FastAPI instrumentation, etc.).  Reuse it — our metrics will
+                # ride along on whatever PrometheusMetricReader it already owns.
+                self.meter = metrics.get_meter(__name__)
+                self.logger.info(
+                    "Prometheus metrics: reusing existing global MeterProvider "
+                    "(PrometheusMetricReader already registered by another module)"
+                )
+            else:
+                # No real provider yet — create one with our own reader.
+                prometheus_reader = PrometheusMetricReader()
+
+                resource = Resource.create({
+                    "service.name": self.config.SERVICE_NAME,
+                    "service.version": self.config.SERVICE_VERSION,
+                })
+                meter_provider = MeterProvider(resource=resource, metric_readers=[prometheus_reader])
+                metrics.set_meter_provider(meter_provider)
+                self.meter = metrics.get_meter(__name__)
+                self.logger.info(
+                    f"Prometheus metrics initialized with new MeterProvider "
+                    f"(port {self.config.METRICS_PORT})"
+                )
+
+            # Define instruments regardless of which path was taken.
             self._setup_metrics()
-            
-            self.logger.info(f"Prometheus metrics initialized (port {self.config.METRICS_PORT})")
+
         except Exception as e:
             self.logger.warning(f"Failed to initialize Prometheus metrics: {e}")
+
     
     def _setup_metrics(self) -> None:
         """Setup Prometheus metrics."""

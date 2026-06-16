@@ -35,7 +35,10 @@ import functools
 import inspect
 import logging
 import os
+import time
 from contextlib import contextmanager
+
+from oai_agent_core.components.observability import metrics as _metrics
 
 logger = logging.getLogger(__name__)
 
@@ -356,16 +359,38 @@ def trace_span(name, attributes=None, level=INFO, **attribute_kwargs):
     Yields:
         The active span, or ``None`` when tracing is unavailable / suppressed.
     """
-    if not _OTEL_AVAILABLE or _coerce_level(level) < _trace_level_threshold:
+    if not _OTEL_AVAILABLE:
         yield None
+        return
+
+    attrs = dict(attributes or {})
+    attrs.update(attribute_kwargs)
+    agent = attrs.get("agent_name")
+
+    # Metrics are recorded independently of the trace level, so operation
+    # counts/durations are captured even when the span itself is suppressed.
+    record_metrics = _metrics.is_metrics_enabled()
+    start = time.perf_counter() if record_metrics else 0.0
+    op_status = "ok"
+
+    # Span is emitted only if its level meets the active trace threshold.
+    if _coerce_level(level) < _trace_level_threshold:
+        try:
+            yield None
+        except Exception:
+            op_status = "error"
+            raise
+        finally:
+            if record_metrics:
+                _metrics.record_operation(
+                    name, agent=agent, status=op_status,
+                    seconds=time.perf_counter() - start,
+                )
         return
 
     # Lazily stand up a provider from env on first use (no-op if the host already
     # configured one, or if auto-config isn't applicable).
     _ensure_provider_from_env()
-
-    attrs = dict(attributes or {})
-    attrs.update(attribute_kwargs)
 
     with _tracer.start_as_current_span(name) as span:
         for key, value in attrs.items():
@@ -374,9 +399,16 @@ def trace_span(name, attributes=None, level=INFO, **attribute_kwargs):
         try:
             yield span
         except Exception as exc:
+            op_status = "error"
             span.record_exception(exc)
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             raise
+        finally:
+            if record_metrics:
+                _metrics.record_operation(
+                    name, agent=agent, status=op_status,
+                    seconds=time.perf_counter() - start,
+                )
 
 
 async def traced_stream(name, source, level=INFO, **attributes):

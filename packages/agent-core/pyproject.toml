@@ -68,13 +68,22 @@ tracing = [
     "openlit>=1.0.0"
 ]
 
+# Prometheus metrics. The API/SDK come via [tracing]; these add the Prometheus
+# reader and exposition client used for standalone /metrics endpoints.
+metrics = [
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-prometheus>=0.41b0",
+    "prometheus-client>=0.17.0"
+]
+
 # All optional dependencies
 all = [
     "oai-agent-core[chromadb]",
     "oai-agent-core[postgres]",
     "oai-agent-core[s3]",
     "oai-agent-core[guardrails]",
-    "oai-agent-core[tracing]"
+    "oai-agent-core[tracing]",
+    "oai-agent-core[metrics]"
 ]
 
 [tool.hatch.version]

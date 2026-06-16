@@ -10,6 +10,7 @@ from oai_agent_core.components.configuration.model_config import ConfigManager
 from oai_agent_core.components.configuration.model_config import config_manager
 from oai_agent_core.components.observability.langfuse_observability_manager import LangfuseObservabilityManager
 from oai_agent_core.components.observability.tracing import trace_span, traced, configure_tracing
+from oai_agent_core.components.observability.metrics import configure_metrics
 from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.base_model_configuration_manager import BaseModelConfigurationManager
@@ -118,6 +119,11 @@ class BaseAgent(ABC):
         # host hasn't already set up a provider) using the agent name as the
         # service.name shown in Jaeger/Tempo. No-op otherwise.
         configure_tracing(default_service_name=agent_name)
+
+        # Auto-configure Prometheus metrics. Reuses a host-provided MeterProvider
+        # (e.g. the HTTP server's /metrics) or, when PROMETHEUS_ENABLED is set,
+        # stands up a standalone exposition endpoint. No-op otherwise.
+        configure_metrics(default_service_name=agent_name)
 
         # Initialize logger first for service use
         self.logger = logging.getLogger(__name__)
