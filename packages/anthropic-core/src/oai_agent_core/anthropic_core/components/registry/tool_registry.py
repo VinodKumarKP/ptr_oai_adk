@@ -96,9 +96,10 @@ class AnthropicToolRegistry(BaseToolRegistry):
         try:
             # DynamicClassLoader has only static methods — do not instantiate it
             if func_name:
-                func = DynamicClassLoader.load_function(module_path, func_name)
+                module = DynamicClassLoader.dynamic_import_module(module_path)
+                func = getattr(module, func_name, None)
             elif class_name:
-                cls = DynamicClassLoader.load_class(module_path, class_name)
+                cls = DynamicClassLoader.dynamic_import(module_path, class_name)
                 instance = cls()
                 func = getattr(instance, "run", None) or getattr(instance, "__call__", None)
             else:

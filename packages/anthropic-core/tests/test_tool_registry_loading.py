@@ -23,18 +23,51 @@ def test_register_tool_from_config_no_target_noop(registry):
     assert "t" not in registry.custom_tools
 
 
-def test_register_tool_from_config_function_loader_missing(registry):
-    # register_tool_from_config calls DynamicClassLoader.load_function, which does
-    # not exist on DynamicClassLoader -> AttributeError is caught and the tool is
-    # NOT registered. (Latent bug: single-tool YAML configs never load this way.)
-    assert not hasattr(DynamicClassLoader, "load_function")
+def test_register_tool_from_config_function_success(registry, monkeypatch):
+    # module + function: imports the module and pulls the named callable off it.
+    def my_func():
+        pass
+
+    module = types.ModuleType("m")
+    module.f = my_func
+    monkeypatch.setattr(DynamicClassLoader, "dynamic_import_module",
+                        staticmethod(lambda name: module))
     registry.register_tool_from_config("t", {"module": "m", "function": "f"})
-    assert "t" not in registry.custom_tools
+    assert registry.custom_tools["t"] is my_func
 
 
-def test_register_tool_from_config_class_loader_missing(registry):
-    assert not hasattr(DynamicClassLoader, "load_class")
+def test_register_tool_from_config_class_success(registry, monkeypatch):
+    # module + class: imports the class, instantiates it, and uses its run() method.
+    class Tool:
+        def run(self):
+            return "ran"
+
+    monkeypatch.setattr(DynamicClassLoader, "dynamic_import",
+                        staticmethod(lambda module, name: Tool))
     registry.register_tool_from_config("t", {"module": "m", "class": "Tool"})
+    assert "t" in registry.custom_tools
+    assert registry.custom_tools["t"]() == "ran"
+
+
+def test_register_tool_from_config_class_callable_fallback(registry, monkeypatch):
+    # A class with no run() falls back to its __call__ instance method.
+    class Tool:
+        def __call__(self):
+            return "called"
+
+    monkeypatch.setattr(DynamicClassLoader, "dynamic_import",
+                        staticmethod(lambda module, name: Tool))
+    registry.register_tool_from_config("t", {"module": "m", "class": "Tool"})
+    assert registry.custom_tools["t"]() == "called"
+
+
+def test_register_tool_from_config_import_error_swallowed(registry, monkeypatch):
+    # Import failures are caught and logged; the tool is simply not registered.
+    def boom(name):
+        raise ImportError("nope")
+
+    monkeypatch.setattr(DynamicClassLoader, "dynamic_import_module", staticmethod(boom))
+    registry.register_tool_from_config("t", {"module": "m", "function": "f"})
     assert "t" not in registry.custom_tools
 
 
