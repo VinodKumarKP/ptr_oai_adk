@@ -54,6 +54,15 @@ def get_common_agent_env(
         "AGENT_REGISTRY_URL": local_registry_url,
         "FORCE_AUTH": "false",
         "TRUSTED_CIDRS": "127.0.0.0/8,::1/128,172.16.0.0/12",
+        # Observability defaults so deployed agents emit to the bundled stack:
+        # Prometheus metrics on /metrics and OTLP traces to Jaeger. Overridable
+        # via env_overrides. Inside Docker these resolve to the compose services.
+        "PROMETHEUS_ENABLED": "true",
+        "OTEL_SERVICE_NAME": agent_name,
+        "OTEL_EXPORTER_OTLP_ENDPOINT": (
+            "http://jaeger:4317" if deployment_mode == "docker"
+            else "http://localhost:4317"
+        ),
     })
     for key, value in (env_overrides or {}).items():
         env[key] = str(value)

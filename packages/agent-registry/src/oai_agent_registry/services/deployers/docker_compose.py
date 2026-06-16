@@ -104,6 +104,14 @@ class DockerComposeManager(BaseDockerComposeManager, BaseDeployer):  # type: ign
             "build": {"context": ".", "dockerfile": dockerfile, "args": build_args},
             "container_name": f"agent-{service_name.replace('_', '-')}",
             "ports": [f"{port}:{port}"],
+            # Labels consumed by Prometheus Docker service discovery so newly
+            # deployed agents are scraped automatically (see resources/docker/
+            # prometheus.yml -> job 'oai-agents').
+            "labels": {
+                "oai.scrape": "true",
+                "oai.metrics.port": str(port),
+                "oai.metrics.path": "/metrics",
+            },
             "volumes": volumes,
             "environment": self._build_environment_list(
                 service_name, port, env_overrides, base_url, local_registry_url
@@ -206,6 +214,69 @@ class DockerComposeManager(BaseDockerComposeManager, BaseDeployer):  # type: ign
             },
         }
 
+        # ── Observability infra (distributed tracing + metrics dashboards) ─────
+        # Mirrors packages/agent-server/examples/docker-compose.yml. Agents and
+        # the registry export OTLP traces to Jaeger (:4317) and expose Prometheus
+        # metrics; Grafana is pre-wired to both via provisioned data sources.
+        services["jaeger"] = {
+            # Jaeger v2 (OpenTelemetry-Collector based). v1 (all-in-one) is EOL as
+            # of 2025-12-31. v2 is OTLP-native and ships an all-in-one default
+            # config (OTLP receivers + in-memory storage + UI), so no extra flags
+            # are needed. Legacy agent (6831/udp) and collector (14250) ports are
+            # gone — agents send OTLP to :4317.
+            "image": "jaegertracing/jaeger:latest",
+            "container_name": "agent-jaeger",
+            "networks": {self._network_name: {"ipv4_address": "172.25.0.12"}},
+            "extra_hosts": ["host.docker.internal:host-gateway"],
+            "ports": [
+                "16686:16686",     # Jaeger UI
+                "4317:4317",       # OTLP gRPC
+                "4318:4318",       # OTLP HTTP
+            ],
+            "restart": "unless-stopped",
+        }
+
+        services["prometheus"] = {
+            "image": "prom/prometheus:latest",
+            "container_name": "agent-prometheus",
+            # Run as root so the container can read the host Docker socket used by
+            # docker_sd_configs (the default 'nobody' user gets permission denied).
+            "user": "root",
+            "command": [
+                "--config.file=/etc/prometheus/prometheus.yml",
+                "--storage.tsdb.path=/prometheus",
+            ],
+            "networks": {self._network_name: {"ipv4_address": "172.25.0.13"}},
+            "extra_hosts": ["host.docker.internal:host-gateway"],
+            "ports": ["9090:9090"],
+            "volumes": [
+                "./prometheus.yml:/etc/prometheus/prometheus.yml:ro",
+                "prometheus_data:/prometheus",
+                # Read-only Docker socket for service discovery of agent containers.
+                "/var/run/docker.sock:/var/run/docker.sock:ro",
+            ],
+            "restart": "unless-stopped",
+        }
+
+        services["grafana"] = {
+            "image": "grafana/grafana:latest",
+            "container_name": "agent-grafana",
+            "environment": {
+                "GF_SECURITY_ADMIN_USER": "admin",
+                "GF_SECURITY_ADMIN_PASSWORD": "admin",
+                "GF_AUTH_ANONYMOUS_ENABLED": "true",
+            },
+            "networks": {self._network_name: {"ipv4_address": "172.25.0.14"}},
+            "extra_hosts": ["host.docker.internal:host-gateway"],
+            "ports": ["3000:3000"],
+            "volumes": [
+                "grafana_data:/var/lib/grafana",
+                "./grafana/provisioning:/etc/grafana/provisioning:ro",
+            ],
+            "depends_on": ["prometheus", "jaeger"],
+            "restart": "unless-stopped",
+        }
+
         return {
             "name": self._compose_name,
             "services": services,
@@ -215,7 +286,12 @@ class DockerComposeManager(BaseDockerComposeManager, BaseDeployer):  # type: ign
                     "ipam": {"config": [{"subnet": "172.25.0.0/16"}]},
                 }
             },
-            "volumes": {"valkey-agent-data": {}, "postgres_data": {}},
+            "volumes": {
+                "valkey-agent-data": {},
+                "postgres_data": {},
+                "prometheus_data": {},
+                "grafana_data": {},
+            },
             "secrets": {"github_token": {"environment": "GITHUB_TOKEN"}},
         }
 

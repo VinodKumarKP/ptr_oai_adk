@@ -40,8 +40,8 @@ RUN --mount=type=secret,id=github_token \
 # ── Common OAI packages ──────────────────────────────────────
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system \
-        "oai-agent-server @ git+${ADK_REPO}@${ADK_VERSION}#subdirectory=packages/agent-server" \
-        "oai-agent-core   @ git+${ADK_REPO}@${ADK_VERSION}#subdirectory=packages/agent-core"
+        "oai-agent-server[observability] @ git+${ADK_REPO}@${ADK_VERSION}#subdirectory=packages/agent-server" \
+        "oai-agent-core[metrics,tracing] @ git+${ADK_REPO}@${ADK_VERSION}#subdirectory=packages/agent-core"
 
 # ── Unprivileged runtime user ────────────────────────────────
 RUN useradd -m -u 1000 agentuser

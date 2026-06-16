@@ -190,10 +190,17 @@ class AgentRegistry:
         }
 
     async def _auto_start_infra(self, build_dir: str) -> None:
-        """Start infra services (postgres, valkey) and wait for Postgres to be ready."""
+        """Start infra services and wait for Postgres to be ready.
+
+        Core infra (postgres, valkey) is started first and gated on healthchecks.
+        Observability infra (jaeger, prometheus, grafana) is then brought up
+        best-effort — failures there must not block the registry from reaching
+        Postgres and loading agents.
+        """
         from oai_agent_registry.services.infra_manager import InfraManager
 
         seed = self._build_seed_configs_from_agents()
+        early_deployer = None
         try:
             early_deployer = DeployerFactory.get_deployer(
                 mode="docker",
@@ -202,6 +209,15 @@ class AgentRegistry:
             early_deployer.start_infra_services()
         except Exception as exc:
             logger.error("auto_start_infra: docker compose startup failed: %s", exc)
+
+        # Best-effort: bring up observability stack (Jaeger / Prometheus / Grafana).
+        if early_deployer is not None:
+            try:
+                early_deployer.start_infra_services(["jaeger", "prometheus", "grafana"])
+            except Exception as exc:
+                logger.warning(
+                    "auto_start_infra: observability services failed to start: %s", exc
+                )
 
         try:
             await InfraManager.wait_for_postgres(
