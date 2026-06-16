@@ -5,6 +5,19 @@ Provides:
 - Prometheus metrics (request latency, error rates, throughput)
 - Structured logging integration
 - Performance monitoring hooks
+
+Metrics strategy
+----------------
+OTel's global MeterProvider is often set by oai_agent_core / openlit *before*
+ObservabilityManager is constructed, and OTel silently refuses a second
+set_meter_provider() call.  Even "reusing" that provider does not help because
+it was created without a PrometheusMetricReader, so generate_latest() never
+sees any HTTP metrics.
+
+We therefore record HTTP / DB / streaming metrics via **native prometheus_client
+instruments** (Counter, Histogram, Gauge) which always land in the default
+prometheus_client.REGISTRY — the same registry that generate_latest() reads.
+OTel tracing (spans) is kept unchanged.
 """
 
 import logging
@@ -16,7 +29,6 @@ from functools import wraps
 
 try:
     from opentelemetry import trace, metrics
-    from opentelemetry.exporter.prometheus import PrometheusMetricReader
     # Try to import Jaeger first, fall back to OTLP
     try:
         from opentelemetry.exporter.jaeger.thrift import JaegerExporter
@@ -29,17 +41,21 @@ try:
             _OTLP_AVAILABLE = True
         except (ImportError, ModuleNotFoundError):
             _OTLP_AVAILABLE = False
-    
+
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.resources import Resource
-    from prometheus_client import Counter, Histogram, Gauge
     _OTEL_AVAILABLE = True
-except ImportError as e:
+except ImportError:
     _OTEL_AVAILABLE = False
     _JAEGER_AVAILABLE = False
     _OTLP_AVAILABLE = False
+
+try:
+    from prometheus_client import Counter, Histogram, Gauge
+    _PROM_CLIENT_AVAILABLE = True
+except ImportError:
+    _PROM_CLIENT_AVAILABLE = False
 
 
 class ObservabilityConfig:
@@ -96,9 +112,12 @@ class ObservabilityManager:
         self.config = config or ObservabilityConfig()
         self.logger = logger or logging.getLogger(__name__)
         self.tracer: Optional[trace.Tracer] = None
-        self.meter: Optional[metrics.Meter] = None
+        # Native prometheus_client instruments (bypass OTel MeterProvider conflicts)
+        self._prom: Dict[str, Any] = {}
+        # Keep self._metrics and self.meter as aliases/stubs for back-compat
         self._metrics: Dict[str, Any] = {}
-        
+        self.meter = None
+
         self._initialize_tracing()
         self._initialize_metrics()
         self._setup_instrumentation()
@@ -171,114 +190,93 @@ class ObservabilityManager:
             self.logger.warning(f"Failed to initialize OpenTelemetry tracing: {e}")
     
     def _initialize_metrics(self) -> None:
-        """Initialize Prometheus metrics.
-        
-        Reuses an already-installed global MeterProvider when one exists (e.g.
-        set by oai_agent_core, openlit, or FastAPI instrumentation before this
-        class is instantiated).  Only creates a new MeterProvider + 
-        PrometheusMetricReader when no real SDK provider is active yet.
-        
-        Background: OTel silently ignores a second set_meter_provider() call
-        ("Overriding … is not allowed"), so if we always create a new provider
-        the new PrometheusMetricReader ends up orphaned — its private registry
-        never appears in generate_latest() output.
+        """Initialize Prometheus metrics using native prometheus_client instruments.
+
+        We intentionally bypass the OTel MeterProvider here.  oai_agent_core and
+        openlit set the global MeterProvider before AgentHTTPServer is constructed
+        and OTel refuses a second set_meter_provider() call.  Even if we "reuse"
+        the existing provider it has no PrometheusMetricReader, so nothing appears
+        in generate_latest() output.
+
+        Native prometheus_client instruments always write to
+        prometheus_client.REGISTRY — the registry that generate_latest() reads —
+        regardless of who owns the OTel global provider.
         """
-        if not _OTEL_AVAILABLE or not self.config.ENABLE_METRICS:
-            self.logger.info("Prometheus metrics disabled or not available")
+        if not self.config.ENABLE_METRICS:
+            self.logger.info("Prometheus metrics disabled")
             return
-        
-        try:
-            from opentelemetry.sdk.metrics import MeterProvider as SDKMeterProvider
 
-            existing_provider = metrics.get_meter_provider()
-            provider_is_real = isinstance(existing_provider, SDKMeterProvider)
+        if not _PROM_CLIENT_AVAILABLE:
+            self.logger.warning("prometheus_client not available — metrics disabled")
+            return
 
-            if provider_is_real:
-                # A real provider already exists (set by oai_agent_core, openlit,
-                # FastAPI instrumentation, etc.).  Reuse it — our metrics will
-                # ride along on whatever PrometheusMetricReader it already owns.
-                self.meter = metrics.get_meter(__name__)
-                self.logger.info(
-                    "Prometheus metrics: reusing existing global MeterProvider "
-                    "(PrometheusMetricReader already registered by another module)"
-                )
-            else:
-                # No real provider yet — create one with our own reader.
-                prometheus_reader = PrometheusMetricReader()
+        self._setup_metrics()
 
-                resource = Resource.create({
-                    "service.name": self.config.SERVICE_NAME,
-                    "service.version": self.config.SERVICE_VERSION,
-                })
-                meter_provider = MeterProvider(resource=resource, metric_readers=[prometheus_reader])
-                metrics.set_meter_provider(meter_provider)
-                self.meter = metrics.get_meter(__name__)
-                self.logger.info(
-                    f"Prometheus metrics initialized with new MeterProvider "
-                    f"(port {self.config.METRICS_PORT})"
-                )
-
-            # Define instruments regardless of which path was taken.
-            self._setup_metrics()
-
-        except Exception as e:
-            self.logger.warning(f"Failed to initialize Prometheus metrics: {e}")
-
-    
     def _setup_metrics(self) -> None:
-        """Setup Prometheus metrics."""
-        if self.meter is None:
+        """Create native prometheus_client instruments and register them in REGISTRY."""
+        if not _PROM_CLIENT_AVAILABLE:
             return
-        
+
         try:
-            # Request metrics
-            self._metrics['request_duration'] = self.meter.create_histogram(
-                "request_duration_seconds",
-                description="HTTP request duration in seconds",
-                unit="s",
+            # HTTP request metrics
+            self._prom['request_duration'] = Histogram(
+                "http_request_duration_seconds",
+                "HTTP request duration in seconds",
+                labelnames=["method", "path", "status_code"],
             )
-            
-            self._metrics['request_count'] = self.meter.create_counter(
-                "requests_total",
-                description="Total number of HTTP requests",
-                unit="1",
+            self._prom['request_count'] = Counter(
+                "http_requests_total",
+                "Total number of HTTP requests",
+                labelnames=["method", "path", "status_code"],
             )
-            
-            self._metrics['error_count'] = self.meter.create_counter(
-                "errors_total",
-                description="Total number of errors",
-                unit="1",
+            self._prom['error_count'] = Counter(
+                "http_errors_total",
+                "Total number of HTTP errors (status >= 400)",
+                labelnames=["status_code", "error_type"],
             )
-            
+
             # Database metrics
-            self._metrics['db_query_duration'] = self.meter.create_histogram(
+            self._prom['db_query_duration'] = Histogram(
                 "db_query_duration_seconds",
-                description="Database query duration in seconds",
-                unit="s",
+                "Database query duration in seconds",
+                labelnames=["operation", "success"],
             )
-            
-            self._metrics['db_connection_pool_utilization'] = self.meter.create_gauge(
-                "db_connection_pool_utilization",
-                description="Database connection pool utilization percentage",
-                unit="%",
+            self._prom['db_pool_utilization'] = Gauge(
+                "db_connection_pool_utilization_percent",
+                "Database connection pool utilization percentage",
             )
-            
-            # Chat/LLM metrics
-            self._metrics['llm_judge_duration'] = self.meter.create_histogram(
+
+            # LLM / streaming metrics
+            self._prom['llm_judge_duration'] = Histogram(
                 "llm_judge_duration_seconds",
-                description="LLM judge evaluation duration in seconds",
-                unit="s",
+                "LLM judge evaluation duration in seconds",
+                labelnames=["success"],
             )
-            
-            self._metrics['chat_streaming_events'] = self.meter.create_counter(
+            self._prom['streaming_events'] = Counter(
                 "chat_streaming_events_total",
-                description="Total number of streaming events sent",
-                unit="1",
+                "Total streaming events sent",
+                labelnames=["event_type", "success"],
             )
-            
-            self.logger.debug("Prometheus metrics setup complete")
+
+            # Keep _metrics as a shim so any code still referencing it doesn't crash.
+            self._metrics = self._prom
+            # Mark metrics as active (used by record_* guards).
+            self.meter = True  # truthy sentinel; we no longer use OTel meters
+
+            self.logger.info(
+                "Prometheus metrics initialized via native prometheus_client "
+                "(http_requests_total, http_request_duration_seconds, …)"
+            )
+        except ValueError as exc:
+            # Duplicate registration is harmless — another instance or reload
+            # already registered these metrics.
+            if "Duplicated timeseries" in str(exc) or "already exist" in str(exc).lower():
+                self.logger.debug("Prometheus metrics already registered, reusing existing.")
+                self.meter = True
+            else:
+                self.logger.warning(f"Failed to setup Prometheus metrics: {exc}")
         except Exception as e:
-            self.logger.warning(f"Failed to setup metrics: {e}")
+            self.logger.warning(f"Failed to setup Prometheus metrics: {e}")
     
     def _setup_instrumentation(self) -> None:
         """Setup automatic instrumentation for FastAPI and other libraries."""
@@ -327,111 +325,90 @@ class ObservabilityManager:
     
     def record_request(self, method: str, path: str, status_code: int, duration: float):
         """Record HTTP request metrics.
-        
+
         Args:
             method: HTTP method (GET, POST, etc.)
             path: Request path
             status_code: HTTP response status code
             duration: Request duration in seconds
         """
-        if self.meter is None:
+        if not self._prom:
             return
-        
+
         try:
-            attributes = {
-                "http.method": method,
-                "http.path": path,
-                "http.status_code": status_code,
-            }
-            
-            # Record duration histogram
-            self._metrics['request_duration'].record(duration, attributes)
-            
-            # Record count counter
-            self._metrics['request_count'].add(1, attributes)
-            
-            # Record errors
+            labels = {"method": method, "path": path, "status_code": str(status_code)}
+            self._prom['request_duration'].labels(**labels).observe(duration)
+            self._prom['request_count'].labels(**labels).inc()
+
             if status_code >= 400:
-                self._metrics['error_count'].add(1, {
-                    "http.status_code": status_code,
-                    "error_type": f"HTTP_{status_code}",
-                })
+                self._prom['error_count'].labels(
+                    status_code=str(status_code),
+                    error_type=f"HTTP_{status_code}",
+                ).inc()
         except Exception as e:
             self.logger.debug(f"Failed to record request metrics: {e}")
-    
+
     def record_db_query(self, query_type: str, duration: float, success: bool = True):
         """Record database query metrics.
-        
+
         Args:
             query_type: Type of query (SELECT, INSERT, UPDATE, etc.)
             duration: Query duration in seconds
             success: Whether query succeeded
         """
-        if self.meter is None:
+        if not self._prom:
             return
-        
+
         try:
-            attributes = {
-                "db.operation": query_type,
-                "db.success": success,
-            }
-            
-            self._metrics['db_query_duration'].record(duration, attributes)
-            
-            if not success:
-                self._metrics['error_count'].add(1, {"error_type": f"DB_{query_type}"})
+            self._prom['db_query_duration'].labels(
+                operation=query_type, success=str(success)
+            ).observe(duration)
         except Exception as e:
             self.logger.debug(f"Failed to record DB metrics: {e}")
-    
+
     def record_llm_judge_evaluation(self, duration: float, success: bool = True):
         """Record LLM judge evaluation metrics.
-        
+
         Args:
             duration: Evaluation duration in seconds
             success: Whether evaluation succeeded
         """
-        if self.meter is None:
+        if not self._prom:
             return
-        
+
         try:
-            attributes = {"llm_judge.success": success}
-            self._metrics['llm_judge_duration'].record(duration, attributes)
-            
-            if not success:
-                self._metrics['error_count'].add(1, {"error_type": "LLM_JUDGE"})
+            self._prom['llm_judge_duration'].labels(success=str(success)).observe(duration)
         except Exception as e:
             self.logger.debug(f"Failed to record LLM judge metrics: {e}")
-    
+
     def record_streaming_event(self, event_type: str, success: bool = True):
         """Record streaming event metrics.
-        
+
         Args:
             event_type: Type of streaming event
             success: Whether event was successfully sent
         """
-        if self.meter is None:
+        if not self._prom:
             return
-        
+
         try:
-            attributes = {
-                "stream.event_type": event_type,
-                "stream.success": success,
-            }
-            self._metrics['chat_streaming_events'].add(1, attributes)
+            self._prom['streaming_events'].labels(
+                event_type=event_type, success=str(success)
+            ).inc()
         except Exception as e:
             self.logger.debug(f"Failed to record streaming metrics: {e}")
-    
+
     def set_pool_utilization(self, utilization_percent: float):
         """Set database connection pool utilization gauge.
-        
+
         Args:
             utilization_percent: Pool utilization percentage (0-100)
         """
-        if self.meter is None:
+        if not self._prom:
             return
-        
+
         try:
-            self._metrics['db_connection_pool_utilization'].record(utilization_percent)
+            self._prom['db_pool_utilization'].set(utilization_percent)
         except Exception as e:
             self.logger.debug(f"Failed to record pool utilization: {e}")
 
