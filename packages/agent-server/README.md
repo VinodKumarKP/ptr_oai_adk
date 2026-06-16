@@ -89,7 +89,47 @@ oai-agent-server my_agent --port 8080 --allowed-modes chat health schedule
 
 ### ⚙️ Environment Variables
 
-The server is configured primarily via environment variables. The most commonly tuned settings:
+The server is configured primarily via environment variables.
+
+**`.env` auto-loading.** On startup the server loads a `.env` file from its
+`config_root` into `os.environ` (via agent-core's dependency-free loader), so you
+can keep settings in a file next to your agent config instead of exporting them:
+
+```
+config_root/
+├── my_agent.yaml
+└── .env
+```
+
+```bash
+# config_root/.env
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317   # tracing → Jaeger/OTLP
+OTEL_SERVICE_NAME=my_agent
+PROMETHEUS_ENABLED=true                             # metrics on /metrics
+AGENT_AUTH_ENABLED=false
+LOG_FORMAT=json
+```
+
+Notes:
+- The `.env` is loaded at **`AgentHTTPServer.__init__`** and again at the
+  `main()` entry point. Existing environment variables **win** over `.env`
+  (it never overrides values already set).
+- **Ordering for observability:** agent-core's tracing/metrics auto-config runs
+  **once, during agent construction** — which in the usual launcher happens
+  *before* the server object is built. Since the agent and the server entrypoint
+  script are normally in the **same directory**, the agent picks up that same
+  `.env` (agent-core loads `config_root/.env` as the first step of construction),
+  so `OTEL_*` / `PROMETHEUS_*` are in place in time. If your launcher builds the
+  agent from a different directory, load the `.env` before constructing the
+  agent:
+  ```python
+  from oai_agent_core.utils.dotenv_loader import load_dotenv
+  load_dotenv(config_root)            # before Agent(...) is constructed
+  ```
+- See the agent-core README → *Configuration & Validation → Environment Variables*
+  for the full parsing rules.
+
+The most commonly tuned settings:
 
 | Var | Default | Purpose |
 |---|---|---|

@@ -330,6 +330,51 @@ agent = MyAgent(
 )
 ```
 
+### Environment Variables (`.env` auto-loading)
+
+If a `.env` file exists in `config_root`, `BaseAgent` loads it into `os.environ`
+**as the first step of construction** — before tracing/metrics auto-config and
+before YAML macros (`${VAR}`) are resolved. This means a single `.env` next to
+your agent config can drive credentials, `${VAR}` placeholders, and the
+observability endpoints below.
+
+```
+config/
+├── my_agent.yaml
+└── .env
+```
+
+```bash
+# config/.env
+ANTHROPIC_API_KEY=sk-...
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317   # enables tracing → Jaeger/OTLP
+OTEL_SERVICE_NAME=my_agent                          # optional; agent name is used by default
+PROMETHEUS_ENABLED=true                             # enables metrics
+# PROMETHEUS_PORT=9464                              # standalone /metrics exposition (no host server)
+```
+
+Rules (mirrors `python-dotenv`, but dependency-free):
+
+- `KEY=VALUE` lines; optional leading `export`; `#` comments and blank lines ignored.
+- Surrounding quotes are stripped; inline `# comment` dropped on *unquoted* values.
+- **Existing environment variables win** — `.env` does **not** override values
+  already set in `os.environ` (so real env / explicit `os.environ[...]` beats the file).
+- No-op when `config_root` is `None` or no `.env` is present.
+
+Programmatic use:
+
+```python
+from oai_agent_core.utils.dotenv_loader import load_dotenv
+
+load_dotenv("./config")                 # populate os.environ from ./config/.env
+load_dotenv("./config", override=True)  # let .env overwrite existing env vars
+```
+
+> **Ordering note:** the observability auto-config (`configure_tracing` /
+> `configure_metrics`) runs **once per process**, during the *first* agent's
+> construction. Put observability vars in the `.env` that is loaded before that
+> first agent is built (see the agent-server README for the server flow).
+
 ### Configuration Validation
 
 The framework includes comprehensive configuration validation:
