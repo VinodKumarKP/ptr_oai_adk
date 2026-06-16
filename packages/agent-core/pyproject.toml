@@ -68,11 +68,10 @@ tracing = [
     "openlit>=1.0.0"
 ]
 
-# Prometheus metrics. The API/SDK come via [tracing]; these add the Prometheus
-# reader and exposition client used for standalone /metrics endpoints.
+# Prometheus metrics. agent-core records directly into prometheus_client's
+# default registry (the same one the agent HTTP server's /metrics serves), so
+# only the client library is needed.
 metrics = [
-    "opentelemetry-sdk>=1.20.0",
-    "opentelemetry-exporter-prometheus>=0.41b0",
     "prometheus-client>=0.17.0"
 ]
 

@@ -112,9 +112,15 @@ def configure_tracing(default_service_name=None) -> None:
     The exported ``service.name`` (what Jaeger shows as the service) is chosen
     with this precedence:
 
-    1. ``OTEL_SERVICE_NAME`` environment variable (explicit ops override);
-    2. ``default_service_name`` (e.g. the agent name passed by ``BaseAgent``);
+    1. ``default_service_name`` (the agent name passed by ``BaseAgent``) — so each
+       agent is identifiable as its own service in Jaeger;
+    2. ``OTEL_SERVICE_NAME`` environment variable (fallback when no agent name);
     3. ``"oai-agent-core"`` fallback.
+
+    Note: agent-core's spans are about a specific agent, so the agent name is the
+    most useful ``service.name`` here and intentionally takes precedence over
+    ``OTEL_SERVICE_NAME`` (which a host like the agent server may set to its own
+    process name). The ``agent_name`` is also on every span as an attribute.
 
     Because ``service.name`` is a process-level resource attribute set once, the
     first caller to configure the provider wins. With one agent per process this
@@ -159,8 +165,8 @@ def configure_tracing(default_service_name=None) -> None:
 
     try:
         service_name = (
-            os.environ.get("OTEL_SERVICE_NAME")
-            or default_service_name
+            default_service_name
+            or os.environ.get("OTEL_SERVICE_NAME")
             or "oai-agent-core"
         )
         provider = TracerProvider(

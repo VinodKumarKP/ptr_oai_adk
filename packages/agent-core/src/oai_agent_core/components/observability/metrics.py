@@ -1,26 +1,22 @@
-"""Optional Prometheus / OpenTelemetry metrics for agent-core.
+"""Optional Prometheus metrics for agent-core (prometheus_client based).
 
-Metrics are recorded through the *global* OpenTelemetry ``MeterProvider``. As with
-tracing, agent-core does not own the exporter: when the host process (e.g. the
-agent HTTP server) has already installed a ``MeterProvider`` with a
-``PrometheusMetricReader``, agent-core's metrics automatically appear on that
-process's ``/metrics`` endpoint — no extra wiring.
+agent-core records operation counts and durations **directly into
+``prometheus_client``'s default registry** — the same registry the agent HTTP
+server's ``/metrics`` route serves via ``generate_latest()``. This deliberately
+does *not* go through OpenTelemetry's ``MeterProvider``: doing so caused provider
+ordering conflicts (OpenLIT installs its own ``MeterProvider`` during agent
+construction, which blocked the server's Prometheus reader). Recording straight
+into the default registry sidesteps all of that.
 
-**Prometheus is pull-based**: it scrapes an HTTP ``/metrics`` page; nothing pushes
-to it. So:
+**Prometheus is pull-based** — it scrapes an HTTP ``/metrics`` page:
 
-- Inside the HTTP server, the server exposes ``/metrics`` and agent-core metrics
-  ride along via the shared global MeterProvider.
-- Standalone (no host provider), agent-core will stand up its own Prometheus
-  exposition endpoint **only if enabled via env vars** (see ``configure_metrics``),
-  which Prometheus then scrapes.
+- Inside the HTTP server, the server already exposes ``/metrics`` from the
+  default registry, so agent-core's metrics appear there automatically.
+- Standalone (no server), set ``PROMETHEUS_PORT`` and agent-core starts its own
+  exposition endpoint for Prometheus to scrape.
 
-Enablement (recording is a no-op unless one of these holds):
-
-- a host has already configured an SDK ``MeterProvider`` (server case); or
-- ``PROMETHEUS_ENABLED`` is truthy *and* the optional deps are installed
-  (``pip install 'oai-agent-core[metrics]'``), in which case agent-core starts a
-  Prometheus exposition server on ``PROMETHEUS_PORT`` (default 9464).
+Enablement: recording is a no-op unless ``PROMETHEUS_ENABLED`` is truthy (and
+``prometheus_client`` is installed — ``pip install 'oai-agent-core[metrics]'``).
 """
 
 import logging
@@ -29,18 +25,22 @@ import os
 logger = logging.getLogger(__name__)
 
 try:
-    from opentelemetry import metrics as _otel_metrics
+    from prometheus_client import Counter, Histogram, start_http_server
 
-    _OTEL_METRICS_AVAILABLE = True
+    _PROM_AVAILABLE = True
 except ImportError:
-    _OTEL_METRICS_AVAILABLE = False
+    _PROM_AVAILABLE = False
 
-# One-time guard for standalone setup, and a cached "enabled" flag.
+# Buckets tuned for agent operations: sub-millisecond guardrails up to multi-second
+# LLM calls (default prometheus buckets top out at 10s, too coarse for LLM latency).
+_DURATION_BUCKETS = (
+    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
+    10.0, 20.0, 30.0, 60.0, 120.0,
+)
+
 _configure_attempted = False
-_metrics_enabled = False  # cached True once a real provider is detected/created
-_own_provider_started = False
-
-# Lazily-created instruments (created once a provider is in place).
+_metrics_enabled = False
+_own_server_started = False
 _instruments = {}
 
 
@@ -48,127 +48,63 @@ def _truthy(value) -> bool:
     return str(value).lower() in ("1", "true", "yes", "on")
 
 
-def _host_provider_present() -> bool:
-    """True if a real SDK MeterProvider is currently installed (by the host)."""
-    if not _OTEL_METRICS_AVAILABLE:
-        return False
-    try:
-        from opentelemetry.sdk.metrics import MeterProvider as _SDKMeterProvider
-
-        return isinstance(_otel_metrics.get_meter_provider(), _SDKMeterProvider)
-    except Exception:
-        return False
-
-
 def is_metrics_enabled() -> bool:
-    """Return True if metric recording is active.
-
-    Dynamic on purpose: a host (e.g. the agent HTTP server) often installs its
-    ``MeterProvider`` *after* agents are constructed, so we keep checking until a
-    real provider appears, then cache the result. This lets agent-core metrics
-    flow onto the host's ``/metrics`` without agent-core ever owning the provider.
-    """
-    global _metrics_enabled
-    if _metrics_enabled:
-        return True
-    if _own_provider_started or _host_provider_present():
-        _metrics_enabled = True
+    """Return True if metric recording is active for this process."""
     return _metrics_enabled
 
 
 def configure_metrics(default_service_name=None) -> bool:
-    """Set up agent-core metrics. Runs its standalone setup at most once.
+    """Enable agent-core metrics. Runs at most once per process.
 
-    Resolution:
-
-    1. If a host already installed an SDK ``MeterProvider`` (e.g. the HTTP server
-       with a ``PrometheusMetricReader`` exposing ``/metrics``), reuse it — nothing
-       to set up; agent-core metrics flow onto that endpoint.
-    2. Else, **standalone** mode: only if ``PROMETHEUS_PORT`` is set (and the deps
-       are installed), create a ``MeterProvider`` + ``PrometheusMetricReader`` and
-       start an exposition server on that port for Prometheus to scrape. We key on
-       ``PROMETHEUS_PORT`` (not ``PROMETHEUS_ENABLED``) precisely so agent-core
-       never races the HTTP server — the server enables Prometheus via
-       ``PROMETHEUS_ENABLED`` but serves ``/metrics`` on its own app port and does
-       not set ``PROMETHEUS_PORT``.
-    3. Otherwise do nothing now. Recording still activates automatically if a host
-       provider appears later (see ``is_metrics_enabled``).
+    - No-op unless ``PROMETHEUS_ENABLED`` is truthy and ``prometheus_client`` is
+      installed.
+    - Metrics register in the default registry, so a host that serves
+      ``/metrics`` (the agent HTTP server) exposes them automatically.
+    - If ``PROMETHEUS_PORT`` is set (standalone use), also start a Prometheus
+      exposition HTTP server on that port. The HTTP server does *not* set
+      ``PROMETHEUS_PORT`` (it serves ``/metrics`` on its own app port), so this
+      won't create a duplicate endpoint under the server.
 
     Returns True if metrics are enabled afterwards.
     """
-    global _configure_attempted, _own_provider_started, _metrics_enabled
-    if not _OTEL_METRICS_AVAILABLE:
-        return False
-
-    # Always (cheaply) pick up a host provider if one already exists.
-    if _host_provider_present():
-        _metrics_enabled = True
-        return True
-
-    if _configure_attempted:
-        return is_metrics_enabled()
+    global _configure_attempted, _metrics_enabled, _own_server_started
+    if _configure_attempted or not _PROM_AVAILABLE:
+        return _metrics_enabled
     _configure_attempted = True
 
-    # Standalone exposition only when an explicit port is requested.
-    port_env = os.environ.get("PROMETHEUS_PORT")
-    if not port_env:
-        # Not standalone — defer to a host provider that may appear later.
+    if not _truthy(os.environ.get("PROMETHEUS_ENABLED", "")):
         return False
 
-    try:
-        from opentelemetry.exporter.prometheus import PrometheusMetricReader
-        from opentelemetry.sdk.metrics import MeterProvider
-        from opentelemetry.sdk.resources import Resource
-        from prometheus_client import start_http_server
-    except ImportError:
-        logger.debug(
-            "PROMETHEUS_PORT is set but metrics deps are missing; install "
-            "'oai-agent-core[metrics]' to enable a Prometheus exposition endpoint."
-        )
-        return False
+    _metrics_enabled = True
 
-    try:
-        service_name = (
-            os.environ.get("OTEL_SERVICE_NAME")
-            or default_service_name
-            or "oai-agent-core"
-        )
-        reader = PrometheusMetricReader()
-        provider = MeterProvider(
-            resource=Resource.create({"service.name": service_name}),
-            metric_readers=[reader],
-        )
-        _otel_metrics.set_meter_provider(provider)
+    port = os.environ.get("PROMETHEUS_PORT")
+    if port:
+        try:
+            start_http_server(int(port))
+            _own_server_started = True
+            logger.info(
+                "agent-core Prometheus exposition started on :%s (scrape /)", port
+            )
+        except Exception as exc:
+            logger.debug("Could not start Prometheus exposition server: %s", exc)
 
-        start_http_server(int(port_env))
-        _own_provider_started = True
-        _metrics_enabled = True
-        logger.info(
-            "Prometheus metrics exposition started on :%s (scrape http://<host>:%s/) "
-            "service.name=%s",
-            port_env,
-            port_env,
-            service_name,
-        )
-        return True
-    except Exception as exc:
-        logger.debug("Failed to configure Prometheus metrics: %s", exc)
-        return False
+    logger.info("agent-core metrics enabled (prometheus_client default registry)")
+    return True
 
 
 def _get_instruments():
     if "count" not in _instruments:
-        meter = _otel_metrics.get_meter("oai_agent_core")
-        _instruments["count"] = meter.create_counter(
+        _instruments["count"] = Counter(
             "agent_operations_total",
-            description="Count of agent operations (ainvoke, astream, guardrails, "
-            "llm.invoke, load_* etc.)",
-            unit="1",
+            "Count of agent operations (ainvoke, astream, llm.invoke, guardrails, "
+            "load_* etc.)",
+            ["agent", "operation", "status"],
         )
-        _instruments["duration"] = meter.create_histogram(
+        _instruments["duration"] = Histogram(
             "agent_operation_duration_seconds",
-            description="Duration of agent operations in seconds",
-            unit="s",
+            "Duration of agent operations in seconds",
+            ["agent", "operation", "status"],
+            buckets=_DURATION_BUCKETS,
         )
     return _instruments
 
@@ -176,18 +112,16 @@ def _get_instruments():
 def record_operation(operation, agent=None, status="ok", seconds=None) -> None:
     """Record a count (and optional duration) for an agent operation.
 
-    No-op unless metrics are enabled. Labels are intentionally low-cardinality:
-    ``operation`` (bounded span name), ``status`` (ok/error), and ``agent``.
+    No-op unless metrics are enabled. Labels are low-cardinality:
+    ``operation`` (bounded span name), ``status`` (ok/error), ``agent``.
     """
-    if not _metrics_enabled or not _OTEL_METRICS_AVAILABLE:
+    if not _metrics_enabled or not _PROM_AVAILABLE:
         return
     try:
-        attrs = {"operation": operation, "status": status}
-        if agent:
-            attrs["agent"] = agent
+        labels = {"agent": agent or "", "operation": operation, "status": status}
         instruments = _get_instruments()
-        instruments["count"].add(1, attrs)
+        instruments["count"].labels(**labels).inc()
         if seconds is not None:
-            instruments["duration"].record(seconds, attrs)
+            instruments["duration"].labels(**labels).observe(seconds)
     except Exception as exc:  # never let metrics break the request path
         logger.debug("Failed to record metric for %s: %s", operation, exc)
