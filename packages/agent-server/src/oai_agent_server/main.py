@@ -28,6 +28,7 @@ except ImportError:
 
 from oai_agent_core.components.configuration.model_config import ConfigManager
 from oai_agent_core.core.base_agent import BaseAgent
+from oai_agent_core.utils.dotenv_loader import load_dotenv
 from oai_agent_core.utils.logger import get_logger
 
 from oai_agent_server.middleware.logging import LoggingMiddleware
@@ -183,6 +184,12 @@ class AgentHTTPServer:
         self.agent_name = agent.agent_name
         self.agent.session_id = str(uuid.uuid4())
         self.config_root = config_root
+
+        # Load {config_root}/.env into os.environ (if present) before the rest of
+        # server setup (config, observability, auth) reads environment settings.
+        # Existing env vars take precedence over .env values.
+        load_dotenv(config_root)
+
         self.logger = get_logger()
         self.base_config_manager = ConfigManager(config_root=config_root)
         self.enable_request_isolation = enable_request_isolation
@@ -657,6 +664,10 @@ def parse_args(optional_agent_name_flag=False):
 
 
 def main(server: AgentHTTPServer):
+    # Load {config_root}/.env at the server entry point so launch-time settings
+    # (registry URL, port, observability endpoints) are populated from the file.
+    load_dotenv(server.config_root)
+
     args = parse_args(optional_agent_name_flag=True)
     agent_name = server.agent_name
     config = server.base_config_manager.load_agent_config(

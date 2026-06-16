@@ -11,6 +11,7 @@ from oai_agent_core.components.configuration.model_config import config_manager
 from oai_agent_core.components.observability.langfuse_observability_manager import LangfuseObservabilityManager
 from oai_agent_core.components.observability.tracing import trace_span, traced, configure_tracing
 from oai_agent_core.components.observability.metrics import configure_metrics
+from oai_agent_core.utils.dotenv_loader import load_dotenv
 from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
 from oai_agent_core.core.base_model_configuration_manager import BaseModelConfigurationManager
@@ -114,6 +115,11 @@ class BaseAgent(ABC):
         self.agent_name = agent_name
         self.config_manager = ConfigManager(config_root=config_root)
         self.config_root = config_root
+
+        # Load {config_root}/.env into os.environ first (if present) so that
+        # config macros (${VAR}), env-based settings, and the tracing/metrics
+        # endpoints below all see those values. Existing env vars take precedence.
+        load_dotenv(config_root)
 
         # Auto-configure tracing (if OTEL_EXPORTER_OTLP_ENDPOINT is set and the
         # host hasn't already set up a provider) using the agent name as the

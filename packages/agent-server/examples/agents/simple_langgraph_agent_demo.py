@@ -90,12 +90,18 @@ os.environ['LOG_FORMAT'] = 'json'  # Structured JSON logs
 
 # NOW import the modules AFTER environment is configured
 from oai_agent_core.langgraph_core.agents.langgraph_agent import LangGraphAgent
+from oai_agent_core.utils.dotenv_loader import load_dotenv
 from oai_agent_server.main import AgentHTTPServer as BaseAgentHTTPServer, main as http_main
 
 # Get the absolute path to the examples directory
 EXAMPLES_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_DIR = os.path.join(EXAMPLES_DIR, 'agents_config')
 file_root = os.path.dirname(os.path.abspath(__file__))
+
+# Load {EXAMPLES_DIR}/.env BEFORE constructing the agent, so agent-core's
+# one-time tracing/metrics auto-config (which runs during agent construction)
+# picks up OTEL_*/PROMETHEUS_* from the .env file. Existing env vars win.
+load_dotenv(EXAMPLES_DIR)
 
 
 def print_observability_info():
