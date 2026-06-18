@@ -13,7 +13,7 @@ from crewai import Agent, Crew, Task, Process
 from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.crewai_core.components.registry.tool_registry import CrewAIToolRegistry as ToolRegistry
 from oai_agent_core.crewai_core.builders.task_builder import TaskBuilder
-
+from oai_agent_core.components.configuration.model_config import ConfigManager
 
 class CrewBuilder:
     """Builds CrewAI agents, tasks, and crews from configuration.
@@ -209,14 +209,37 @@ class CrewBuilder:
                 
         return agent_tools, mcps
 
+    def _resolve_agent_entry(self, entry: Any) -> Tuple[str, Dict[str, Any]]:
+        """Resolve an ``agent_list`` entry into (agent_key, agent_data).
+
+        Supported entry formats:
+        - dict: ``{agent_name: {...agent config...}}``
+        - str: ``agent_name`` (loads config from ``agents_config/<name>.yaml``)
+        """
+        if isinstance(entry, dict):
+            if not entry:
+                raise ValueError("Unsupported agent_list entry type: empty dict")
+            agent_key = list(entry.keys())[0]
+            return agent_key, entry[agent_key]
+
+        if isinstance(entry, str):
+            try:
+                config_manager = ConfigManager()
+                return entry, config_manager.load_agent_config(agent_name=entry)
+            except FileNotFoundError as exc:
+                raise FileNotFoundError(
+                    f"Agent configuration file not found: agents_config/{entry}.yaml"
+                ) from exc
+
+        raise ValueError(f"Unsupported agent_list entry type: {type(entry).__name__}")
+
     def _build_agents_sync(self) -> Tuple[Dict[str, Agent], List[Agent]]:
         """Build all agents from configuration synchronously."""
         agent_map = {}
         agent_list = []
 
-        for agent_config in self.config.get('agent_list', []):
-            agent_key = list(agent_config.keys())[0]
-            agent_data = agent_config[agent_key]
+        for entry in self.config.get('agent_list', []):
+            agent_key, agent_data = self._resolve_agent_entry(entry)
             
             # Use consolidated tool loading
             agent_tools, mcps = self._prepare_tools(agent_key, agent_data)
@@ -243,9 +266,8 @@ class CrewBuilder:
         keys = []
         configs = []
 
-        for agent_config in self.config.get('agent_list', []):
-            agent_key = list(agent_config.keys())[0]
-            agent_data = agent_config[agent_key]
+        for entry in self.config.get('agent_list', []):
+            agent_key, agent_data = self._resolve_agent_entry(entry)
             keys.append(agent_key)
             configs.append(agent_data)
             tasks.append(self._prepare_tools_async(agent_key, agent_data))
@@ -345,8 +367,11 @@ class CrewBuilder:
 
         # Analyze agents
         for agent_config in self.config.get('agent_list', []):
-            agent_key = list(agent_config.keys())[0]
-            agent_data = agent_config[agent_key]
+            try:
+                agent_key, agent_data = self._resolve_agent_entry(agent_config)
+            except Exception as e:
+                self.logger.warning(f"Could not resolve agent entry '{agent_config}': {e}")
+                continue
             diagnostics['agent_count'] += 1
 
             agent_tools = agent_data.get('tools', [])

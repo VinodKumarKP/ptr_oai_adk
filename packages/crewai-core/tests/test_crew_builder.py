@@ -26,6 +26,82 @@ def builder(mock_registry, mock_output_model_registry):
     }
     return CrewBuilder(config, mock_registry, MagicMock(), MagicMock(), structured_output_model_registry=mock_output_model_registry)
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tests for _resolve_agent_entry (string vs dict entries in agent_list)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_resolve_agent_entry_dict(builder):
+    """Dict entries are resolved directly without any file I/O."""
+    entry = {'researcher': {'role': 'Researcher', 'goal': 'Research', 'backstory': 'Expert'}}
+    agent_key, agent_data = builder._resolve_agent_entry(entry)
+    assert agent_key == 'researcher'
+    assert agent_data['role'] == 'Researcher'
+
+
+def test_resolve_agent_entry_string_loads_external_config(builder):
+    """String entries load config via ConfigManager."""
+    external_config = {'role': 'Writer', 'goal': 'Write', 'backstory': 'Skilled writer'}
+    with patch('oai_agent_core.crewai_core.builders.crew_builder.ConfigManager') as MockCM:
+        MockCM.return_value.load_agent_config.return_value = external_config
+        agent_key, agent_data = builder._resolve_agent_entry('writer')
+    assert agent_key == 'writer'
+    assert agent_data['role'] == 'Writer'
+    MockCM.return_value.load_agent_config.assert_called_once_with(agent_name='writer')
+
+
+def test_resolve_agent_entry_string_file_not_found(builder):
+    """String entries raise FileNotFoundError when the YAML file is missing."""
+    with patch('oai_agent_core.crewai_core.builders.crew_builder.ConfigManager') as MockCM:
+        MockCM.return_value.load_agent_config.side_effect = FileNotFoundError("not found")
+        with pytest.raises(FileNotFoundError, match="agents_config/missing_agent.yaml"):
+            builder._resolve_agent_entry('missing_agent')
+
+
+def test_resolve_agent_entry_invalid_type(builder):
+    """Non-string, non-dict entries raise ValueError."""
+    with pytest.raises(ValueError, match="Unsupported agent_list entry type"):
+        builder._resolve_agent_entry(42)
+
+
+def test_build_crew_with_string_entry(builder):
+    """build_crew works when agent_list contains a string entry."""
+    external_config = {'role': 'Analyst', 'goal': 'Analyse', 'backstory': 'Expert analyst'}
+    builder.config['agent_list'] = ['analyst']
+    builder.config['task_list'] = [{'task1': {'description': 'analyse', 'expected_output': 'report', 'agent': 'analyst'}}]
+
+    with patch('oai_agent_core.crewai_core.builders.crew_builder.ConfigManager') as MockCM, \
+         patch('oai_agent_core.crewai_core.builders.crew_builder.Agent') as MockAgent, \
+         patch('oai_agent_core.crewai_core.builders.task_builder.Task'), \
+         patch('oai_agent_core.crewai_core.builders.crew_builder.Crew') as MockCrew:
+        MockCM.return_value.load_agent_config.return_value = external_config
+        crew = builder.build_crew("sess_1")
+        MockAgent.assert_called_once()
+        MockCrew.assert_called_once()
+        assert crew == MockCrew.return_value
+
+
+def test_build_crew_async_with_string_entry(builder):
+    """build_crew_async works when agent_list contains a string entry."""
+    external_config = {'role': 'Analyst', 'goal': 'Analyse', 'backstory': 'Expert analyst'}
+    builder.config['agent_list'] = ['analyst']
+    builder.config['task_list'] = [{'task1': {'description': 'analyse', 'expected_output': 'report', 'agent': 'analyst'}}]
+
+    async def run():
+        with patch('oai_agent_core.crewai_core.builders.crew_builder.ConfigManager') as MockCM, \
+             patch('oai_agent_core.crewai_core.builders.crew_builder.Agent') as MockAgent, \
+             patch('oai_agent_core.crewai_core.builders.task_builder.Task'), \
+             patch('oai_agent_core.crewai_core.builders.crew_builder.Crew') as MockCrew:
+            MockCM.return_value.load_agent_config.return_value = external_config
+            crew = await builder.build_crew_async("sess_1")
+            MockAgent.assert_called_once()
+            MockCrew.assert_called_once()
+            assert crew == MockCrew.return_value
+
+    asyncio.run(run())
+
+
+
 def test_build_crew(builder):
     # We need to patch Task in task_builder.py as well because CrewBuilder uses TaskBuilder
     with patch('oai_agent_core.crewai_core.builders.crew_builder.Agent') as MockAgent, \

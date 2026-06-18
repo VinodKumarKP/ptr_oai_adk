@@ -231,6 +231,27 @@ sys.modules['oai_agent_core.components'] = MagicMock()
 sys.modules['oai_agent_core.components.output_parser'] = MagicMock()
 sys.modules['oai_agent_core.components.output_parser.output_model_registry'] = MagicMock()
 
+# Mock the shared config manager used by the crew/task builders. The real one
+# lives in agent-core; tests just need ConfigManager().load_agent_config(...).
+_configuration_pkg = types.ModuleType('oai_agent_core.components.configuration')
+_configuration_pkg.__path__ = []
+_model_config_module = types.ModuleType('oai_agent_core.components.configuration.model_config')
+
+
+class _MockConfigManager:
+    def __init__(self, config_root=None):
+        self.config_root = config_root
+
+    def load_agent_config(self, agent_name, abort_if_not_found=True):
+        return {"agent_name": agent_name}
+
+
+_model_config_module.ConfigManager = _MockConfigManager
+_configuration_pkg.model_config = _model_config_module
+sys.modules['oai_agent_core.components.configuration'] = _configuration_pkg
+sys.modules['oai_agent_core.components.configuration.model_config'] = _model_config_module
+sys.modules['oai_agent_core.components'].configuration = _configuration_pkg
+
 # Mock the observability tracing module with working no-op primitives. The real
 # module lives in agent-core; in unit tests we stub it so the agent imports
 # cleanly without the cross-package observability code on the path. Note these

@@ -123,7 +123,8 @@ class CrewAIAgent(BaseAgent):
                 logger=self.logger,
                 document_loader=self.document_loader,
                 vector_store=self.vector_store,
-                structured_output_model_registry=self.output_model_registry
+                structured_output_model_registry=self.output_model_registry,
+                config_root=config_root
             )
             self.builder = self.agent_builder
 

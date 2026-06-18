@@ -73,9 +73,33 @@ class TaskBuilder:
         """
         agent_level_tasks = []
 
-        for agent_config in self.config.get('agent_list', []):
-            agent_key = list(agent_config.keys())[0]
-            agent_data = agent_config[agent_key]
+        for agent_entry in self.config.get('agent_list', []):
+            if isinstance(agent_entry, dict):
+                agent_key = list(agent_entry.keys())[0]
+                agent_data = agent_entry[agent_key]
+            elif isinstance(agent_entry, str):
+                agent_key = agent_entry
+                try:
+                    try:
+                        from oai_agent_core.components.configuration.model_config import ConfigManager
+                        config_manager = ConfigManager()
+                        agent_data = config_manager.load_agent_config(agent_name=agent_key)
+                    except Exception:
+                        from oai_agent_core.core.base_agent import BaseAgent
+                        agent_data = BaseAgent.load_agent_config(agent_key)
+                except Exception as exc:
+                    self.logger.warning(
+                        "Could not resolve agent entry '%s' while collecting tasks: %s",
+                        agent_key,
+                        exc,
+                    )
+                    continue
+            else:
+                self.logger.warning(
+                    "Unsupported agent_list entry type while collecting tasks: %s",
+                    type(agent_entry).__name__,
+                )
+                continue
 
             if 'tasks' in agent_data:
                 for task_config in agent_data['tasks']:
