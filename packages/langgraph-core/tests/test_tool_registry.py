@@ -150,7 +150,51 @@ def test_load_framework_builtin_tool_success(registry):
 def test_load_framework_builtin_tool_failure(registry):
     with patch('oai_agent_core.utils.dynamic_class_loader.DynamicClassLoader.dynamic_import_tool') as mock_import:
         mock_import.side_effect = ImportError("Tool not found")
-        
+
         registry._load_framework_builtin_tool('missing_tool', 'strands_tools')
-        
+
         assert 'missing_tool' not in registry.tools
+
+@pytest.mark.asyncio
+async def test_execute_tool_structured(registry):
+    # StructuredTool path: invoked through .func with keyword arguments.
+    registry.available_mcp_tools = {}
+    registry.tools = {'sample_tool': sample_tool}
+
+    result = await registry.execute_tool('sample_tool', {'arg1': 'x', 'arg2': 3})
+
+    assert result == 'x-3'
+
+@pytest.mark.asyncio
+async def test_execute_tool_empty_list_arguments(registry):
+    # Regression: an empty list of arguments must not raise IndexError; it
+    # should be treated as "no arguments".
+    registry.available_mcp_tools = {}
+    called = {}
+
+    def no_arg_func():
+        called['hit'] = True
+        return 'ok'
+
+    tool_obj = MagicMock()
+    tool_obj.func = no_arg_func
+    registry.tools = {'noarg': tool_obj}
+
+    result = await registry.execute_tool('noarg', [])
+
+    assert result == 'ok'
+    assert called.get('hit') is True
+
+@pytest.mark.asyncio
+async def test_execute_tool_non_structured_callable(registry):
+    # Regression: a tool without a .func attribute (not a StructuredTool) must
+    # still be invokable via its .invoke() interface rather than crashing.
+    registry.available_mcp_tools = {}
+    plain = MagicMock(spec=['invoke'])
+    plain.invoke.return_value = 'invoked'
+    registry.tools = {'plain': plain}
+
+    result = await registry.execute_tool('plain', {'a': 1})
+
+    assert result == 'invoked'
+    plain.invoke.assert_called_once_with({'a': 1})

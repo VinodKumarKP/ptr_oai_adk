@@ -439,7 +439,8 @@ agent_list:
       system_prompt: "You are a research assistant."
       tools: ["my_tool"] # Assign tools from the global registry.
       skills: ["my_skill"] # Assign skills from the global registry.
-      knowledge_base: ["company_docs"] # Assign a knowledge base.
+      knowledge_base:
+        - name: "company_docs" # Assign an agent-level knowledge base tool.
       structured_output_model: "MyOutputModel" # Optional: Specify a Pydantic model for structured output.
 
 # 11. Supervisor System Prompt: Instructions for the main supervisor agent.
@@ -1721,6 +1722,8 @@ class LangGraphAgent:
     def __init__(
         agent_name: str,
         agent_config: Dict[str, Any],
+        llm: Optional[Any] = None,
+        tools: Optional[List[Any]] = None,
         session_id: str = "default",
         user_id: str = "default",
         config_root: Optional[str] = None
@@ -1729,6 +1732,8 @@ class LangGraphAgent:
         Initializes the agent.
         - agent_name: A unique name for this agent instance.
         - agent_config: The dictionary loaded from your YAML configuration file.
+        - llm: Optional pre-configured model instance.
+        - tools: Optional pre-loaded tool list (primarily for compatibility/migration).
         - session_id: An identifier for the current conversation session.
         - user_id: An identifier for the user interacting with the agent.
         - config_root: The root directory for configuration files.

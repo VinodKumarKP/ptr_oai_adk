@@ -33,7 +33,7 @@ async def run_kb_tool_agent():
     print("\n--- Test 1: Knowledge Base Tool Query ---")
     query = "What does the policy say about vacation days?"
     result = await agent.ainvoke(query)
-    pprint(result['content'][0]['text'])
+    pprint(result['content']['text'])
 
 if __name__ == "__main__":
     asyncio.run(run_kb_tool_agent())

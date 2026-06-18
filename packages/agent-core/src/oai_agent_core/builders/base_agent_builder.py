@@ -229,15 +229,15 @@ class BaseAgentBuilder(ABC):
 
         **Registry reference** (``registry_name`` key present): fetches KB
         metadata (description, retrieval defaults) from the KB Registry service
-        and returns a *proxy sentinel* dict containing:
+        and returns a resolved proxy dict containing:
 
         * ``name``           — KB name
         * ``description``    — resolved description
-        * ``_registry_url``  — base URL of the KB Registry (used at query time)
-        * ``_auth_token``    — bearer token for registry requests
+        * ``registry_url``   — base URL of the KB Registry (used at query time)
+        * ``auth_token``     — bearer token for registry requests
         * ``retrieval_settings`` — merged defaults + local overrides
 
-        :class:`BaseKnowledgeBaseFactory` detects the ``_registry_url`` key and
+        :class:`BaseKnowledgeBaseFactory` detects the ``registry_url`` key and
         creates a :class:`~oai_agent_core.components.vector_store.registry_proxy_vector_store.RegistryProxyVectorStore`
         instead of opening a local DB connection.  At search time the proxy
         calls ``POST {registry_url}/api/v1/kb-registry/knowledge-bases/{kb_name}/query``
@@ -346,8 +346,8 @@ class BaseAgentBuilder(ABC):
                 or kb_meta.get('description')
                 or f"Search the {registry_name} knowledge base."
             ),
-            '_registry_url': kb_registry_url,   # sentinel — triggers proxy path
-            '_auth_token': auth_token,
+            'registry_url': kb_registry_url,
+            'auth_token': auth_token,
             'retrieval_settings': merged_retrieval,
         }
 

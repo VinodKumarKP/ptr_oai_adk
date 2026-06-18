@@ -311,18 +311,29 @@ def test_astream_error(agent):
         
     asyncio.run(run())
 
-def test_invoke_sync(agent):
-    # Mock _sync_invoke
+def test_invoke_no_running_loop(agent):
+    # No event loop is running on this thread -> invoke() should take the
+    # fully synchronous path.
     with patch.object(agent, '_sync_invoke', return_value={'content': 'sync'}) as mock_sync:
-        # We are in an async loop here (pytest-asyncio or asyncio.run wrapper), 
-        # so invoke should call _sync_invoke directly if loop is running.
-        
-        async def run():
-            result = agent.invoke("hello")
-            assert result['content'] == 'sync'
-            mock_sync.assert_called_once()
-            
-        asyncio.run(run())
+        result = agent.invoke("hello")
+        assert result['content'] == 'sync'
+        mock_sync.assert_called_once()
+
+def test_invoke_within_running_loop(agent):
+    # When a loop is already running, invoke() must NOT block it by routing to
+    # the synchronous path; it runs ainvoke() in a worker thread instead.
+    agent._sync_invoke = MagicMock(
+        side_effect=AssertionError("_sync_invoke must not run under a live loop")
+    )
+    agent.ainvoke = AsyncMock(return_value={'content': 'async'})
+
+    async def run():
+        # Called synchronously from inside a running event loop.
+        return agent.invoke("hello")
+
+    result = asyncio.run(run())
+    assert result['content'] == 'async'
+    agent.ainvoke.assert_called_once()
 
 def test_sync_invoke_implementation(agent):
     agent._set_langfuse_config = MagicMock()
@@ -469,7 +480,89 @@ def test_cleanup_exception(agent):
 def test_del_exception(agent):
     agent.langfuse_manager.is_enabled = True
     agent.langfuse_manager.flush.side_effect = Exception("Flush error")
-    
+
     # Should not raise exception
     agent.__del__()
     agent.langfuse_manager.flush.assert_called_once()
+
+def test_guardrail_input_applied_once_ainvoke(agent):
+    # Input guardrails must be applied exactly once per request (in
+    # _prepare_message), not a second time inside ainvoke().
+    async def run():
+        agent._ensure_initialized = AsyncMock()
+        agent.agent = MagicMock()
+        agent.agent.ainvoke = AsyncMock(return_value={'messages': []})
+        agent._guardrail_output_message = lambda m: m
+        spy = MagicMock(side_effect=lambda m: m)
+        agent._guardrail_input_message = spy
+
+        await agent.ainvoke("hello")
+
+        assert spy.call_count == 1
+
+    asyncio.run(run())
+
+def test_guardrail_input_applied_once_astream(agent):
+    # Same single-application guarantee for the streaming path.
+    async def run():
+        agent._ensure_initialized = AsyncMock()
+        agent.agent = MagicMock()
+
+        async def mock_stream(*args, **kwargs):
+            yield {'messages': [{'content': 'chunk'}]}
+
+        agent.agent.astream = mock_stream
+        agent._guardrail_output_message = lambda m: m
+        spy = MagicMock(side_effect=lambda m: m)
+        agent._guardrail_input_message = spy
+
+        async for _ in agent.astream("hello"):
+            pass
+
+        assert spy.call_count == 1
+
+    asyncio.run(run())
+
+def test_generate_runnable_config_does_not_mutate_caller(agent):
+    # _generate_runnable_config() must not write into the caller's config dict.
+    user_config = {'session_id': 's1', 'foo': 'bar'}
+    snapshot = dict(user_config)
+
+    runnable_config = agent._generate_runnable_config(user_config)
+
+    assert user_config == snapshot
+    assert 'thread_id' not in user_config
+    # The thread_id should still propagate into the generated runnable config.
+    assert runnable_config['configurable']['thread_id'] == 's1'
+
+def _faithful_mcp_names(cfg):
+    """Mirror BaseToolRegistry._get_mcp_name_list_from_mcp_config for tests."""
+    if isinstance(cfg, dict):
+        return list(cfg.keys())
+    if isinstance(cfg, list):
+        return cfg
+    if isinstance(cfg, str):
+        return cfg.split(",")
+    return []
+
+def test_validate_tasks_mcps_list(mock_llm):
+    # MCP config provided as a list of names must not crash validate_tasks().
+    config = {'mcps': ['mcp_a', 'mcp_b'], 'tools': {}}
+    agent = LangGraphAgent("list_mcp", config, llm=mock_llm)
+    agent.tool_registry._get_mcp_name_list_from_mcp_config = _faithful_mcp_names
+
+    diagnostics = agent.validate_tasks()
+
+    assert diagnostics['mcp_count'] == 2
+    assert diagnostics['mcps'] == ['mcp_a', 'mcp_b']
+
+def test_validate_tasks_mcps_string(mock_llm):
+    # MCP config provided as a comma-separated string must not crash.
+    config = {'mcps': 'mcp_a,mcp_b', 'tools': {}}
+    agent = LangGraphAgent("string_mcp", config, llm=mock_llm)
+    agent.tool_registry._get_mcp_name_list_from_mcp_config = _faithful_mcp_names
+
+    diagnostics = agent.validate_tasks()
+
+    assert diagnostics['mcp_count'] == 2
+    assert diagnostics['mcps'] == ['mcp_a', 'mcp_b']

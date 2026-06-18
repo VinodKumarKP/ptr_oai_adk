@@ -81,7 +81,7 @@ class StrandsAgent(BaseAgent):
         self.model_manager = ModelConfigurationManager()  # temporary; replaced below
 
         super().__init__(
-            llm=llm if llm else {},
+            llm=llm,
             model_manager=self.model_manager,
             agent_name=agent_name,
             agent_config=agent_config,
@@ -105,7 +105,9 @@ class StrandsAgent(BaseAgent):
             default_config=self.agent_config.get('model', {}),
             logger=self.logger
         )
-        self.llm = self.model_manager.create_model()
+        # Respect an injected LLM; only construct from config when none is provided.
+        if llm is None:
+            self.llm = self.model_manager.create_model()
 
         self.tool_registry = ToolRegistry(
             logger=self.logger,

@@ -276,6 +276,29 @@ async def test_create_agent_as_tool(builder):
     assert result == 'response'
     mock_agent.ainvoke.assert_called_once()
 
+def test_create_agent_as_tool_runs_under_active_loop(builder):
+    # Regression: the wrapper must be awaitable (no asyncio.run inside), so it
+    # works when invoked from an already-running event loop such as an async
+    # supervisor/runtime context.
+    mock_agent = MagicMock()
+    mock_agent.ainvoke = AsyncMock(
+        return_value={'messages': [MagicMock(content='response')]}
+    )
+
+    tool = builder._create_agent_as_tool(mock_agent, 'tool_name', 'tool_desc')
+
+    # The underlying tool coroutine must be a coroutine function.
+    assert asyncio.iscoroutinefunction(tool.coroutine)
+
+    async def run():
+        # Invoking from inside a running loop must not raise
+        # "asyncio.run() cannot be called from a running event loop".
+        return await tool.ainvoke("query")
+
+    result = asyncio.run(run())
+    assert result == 'response'
+    mock_agent.ainvoke.assert_called_once()
+
 def test_create_supervisor_agent_supervisor(builder):
     with patch('oai_agent_core.langgraph_core.builders.agent_builder.create_supervisor') as mock_create:
         mock_supervisor = MagicMock()

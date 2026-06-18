@@ -294,9 +294,9 @@ class LangGraphAgent(BaseAgent):
         # Determine the actual original message to use (config overrides argument)
         actual_original_message = config.get('original_message', user_message) if config else user_message
 
-        # Format message with template variables
+        # Format message with template variables. Input guardrails are applied
+        # once inside _prepare_message().
         formatted_message = self._prepare_message(user_message, config)
-        formatted_message = self._guardrail_input_message(formatted_message)
 
         # Augment prompt with global knowledge base and memory
         formatted_message = self._augment_message(formatted_message, original_query=user_message)
@@ -418,9 +418,9 @@ class LangGraphAgent(BaseAgent):
         # Determine the actual original message to use (config overrides argument)
         actual_original_message = config.get('original_message', user_message) if config else user_message
 
-        # Format message with template variables
+        # Format message with template variables. Input guardrails are applied
+        # once inside _prepare_message().
         formatted_message = self._prepare_message(user_message, config)
-        formatted_message = self._guardrail_input_message(formatted_message)
 
         # Augment prompt with global knowledge base and memory
         formatted_message = self._augment_message(formatted_message, original_query=user_message)
@@ -480,13 +480,24 @@ class LangGraphAgent(BaseAgent):
         Returns:
             Dictionary containing the formatted response.
         """
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If we're in an async context, use the sync version directly
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop is running in this thread — safe to execute the
+            # fully synchronous path without touching an active loop.
             return self._sync_invoke(user_message, config)
-        else:
-            # Otherwise run async version
-            return asyncio.run(self.ainvoke(user_message, config))
+
+        # A loop is already running on this thread (e.g. called from async
+        # code). Running asyncio.run() here would raise, and executing the
+        # blocking sync path would stall the loop. Run the async coroutine in a
+        # dedicated worker thread with its own event loop instead.
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                lambda: asyncio.run(self.ainvoke(user_message, config))
+            )
+            return future.result()
 
     def _sync_invoke(
             self,
@@ -507,9 +518,9 @@ class LangGraphAgent(BaseAgent):
         # Determine the actual original message to use (config overrides argument)
         actual_original_message = config.get('original_message', user_message) if config else user_message
 
-        # Format message with template variables
+        # Format message with template variables. Input guardrails are applied
+        # once inside _prepare_message().
         formatted_message = self._prepare_message(user_message, config)
-        formatted_message = self._guardrail_input_message(formatted_message)
 
         # Augment prompt with global knowledge base and memory
         formatted_message = self._augment_message(formatted_message, original_query=user_message)
@@ -574,6 +585,9 @@ class LangGraphAgent(BaseAgent):
             runnable_config['configurable'][k] = v
 
         if config is not None:
+            # Copy so we never mutate the caller's dict (avoids side effects
+            # when the same config object is reused across invocations).
+            config = dict(config)
             config['thread_id'] = config.get('session_id', self.session_id)
             for k, v in config.items():
                 runnable_config['configurable'][k] = v
@@ -588,13 +602,18 @@ class LangGraphAgent(BaseAgent):
         """
         agent_list_config = self.agent_config.get('agent_list', [])
 
+        # MCP config may be a dict, list, or comma-separated string. Normalize
+        # to a list of names so diagnostics never crash on .keys().
+        mcp_config = self.agent_config.get('mcps', self.agent_config.get('servers', {}))
+        mcp_names = self.tool_registry._get_mcp_name_list_from_mcp_config(mcp_config)
+
         diagnostics = {
             'agent_count': len(agent_list_config) if agent_list_config else 1,
             'tool_count': len(self.agent_config.get('tools', {})),
-            'mcp_count': len(self.agent_config.get('mcps', self.agent_config.get('servers', {}))),
+            'mcp_count': len(mcp_names),
             'is_multi_agent': self.is_multi_agent,
             'tools': list(self.agent_config.get('tools', {}).keys()),
-            'mcps': list(self.agent_config.get('mcps', self.agent_config.get('servers', {})).keys()),
+            'mcps': mcp_names,
             'registry_tool_count': len(self.tool_registry.tools) if hasattr(self.tool_registry, 'tools') else 0
         }
 

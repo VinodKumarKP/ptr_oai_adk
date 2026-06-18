@@ -33,15 +33,26 @@ class LangChainToolRegistry(BaseToolRegistry):
                 pass  # Maybe it's not JSON, but let the tool handle it or fail later
 
         if isinstance(arguments, list):
-            arguments = arguments[0]
+            arguments = arguments[0] if arguments else {}
+
+        if arguments is None:
+            arguments = {}
 
         if tool_name in self.available_mcp_tools:
             mcp_client = self.available_mcp_tools[tool_name]
             return await self.available_mcp_tools[mcp_client][tool_name]['tool'].ainvoke(input=arguments)
         elif tool_name in self.tools:
-            return self.tools[tool_name].func(
-                **arguments
-            )
+            tool = self.tools[tool_name]
+            # StructuredTool exposes the underlying callable via .func; other
+            # tools/callables may not, so fall back to .invoke() or direct call.
+            func = getattr(tool, 'func', None)
+            if callable(func):
+                return func(**arguments)
+            if hasattr(tool, 'invoke'):
+                return tool.invoke(arguments)
+            if callable(tool):
+                return tool(**arguments)
+            raise TypeError(f"Tool '{tool_name}' is not callable")
         else:
             raise ValueError(f"Tool '{tool_name}' not found")
 

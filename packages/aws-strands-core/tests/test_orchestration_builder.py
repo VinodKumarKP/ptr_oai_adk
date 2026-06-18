@@ -55,6 +55,40 @@ def test_build_orchestration_graph(builder):
         mock_graph_builder.build.assert_called_once()
 
 
+def test_build_orchestration_sequential_without_context_map_uses_linear_fallback(builder):
+    agent_map = {'a1': MagicMock(), 'a2': MagicMock(), 'a3': MagicMock()}
+
+    mock_graph_builder = MagicMock()
+    with patch('oai_agent_core.aws_strands_core.builders.orchestration_builder.GraphBuilder',
+               return_value=mock_graph_builder):
+        builder.build_orchestration(agent_map, {}, {
+            'pattern': 'sequential'
+        })
+
+        # Regression: sequential/hierarchical must not fail on empty context map.
+        # It should default to declaration-order chaining: a1 -> a2 -> a3.
+        mock_graph_builder.add_edge.assert_any_call('a1', 'a2')
+        mock_graph_builder.add_edge.assert_any_call('a2', 'a3')
+        assert mock_graph_builder.add_edge.call_count == 2
+        mock_graph_builder.build.assert_called_once()
+
+
+def test_build_orchestration_hierarchical_without_context_map_uses_linear_fallback(builder):
+    agent_map = {'a1': MagicMock(), 'a2': MagicMock(), 'a3': MagicMock()}
+
+    mock_graph_builder = MagicMock()
+    with patch('oai_agent_core.aws_strands_core.builders.orchestration_builder.GraphBuilder',
+               return_value=mock_graph_builder):
+        builder.build_orchestration(agent_map, {}, {
+            'pattern': 'hierarchical'
+        })
+
+        mock_graph_builder.add_edge.assert_any_call('a1', 'a2')
+        mock_graph_builder.add_edge.assert_any_call('a2', 'a3')
+        assert mock_graph_builder.add_edge.call_count == 2
+        mock_graph_builder.build.assert_called_once()
+
+
 def test_build_orchestration_agent_as_tool(builder):
     agent_map = {'a1': MagicMock(), 'a2': MagicMock()}
 

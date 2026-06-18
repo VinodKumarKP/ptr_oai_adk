@@ -94,12 +94,32 @@ class OrchestrationBuilder:
         elif pattern_lower in [self.PATTERN_GRAPH, 
                                self.PATTERN_SEQUENTIAL, 
                                self.PATTERN_HIERARCHICAL]:
+            if pattern_lower in [self.PATTERN_SEQUENTIAL, self.PATTERN_HIERARCHICAL] and not context_map:
+                # Backward-compatible fallback: if users omit explicit dependencies,
+                # execute in agent declaration order as a linear chain.
+                context_map = self._build_default_context_map(agent_map)
+                self.logger.info(
+                    "No context map provided for '%s' pattern; using default linear ordering",
+                    pattern_lower,
+                )
             return self._build_graph(agent_map, context_map)
         else:
             raise ValueError(
                 f"Unknown orchestration pattern: {pattern}. "
                 f"Use 'graph', 'swarm', 'sequential', 'hierarchical' or 'agent-as-tool'"
             )
+
+    @staticmethod
+    def _build_default_context_map(agent_map: Dict[str, Agent]) -> Dict[str, List[str]]:
+        """Build a linear dependency map from insertion order.
+
+        Example for [a, b, c]: {'b': ['a'], 'c': ['b']}.
+        """
+        agent_keys = list(agent_map.keys())
+        default_context_map: Dict[str, List[str]] = {}
+        for i in range(1, len(agent_keys)):
+            default_context_map[agent_keys[i]] = [agent_keys[i - 1]]
+        return default_context_map
 
     def _build_agent_as_tool(
             self,

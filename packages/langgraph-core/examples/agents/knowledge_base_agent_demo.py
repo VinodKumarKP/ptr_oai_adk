@@ -32,8 +32,8 @@ async def run_kb_agent():
     # Test 1: Knowledge Base Query
     print("\n--- Test 1: Knowledge Base Query ---")
     # query = "What is the policy on remote work?"
-    # query = "Is architect fees covered ?"
-    query = "which file contains flask"
+    query = "Is architect fees covered ?"
+    # query = "which file contains flask"
     result = await agent.ainvoke(query)
     pprint(result['content']['text'])
 

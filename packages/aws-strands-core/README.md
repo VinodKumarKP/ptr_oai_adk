@@ -356,7 +356,7 @@ model:
 
 # 2. Architecture Configuration
 crew_config:
-  pattern: "graph"                 # Options: graph, swarm, sequential, agent-as-tool
+  pattern: "graph"                 # Options: graph, swarm, sequential, hierarchical, agent-as-tool
   entry_agent: "researcher"        # Required for graph / swarm
   structured_output_model: "FinalReport"  # Optional: supervisor-level output model
 
@@ -537,6 +537,25 @@ crew_config:
 agent_list:
   - assistant:
       system_prompt: You are a helpful assistant.
+```
+
+If you define multiple agents and omit explicit `context`, the framework automatically builds a linear dependency chain in `agent_list` order (for example: `agent1 -> agent2 -> agent3`).
+
+### 3b. Hierarchical Pattern
+
+`hierarchical` uses graph orchestration with dependency edges. Like `sequential`, when explicit `context` is omitted, the framework falls back to the `agent_list` declaration order.
+
+```yaml
+crew_config:
+  pattern: hierarchical
+
+agent_list:
+  - triage:
+      system_prompt: Route the task.
+  - specialist:
+      system_prompt: Solve the routed task.
+  - reviewer:
+      system_prompt: Review and finalize.
 ```
 
 ### 4. Agents-as-Tools Pattern
@@ -1784,6 +1803,7 @@ class StrandsAgent:
     def __init__(
         agent_name: str,
         agent_config: Dict[str, Any],
+        llm: Optional[Any] = None,
         session_id: str = "default",
         user_id: str = "default",
         config_root: Optional[str] = None
@@ -1792,6 +1812,9 @@ class StrandsAgent:
         Initializes the agent.
         - agent_name: A unique name for this agent instance.
         - agent_config: The dictionary loaded from your YAML configuration file.
+        - llm: Optional pre-configured model instance. When provided, the framework
+          uses this instance directly and does not replace it with a model created
+          from YAML config.
         - session_id: An identifier for the current conversation session.
         - user_id: An identifier for the user interacting with the agent.
         - config_root: The root directory for configuration files.
