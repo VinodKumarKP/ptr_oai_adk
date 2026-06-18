@@ -239,7 +239,9 @@ class OpenAIAgent(BaseAgent):
         Args:
             user_message: User input message
             config: Optional configuration with custom inputs
-            async_mode: Whether to use async execution
+            async_mode: Deprecated and ignored. Execution is always asynchronous
+                (the OpenAI Agents ``Runner`` is awaited); kept only for
+                backward-compatible call sites.
 
         Returns:
             Dictionary containing session_id and result
@@ -259,9 +261,9 @@ class OpenAIAgent(BaseAgent):
         try:
             # Execute with or without tracing
             if self.langfuse_manager.is_enabled:
-                result = await self._execute_with_tracing(formatted_message, async_mode)
+                result = await self._execute_with_tracing(formatted_message)
             else:
-                result = await self._execute_without_tracing(formatted_message, async_mode)
+                result = await self._execute_without_tracing(formatted_message)
 
             return {
                 "session_id": self.session_id,
@@ -313,12 +315,11 @@ class OpenAIAgent(BaseAgent):
         formatted = self.message_formatter.format_message(user_message, inputs)
         return formatted if formatted is not None else user_message
 
-    async def _execute_without_tracing(self, message: str, async_mode: bool) -> Any:
+    async def _execute_without_tracing(self, message: str) -> Any:
         """Execute agent system without Langfuse tracing.
 
         Args:
             message: Formatted message
-            async_mode: Whether to use async execution
 
         Returns:
             Execution result
@@ -328,12 +329,11 @@ class OpenAIAgent(BaseAgent):
             result = await Runner.run(self.agent, message)
             return result
 
-    async def _execute_with_tracing(self, message: str, async_mode: bool) -> Any:
+    async def _execute_with_tracing(self, message: str) -> Any:
         """Execute agent system with Langfuse tracing.
 
         Args:
             message: Formatted message
-            async_mode: Whether to use async execution
 
         Returns:
             Execution result
@@ -348,7 +348,7 @@ class OpenAIAgent(BaseAgent):
                 }
         ) as span:
             # Execute the system
-            result = await self._execute_without_tracing(message, async_mode)
+            result = await self._execute_without_tracing(message)
 
             # Extract output for tracing
             output = result.final_output
@@ -413,7 +413,24 @@ class OpenAIAgent(BaseAgent):
         Returns:
             The agent's response.
         """
-        return asyncio.run(self.ainvoke(user_message, config))
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop running on this thread — safe to drive the coroutine
+            # with asyncio.run().
+            return asyncio.run(self.ainvoke(user_message, config))
+
+        # A loop is already running on this thread (e.g. called from async code,
+        # a web server, or a notebook). Calling asyncio.run() here would raise
+        # "asyncio.run() cannot be called from a running event loop", so run the
+        # coroutine in a dedicated worker thread with its own loop instead.
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                lambda: asyncio.run(self.ainvoke(user_message, config))
+            )
+            return future.result()
 
     @traced("agent.astream")
     async def astream(self, user_message: str, config: Optional[Dict[str, Any]] = None):
@@ -454,7 +471,23 @@ class OpenAIAgent(BaseAgent):
                     error=e,
                     metadata={'session_id': self.session_id}
                 )
-            yield f"Error: {str(e)}"
+            # Emit a typed error payload so downstream consumers can keep using
+            # the same dict contract (content/model/session_id) as success chunks.
+            yield {
+                "content": {
+                    "text": f"Error: {str(e)}",
+                    "type": "error",
+                    "final": True,
+                    "session_id": str(self.session_id),
+                },
+                "model": {
+                    "model_id": getattr(self.llm, 'model', 'unknown'),
+                    "model_provider": self.agent_config.get('cloud_provider', 'openai'),
+                },
+                "session_id": self.session_id,
+                "final": True,
+                "error": str(e),
+            }
 
     async def _astream_without_tracing(self, message: str, original_message: str,
                                        config: Optional[Dict[str, Any]] = None):
@@ -470,8 +503,9 @@ class OpenAIAgent(BaseAgent):
         """
         from agents import Runner
 
-        # Determine the actual original message to use (config overrides argument)
-        actual_original_message = config.get('original_message') if config else original_message
+        # Determine the actual original message to use (config overrides argument).
+        # Fall back to the passed-in original_message when config lacks the key.
+        actual_original_message = config.get('original_message', original_message) if config else original_message
 
         async with self._mcp_context():
             result = Runner.run_streamed(self.agent, message)
@@ -578,12 +612,15 @@ class OpenAIAgent(BaseAgent):
             collected_output = ""
 
             async for chunk in self._astream_without_tracing(message, original_message, config):
-                # Collect output for tracing
+                # Collect output for tracing. format_response() returns 'content'
+                # as a dict ({'text': ..., 'type': ...}); handle that primarily
+                # and keep list/str handling as defensive fallbacks.
                 if isinstance(chunk, dict):
-                    # Extract text from formatted response
-                    content_list = chunk.get('content', [])
-                    if isinstance(content_list, list):
-                        for item in content_list:
+                    content_block = chunk.get('content')
+                    if isinstance(content_block, dict):
+                        collected_output += content_block.get('text', '') or ''
+                    elif isinstance(content_block, list):
+                        for item in content_block:
                             if isinstance(item, dict) and item.get('type') == 'text':
                                 collected_output += item.get('text', '')
                 elif isinstance(chunk, str):

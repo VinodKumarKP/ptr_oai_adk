@@ -233,25 +233,42 @@ def test_astream_error(agent):
             chunks = []
             async for chunk in agent.astream("hello"):
                 chunks.append(chunk)
-                
+
+            # The error path must honor the dict contract, not yield a raw string.
             assert len(chunks) == 1
-            assert "Error: Stream Error" in chunks[0]
-        
+            error_chunk = chunks[0]
+            assert isinstance(error_chunk, dict)
+            assert error_chunk['content']['type'] == 'error'
+            assert "Error: Stream Error" in error_chunk['content']['text']
+            assert error_chunk['final'] is True
+            assert error_chunk['error'] == "Stream Error"
+            assert 'session_id' in error_chunk
+            assert 'model' in error_chunk
+
     asyncio.run(run())
 
-def test_invoke_sync(agent):
-    # Mock ainvoke
+def test_invoke_no_running_loop(agent):
+    # No event loop running on this thread -> invoke() drives the coroutine
+    # directly via asyncio.run().
     agent.ainvoke = AsyncMock(return_value={'content': 'sync'})
-    
-    # Since we are in an async loop (pytest-asyncio), we can't easily test asyncio.run(ainvoke)
-    # But we can verify the method exists and calls ainvoke logic
-    
-    # For unit testing invoke, we usually mock asyncio.run
-    with patch('asyncio.run') as mock_run:
-        mock_run.return_value = {'content': 'sync'}
-        result = agent.invoke("hello")
-        assert result['content'] == 'sync'
-        mock_run.assert_called_once()
+
+    result = agent.invoke("hello")
+
+    assert result['content'] == 'sync'
+    agent.ainvoke.assert_called_once()
+
+def test_invoke_within_running_loop(agent):
+    # When a loop is already running, invoke() must not raise; it runs ainvoke()
+    # in a worker thread instead of calling asyncio.run() on the live loop.
+    agent.ainvoke = AsyncMock(return_value={'content': 'async'})
+
+    async def run():
+        # Called synchronously from inside a running event loop.
+        return agent.invoke("hello")
+
+    result = asyncio.run(run())
+    assert result['content'] == 'async'
+    agent.ainvoke.assert_called_once()
 
 def test_mcp_context(agent):
     async def run():
@@ -265,7 +282,83 @@ def test_mcp_context(agent):
             
             async with agent._mcp_context():
                 pass
-                
+
             mock_manager.assert_called_once()
-            
+
+    asyncio.run(run())
+
+def _make_message_chunk_event(text):
+    """Build a fake message_output_item stream event yielding `text`."""
+    event = MagicMock()
+    event.type = "run_item_stream_event"
+    event.item.type = "message_output_item"
+    event.item.raw_item.status = "completed"
+    return event
+
+def test_astream_original_message_fallback(agent):
+    # Regression: when config exists but lacks 'original_message', the streaming
+    # path must fall back to the passed-in original_message (not None). Verify it
+    # is what gets stored in memory.
+    async def run():
+        agent._ensure_initialized = AsyncMock()
+        agent.agent = MagicMock()
+        agent.memory_store = MagicMock()
+        agent.result_extractor.extract_text = MagicMock(return_value="answer")
+
+        with patch('agents.Runner.run_streamed') as mock_run_streamed:
+            mock_result = MagicMock()
+
+            async def mock_events():
+                yield _make_message_chunk_event("hi")
+
+            mock_result.stream_events = mock_events
+            mock_result.context_wrapper.usage = MagicMock()
+            mock_result.final_output = "answer"
+            mock_run_streamed.return_value = mock_result
+
+            agent._mcp_context = MagicMock()
+            agent._mcp_context.return_value.__aenter__.return_value = None
+            agent._mcp_context.return_value.__aexit__.return_value = None
+
+            with patch('agents.ItemHelpers.text_message_output', return_value="hi"):
+                # config present but WITHOUT 'original_message'
+                async for _ in agent.astream("user question", config={'verbose': True}):
+                    pass
+
+        agent.memory_store.add_turn.assert_called_once()
+        kwargs = agent.memory_store.add_turn.call_args.kwargs
+        assert kwargs['user_message'] == "user question"
+
+    asyncio.run(run())
+
+def test_astream_with_tracing_collects_dict_content(agent):
+    # Regression: trace output aggregation must read content from the dict shape
+    # returned by format_response (content is a dict, not a list).
+    async def run():
+        agent._ensure_initialized = AsyncMock()
+        agent.agent = MagicMock()
+        agent.memory_store = None
+        agent.langfuse_manager = MagicMock()
+        agent.langfuse_manager.is_enabled = True
+
+        span = MagicMock()
+        agent.langfuse_manager.trace_generation.return_value.__enter__.return_value = span
+        agent.langfuse_manager.trace_generation.return_value.__exit__.return_value = None
+
+        async def fake_inner(message, original_message, config):
+            yield {'content': {'text': 'Hello ', 'type': 'text'}}
+            yield {'content': {'text': 'world', 'type': 'text'}}
+
+        agent._astream_without_tracing = fake_inner
+
+        chunks = []
+        async for chunk in agent._astream_with_tracing("msg", "orig", None):
+            chunks.append(chunk)
+
+        assert len(chunks) == 2
+        # update_trace must be called with the aggregated text, not empty.
+        agent.langfuse_manager.update_trace.assert_called_once()
+        kwargs = agent.langfuse_manager.update_trace.call_args.kwargs
+        assert kwargs['output_data'] == "Hello world"
+
     asyncio.run(run())
