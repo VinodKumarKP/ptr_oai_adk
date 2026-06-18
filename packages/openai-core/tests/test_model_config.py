@@ -64,3 +64,34 @@ def test_create_model_validation(manager, mock_litellm_module):
         with patch.object(manager, '_validate_config') as mock_validate:
             manager.create_model({'model_id': 'gpt-4'})
             mock_validate.assert_called_once()
+
+def test_build_model_settings_extracts_params(manager):
+    # Sampling params (top-level temperature + nested params) must be surfaced as
+    # ModelSettings kwargs, since LitellmModel itself drops them.
+    settings = manager.build_model_settings({
+        'model_id': 'gpt-4',
+        'temperature': 0.9,
+        'params': {'top_p': 0.95, 'presence_penalty': 0.5}
+    })
+    assert settings['temperature'] == 0.9
+    assert settings['top_p'] == 0.95
+    assert settings['presence_penalty'] == 0.5
+
+def test_build_model_settings_ignores_unknown_keys(manager):
+    # Unrecognized keys must not leak into ModelSettings (would raise on construction).
+    settings = manager.build_model_settings({
+        'model_id': 'gpt-4',
+        'params': {'top_p': 0.5, 'not_a_real_setting': 123}
+    })
+    assert settings['top_p'] == 0.5
+    assert 'not_a_real_setting' not in settings
+
+def test_build_model_settings_honors_legacy_top_level_temperature(manager):
+    # _merge_with_defaults normalizes the legacy top-level temperature into
+    # params (top-level wins), and build_model_settings must surface it.
+    settings = manager.build_model_settings({
+        'model_id': 'gpt-4',
+        'temperature': 0.2,
+        'params': {'temperature': 0.8}
+    })
+    assert settings['temperature'] == 0.2

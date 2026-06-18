@@ -97,13 +97,24 @@ class AgentBuilder(BaseAgentBuilder):
             shell = function_tool(self.tool_registry.shell)
             tools.append(shell)
 
+        # Build model settings: include_usage plus any configured sampling
+        # params (temperature, top_p, ...). These belong on ModelSettings rather
+        # than the LitellmModel constructor, which only accepts model/base_url/api_key.
+        model_settings_kwargs: Dict[str, Any] = {'include_usage': True}
+        try:
+            extra_settings = self.model_manager.build_model_settings(agent_config.get('model'))
+            if isinstance(extra_settings, dict):
+                model_settings_kwargs.update(extra_settings)
+        except Exception as e:
+            self.logger.warning(f"Could not derive model settings from config: {e}")
+
         oai_agent = Agent(
             model=self.llm,
             name=agent_name,
             instructions=system_prompt,
             mcp_servers=[],  # MCPs are already in 'tools' list as clients
             tools=tools,
-            model_settings=ModelSettings(include_usage=True),
+            model_settings=ModelSettings(**model_settings_kwargs),
             output_type=self.structured_output_model_registry.get_model(agent_config.get('structured_output_model', None))
         )
 

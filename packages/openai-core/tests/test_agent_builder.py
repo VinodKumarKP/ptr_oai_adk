@@ -29,6 +29,47 @@ def test_init(builder, mock_deps):
     assert builder.config_root == '/tmp'
 
 
+def test_create_agent_instance_applies_model_settings(builder):
+    # Regression: configured sampling params must be passed to ModelSettings
+    # (alongside include_usage), not silently dropped.
+    builder.tool_registry.enable_lazy_loading = False
+    builder.model_manager.build_model_settings = MagicMock(
+        return_value={'temperature': 0.3, 'top_p': 0.9}
+    )
+    builder.structured_output_model_registry.get_model = MagicMock(return_value=None)
+
+    config = {
+        'system_prompt': 'prompt',
+        'model': {'model_id': 'gpt-4', 'temperature': 0.3},
+    }
+
+    with patch('oai_agent_core.openai_core.builders.agent_builder.Agent') as mock_agent_cls, \
+         patch('oai_agent_core.openai_core.builders.agent_builder.ModelSettings') as mock_ms:
+        builder._create_agent_instance('agent1', config, [])
+
+        builder.model_manager.build_model_settings.assert_called_once_with(config['model'])
+        mock_ms.assert_called_once()
+        kwargs = mock_ms.call_args.kwargs
+        assert kwargs['include_usage'] is True
+        assert kwargs['temperature'] == 0.3
+        assert kwargs['top_p'] == 0.9
+        mock_agent_cls.assert_called_once()
+
+def test_create_agent_instance_model_settings_failure_is_safe(builder):
+    # If settings derivation fails, the agent must still build with include_usage.
+    builder.tool_registry.enable_lazy_loading = False
+    builder.model_manager.build_model_settings = MagicMock(side_effect=Exception("boom"))
+    builder.structured_output_model_registry.get_model = MagicMock(return_value=None)
+
+    config = {'system_prompt': 'prompt', 'model': {'model_id': 'gpt-4'}}
+
+    with patch('oai_agent_core.openai_core.builders.agent_builder.Agent'), \
+         patch('oai_agent_core.openai_core.builders.agent_builder.ModelSettings') as mock_ms:
+        builder._create_agent_instance('agent1', config, [])
+
+        kwargs = mock_ms.call_args.kwargs
+        assert kwargs == {'include_usage': True}
+
 def test_create_single_agent(builder):
     async def run():
         config = {
