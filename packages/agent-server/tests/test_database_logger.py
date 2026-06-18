@@ -172,7 +172,7 @@ def _make_pg_module(conn=None, create_pool_raises=None):
         yield mod, conn, pool
 
 def make_mock_backend(succeeds: bool = True, name: str = "mock", fetch_result: Optional[List] = None, fetch_one_result: Optional[Dict] = None) -> MagicMock:
-    b = MagicMock()
+    b = MagicMock(spec=['name', 'initialize', 'execute', 'execute_many', 'fetch', 'fetch_one', 'close', 'CHAT_LOGS_INSERT', 'ACTIVITY_LOG_INSERT', 'PLACEHOLDER'])
     b.name = name
     b.initialize = AsyncMock(return_value=succeeds)
     b.execute = AsyncMock()

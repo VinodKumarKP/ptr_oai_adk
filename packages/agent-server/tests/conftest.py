@@ -77,6 +77,10 @@ if 'oai_agent_core' not in sys.modules:
     logger_mod.get_logger = MagicMock(return_value=MagicMock())
     sys.modules['oai_agent_core.utils.logger'] = logger_mod
 
+    dotenv_loader_mod = types.ModuleType('oai_agent_core.utils.dotenv_loader')
+    dotenv_loader_mod.load_dotenv = MagicMock(return_value=0)
+    sys.modules['oai_agent_core.utils.dotenv_loader'] = dotenv_loader_mod
+
 # Mock redis
 if 'redis' not in sys.modules:
     redis = MagicMock()
