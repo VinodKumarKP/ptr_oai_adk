@@ -10,10 +10,13 @@ tools:
 mcps:
   environment_lookup:
     command: env_lookup_server
+    args: []
   stock_market_lookup:
     command: stock_market_server
+    args: []
   customer_records_server:
     command: customer_records_server
+    args: []
 
 
 agent_list:
