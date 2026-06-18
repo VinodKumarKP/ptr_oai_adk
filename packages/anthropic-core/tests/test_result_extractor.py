@@ -80,25 +80,38 @@ def test_from_raw_fallback_str(extractor):
 
 def test_format_response_basic_shape(extractor):
     resp = extractor.format_response("hi", session_id="s1", model_id="claude-x")
-    assert resp["session_id"] == "s1"
-    assert resp["content"] == {"text": "hi", "type": "AIMessage"}
-    assert resp["final"] is True
-    assert resp["model"] == "claude-x"
-    assert resp["provider"] == "anthropic"  # default provider
-    assert "raw" not in resp
+    # Nested platform-standard schema
+    assert resp["content"]["text"] == "hi"
+    assert resp["content"]["type"] == "AIMessage"
+    assert resp["content"]["final"] is True
+    assert resp["content"]["session_id"] == "s1"
+    assert resp["model"] == {"model_id": "claude-x", "model_provider": "anthropic"}
+    assert resp["metadata"]["result_type"] == "str"
+    assert "raw_result" not in resp
     assert "input_message" not in resp
     assert "original_message" not in resp
 
 
 def test_format_response_custom_provider(extractor):
     resp = extractor.format_response("hi", session_id="s", model_id="m", model_provider="bedrock")
-    assert resp["provider"] == "bedrock"
+    assert resp["model"]["model_provider"] == "bedrock"
 
 
 def test_format_response_include_raw(extractor):
     raw_obj = {"text": "hi"}
     resp = extractor.format_response(raw_obj, session_id="s", model_id="m", include_raw=True)
-    assert resp["raw"] is raw_obj
+    assert resp["raw_result"] is raw_obj
+
+
+def test_format_response_includes_token_usage(extractor):
+    raw = SimpleNamespace(usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15})
+    resp = extractor.format_response({"text": "hi", "raw": raw}, session_id="s", model_id="m")
+    assert resp["token_usage"] == {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+
+
+def test_format_response_omits_token_usage_when_absent(extractor):
+    resp = extractor.format_response({"text": "hi", "raw": None}, session_id="s", model_id="m")
+    assert "token_usage" not in resp
 
 
 def test_format_response_includes_optional_messages(extractor):

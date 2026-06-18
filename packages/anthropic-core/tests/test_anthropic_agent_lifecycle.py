@@ -58,6 +58,31 @@ def test_init_wires_anthropic_components(monkeypatch):
     assert agent.orchestration_builder is None
 
 
+def test_init_honors_injected_llm(monkeypatch):
+    # An injected model kwargs dict (DI) must be used as-is, not replaced by
+    # config-derived kwargs.
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk", MagicMock())
+
+    def fake_base_init(self, *args, **kwargs):
+        self.agent_name = kwargs.get("agent_name")
+        self.agent_config = kwargs.get("agent_config") or {}
+        self.logger = logging.getLogger("test")
+        self.session_id = kwargs.get("session_id", "default")
+        self.user_id = kwargs.get("user_id", "default")
+
+    monkeypatch.setattr(BaseAgent, "__init__", fake_base_init)
+
+    injected = {"model": "injected-model", "api_base_url": "http://proxy"}
+    agent = AnthropicAgent(
+        agent_name="travel",
+        agent_config={"model": {"model_id": "anthropic/claude-x"},
+                      "crew_config": {"enable_lazy_loading": True}},
+        llm=injected,
+    )
+
+    assert agent.model_kwargs == injected
+
+
 # ── initialize() ──────────────────────────────────────────────────────────────
 
 def _uninit_agent(agent_config=None, skill_registry=None, global_kb_factory=None):

@@ -186,6 +186,64 @@ def test_build_all_agent_definitions(monkeypatch):
     assert set(result.keys()) == {"a", "b"}
 
 
+def test_normalize_agent_entry_dict():
+    b = _builder()
+    key, data = b.normalize_agent_entry({"a": {"system_prompt": "PA"}})
+    assert key == "a"
+    assert data == {"system_prompt": "PA"}
+
+
+def test_normalize_agent_entry_string_loads_from_config(monkeypatch):
+    # String entries resolve their config via ConfigManager (load-from-config),
+    # matching langgraph/openai behavior.
+    loaded = {"system_prompt": "FROM-DISK"}
+    fake_cm = MagicMock()
+    fake_cm.load_agent_config.return_value = loaded
+    fake_module = types.ModuleType("oai_agent_core.components.configuration.model_config")
+    fake_module.ConfigManager = MagicMock(return_value=fake_cm)
+    monkeypatch.setitem(
+        sys.modules, "oai_agent_core.components.configuration.model_config", fake_module
+    )
+
+    b = _builder()
+    key, data = b.normalize_agent_entry("planner")
+
+    assert key == "planner"
+    assert data == loaded
+    fake_cm.load_agent_config.assert_called_once_with(agent_name="planner")
+
+
+def test_build_all_agent_definitions_supports_string_entries(monkeypatch):
+    _mock_agent_definition(monkeypatch)
+    fake_cm = MagicMock()
+    fake_cm.load_agent_config.return_value = {"system_prompt": "PS"}
+    fake_module = types.ModuleType("oai_agent_core.components.configuration.model_config")
+    fake_module.ConfigManager = MagicMock(return_value=fake_cm)
+    monkeypatch.setitem(
+        sys.modules, "oai_agent_core.components.configuration.model_config", fake_module
+    )
+
+    b = _builder()
+    result = asyncio.run(b.build_all_agent_definitions([
+        {"a": {"system_prompt": "PA"}},
+        "b",  # string entry → loaded from config
+    ]))
+    assert set(result.keys()) == {"a", "b"}
+
+
+def test_resolve_entry_system_prompt_string_entry(monkeypatch):
+    fake_cm = MagicMock()
+    fake_cm.load_agent_config.return_value = {"system_prompt": "PS"}
+    fake_module = types.ModuleType("oai_agent_core.components.configuration.model_config")
+    fake_module.ConfigManager = MagicMock(return_value=fake_cm)
+    monkeypatch.setitem(
+        sys.modules, "oai_agent_core.components.configuration.model_config", fake_module
+    )
+
+    out = _builder().resolve_entry_system_prompt(["solo"], None, "solo")
+    assert out == "PS"
+
+
 def test_create_knowledge_base_tool(monkeypatch):
     b = _builder()
 

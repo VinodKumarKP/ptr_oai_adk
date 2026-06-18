@@ -78,8 +78,9 @@ def test_ainvoke_formats_response():
     a = _agent(orchestration=FakeOrchestration(invoke_result={"text": "answer"}))
     resp = asyncio.run(a.ainvoke("q"))
     assert resp["content"]["text"] == "answer"
-    assert resp["final"] is True
-    assert resp["provider"] == "anthropic"
+    assert resp["content"]["final"] is True
+    assert resp["model"]["model_provider"] == "anthropic"
+    assert resp["model"]["model_id"] == "claude-x"
 
 
 def test_ainvoke_stores_memory_when_present():
@@ -99,8 +100,36 @@ def test_ainvoke_applies_output_guardrail():
 def test_ainvoke_include_raw_and_messages():
     a = _agent(orchestration=FakeOrchestration(invoke_result={"text": "a"}))
     resp = asyncio.run(a.ainvoke("orig", {"include_raw": True, "include_original_message": True}))
-    assert "raw" in resp
+    assert "raw_result" in resp
     assert resp["original_message"] == "orig"
+
+
+def test_ainvoke_prefers_config_original_message():
+    # When config supplies original_message, it overrides the user message.
+    a = _agent(orchestration=FakeOrchestration(invoke_result={"text": "a"}))
+    resp = asyncio.run(a.ainvoke(
+        "user-msg",
+        {"include_original_message": True, "original_message": "explicit-orig"},
+    ))
+    assert resp["original_message"] == "explicit-orig"
+
+
+def test_ainvoke_memory_uses_original_message_override():
+    mem = MagicMock()
+    a = _agent(orchestration=FakeOrchestration(invoke_result={"text": "x"}), memory_store=mem)
+    asyncio.run(a.ainvoke("user-msg", {"original_message": "explicit-orig"}))
+    assert mem.add_turn.call_args.kwargs["user_message"] == "explicit-orig"
+
+
+def test_invoke_within_running_loop():
+    # invoke() must not raise when called from inside a running event loop.
+    a = _agent(orchestration=FakeOrchestration(invoke_result={"text": "looped"}))
+
+    async def run():
+        return a.invoke("q")
+
+    resp = asyncio.run(run())
+    assert resp["content"]["text"] == "looped"
 
 
 # ── invoke (sync wrapper) ─────────────────────────────────────────────────────

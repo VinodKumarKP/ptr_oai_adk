@@ -92,8 +92,10 @@ class AnthropicAgent(BaseAgent):
             default_config=self.agent_config.get("model", {}),
             logger=self.logger,
         )
-        # Dict of LiteLLM-proxy-aware kwargs forwarded to ClaudeAgentOptions
-        self.model_kwargs: Dict[str, Any] = self.model_manager.create_model()
+        # Dict of LiteLLM-proxy-aware kwargs forwarded to ClaudeAgentOptions.
+        # Honor a caller-injected model kwargs dict (dependency injection);
+        # only derive from config when nothing was injected.
+        self.model_kwargs: Dict[str, Any] = llm if llm else self.model_manager.create_model()
 
         self.tool_registry = AnthropicToolRegistry(
             logger=self.logger,
@@ -193,8 +195,10 @@ class AnthropicAgent(BaseAgent):
         elif pattern == "single":
             # For single pattern: process agent-level KB configs and skill capability tools
             if agent_list:
-                single_agent_key = list(agent_list[0].keys())[0]
-                single_agent_config = agent_list[0][single_agent_key]
+                # Supports both dict ({name: config}) and string (name) entries.
+                single_agent_key, single_agent_config = self.agent_builder.normalize_agent_entry(
+                    agent_list[0]
+                )
                 mcp_rebuilt = False
 
                 # Process KB tools
@@ -333,6 +337,10 @@ class AnthropicAgent(BaseAgent):
             raw = await self.process_request(user_message, config)
         include_raw = config.get("include_raw", False) if config else False
 
+        # Prefer an explicit original_message override from config (consistent
+        # with the other framework cores); fall back to the user message.
+        actual_original_message = config.get("original_message", user_message) if config else user_message
+
         with trace_span("agent.format_response", level="debug", agent_name=self.agent_name):
             response = self.result_extractor.format_response(
                 result=raw["result"],
@@ -341,14 +349,14 @@ class AnthropicAgent(BaseAgent):
                 model_provider=self.model_manager.get_model_info().get("provider", "anthropic"),
                 include_raw=include_raw,
                 input_message=raw["input_message"] if config and config.get("include_input_message") else None,
-                original_message=user_message if config and config.get("include_original_message") else None,
+                original_message=actual_original_message if config and config.get("include_original_message") else None,
             )
 
         if self.memory_store:
             self.memory_store.add_turn(
                 session_id=self.session_id,
                 user_id=self.user_id,
-                user_message=user_message,
+                user_message=actual_original_message,
                 agent_response=response,
             )
 
@@ -364,8 +372,25 @@ class AnthropicAgent(BaseAgent):
         user_message: str,
         config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Sync wrapper around ainvoke."""
-        return asyncio.run(self.ainvoke(user_message, config))
+        """Sync wrapper around ainvoke.
+
+        Safe to call whether or not an event loop is already running: when a loop
+        is active (notebooks, ASGI, async frameworks) the coroutine is executed in
+        a dedicated worker thread instead of calling asyncio.run() on the live loop.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop on this thread — drive the coroutine directly.
+            return asyncio.run(self.ainvoke(user_message, config))
+
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                lambda: asyncio.run(self.ainvoke(user_message, config))
+            )
+            return future.result()
 
     @traced("agent.astream")
     async def astream(
@@ -449,10 +474,19 @@ class AnthropicAgent(BaseAgent):
             "mcp_servers": list(self.tool_registry.mcp_server_configs.keys()),
         }
 
+    @staticmethod
+    def _agent_entry_key(entry: Any) -> str:
+        """Extract the agent name from an agent_list entry (str or dict)."""
+        if isinstance(entry, str):
+            return entry
+        if isinstance(entry, dict):
+            return next(iter(entry))
+        return str(entry)
+
     def validate_tasks(self) -> Dict[str, Any]:
         return {
             "agent_count": len(self.agent_config.get("agent_list", [])),
-            "agents": [list(a.keys())[0] for a in self.agent_config.get("agent_list", [])],
+            "agents": [self._agent_entry_key(a) for a in self.agent_config.get("agent_list", [])],
             "pattern": self.agent_config.get("crew_config", {}).get("pattern", "single"),
             "mcp_servers": list(self.tool_registry.mcp_server_configs.keys()),
         }

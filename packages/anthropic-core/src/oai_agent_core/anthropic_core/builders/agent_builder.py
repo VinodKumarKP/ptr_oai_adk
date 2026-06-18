@@ -236,14 +236,44 @@ class AgentBuilder(BaseAgentBuilder):
             tools=allowed_tools or None,
         )
 
+    def normalize_agent_entry(self, entry: Any) -> tuple[str, Dict[str, Any]]:
+        """Normalize an ``agent_list`` entry into ``(agent_key, agent_config)``.
+
+        Supports both styles used across the framework cores:
+          - dict: ``{'agent_name': {...config...}}`` or ``{'agent_name': None}``
+          - str:  ``'agent_name'`` — config is loaded from disk via ConfigManager
+
+        When the inline config is ``None`` (or the entry is a bare string), the
+        agent config is resolved from the config root, matching langgraph/openai.
+        """
+        if isinstance(entry, str):
+            agent_key = entry
+            raw_config: Optional[Dict[str, Any]] = None
+        elif isinstance(entry, dict):
+            agent_key = next(iter(entry))
+            raw_config = entry[agent_key]
+        else:
+            raise ValueError(f"Invalid agent_list entry type: {type(entry)}")
+
+        if raw_config is None:
+            from oai_agent_core.components.configuration.model_config import ConfigManager
+
+            config_manager = ConfigManager(config_root=self.config_root)
+            raw_config = config_manager.load_agent_config(agent_name=agent_key)
+
+        return agent_key, raw_config
+
     async def build_all_agent_definitions(
-        self, agent_configs: List[Dict[str, Any]]
+        self, agent_configs: List[Any]
     ) -> Dict[str, "AgentDefinition"]:
-        """Build all AgentDefinitions in parallel."""
+        """Build all AgentDefinitions in parallel.
+
+        Each entry may be a dict (``{name: config}``) or a string (``name``,
+        config loaded from disk).
+        """
         keys, tasks = [], []
         for entry in agent_configs:
-            key = list(entry.keys())[0]
-            data = entry[key]
+            key, data = self.normalize_agent_entry(entry)
             keys.append(key)
             tasks.append(self.build_agent_definition(key, data))
 
@@ -262,11 +292,11 @@ class AgentBuilder(BaseAgentBuilder):
 
         # Fall back to the entry agent's system_prompt
         for entry in agent_configs:
-            key = list(entry.keys())[0]
+            key, data = self.normalize_agent_entry(entry)
             if not entry_agent or key == entry_agent:
-                prompt = entry[key].get("system_prompt", "")
+                prompt = data.get("system_prompt", "")
                 # Inject skills if present
-                skill_names = entry[key].get("skills", [])
+                skill_names = data.get("skills", [])
                 if skill_names and self.skill_registry:
                     skill_list = self.skill_registry.get_skills(skill_names)
                     prompt += "\n" + self.skill_registry.generate_skills_prompt(skill_list)
