@@ -31,7 +31,7 @@ async def run_agent_as_tool_demo():
 
     # Test 1: Complex query requiring sub-agent tool
     print("\n--- Test 1: Flight Booking via Tool ---")
-    query = "Book a flight from LAX to SFO for tomorrow."
+    query = "Search for hotel in New York for June 19"
     result = await agent.ainvoke(query)
     pprint(result['content']['text'])
 

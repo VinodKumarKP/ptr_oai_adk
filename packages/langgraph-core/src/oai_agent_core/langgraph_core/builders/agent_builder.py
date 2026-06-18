@@ -1,6 +1,5 @@
 """Builder for creating and configuring LangChain Agent instances."""
 
-import asyncio
 import logging
 from typing import Dict, Any, List, Optional
 
@@ -135,9 +134,9 @@ class AgentBuilder(BaseAgentBuilder):
         """
 
         @tool
-        def agent_tool(query: str) -> str:
+        async def agent_tool(query: str) -> str:
             """Delegate work to the sub-agent."""
-            response = asyncio.run(agent.ainvoke({"messages": [HumanMessage(content=query)]}))
+            response = await agent.ainvoke({"messages": [HumanMessage(content=query)]})
             return response["messages"][-1].content
 
         agent_tool.name = name
