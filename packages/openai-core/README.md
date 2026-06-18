@@ -334,19 +334,19 @@ For a simple, single-agent system, your configuration can be very concise.
 ```yaml
 # 1. Define the model
 model:
-  model_id: "gpt-4o"
-  cloud_provider: "openai"
+  model_id: gpt-4o
+  cloud_provider: openai
 
 # 2. Define the agent
 agent_list:
   - researcher:
-      system_prompt: "You are a helpful research assistant."
+      system_prompt: You are a helpful research assistant.
 
 # 3. (Optional) Define a tool
 tools:
   search:
-    module: "langchain_community.tools"
-    class: "DuckDuckGoSearchRun"
+    module: langchain_community.tools
+    class: DuckDuckGoSearchRun
 ```
 
 ### Complete YAML Template
@@ -357,45 +357,47 @@ This template shows all the possible configuration options available. You can mi
 # 1. Model Configuration: Defines the LLM to be used.
 model:
   # model_id follows LiteLLM conventions (e.g. "gpt-4o", "anthropic/claude-3-5-sonnet-20241022")
-  model_id: "gpt-4o"
+  model_id: gpt-4o
   # cloud_provider is metadata used in responses; routing is driven by model_id
-  cloud_provider: "openai"
-  params:  # Optional: Override default model parameters
+  cloud_provider: openai
+  # Optional: Runtime sampling/settings applied through OpenAI Agents ModelSettings.
+  # These are not passed to the LitellmModel constructor directly.
+  params:
     temperature: 0.7
     max_tokens: 4096
 
 # 2. Architecture Configuration: Defines the multi-agent pattern.
 crew_config:
-  pattern: "supervisor" # Options: supervisor, handoff, agent-as-tool
-  structured_output_model: "SupervisorOutputModel" # Optional: Pydantic model for the supervisor's final output.
+  pattern: supervisor # Options: supervisor, handoff, agent-as-tool
+  structured_output_model: SupervisorOutputModel # Optional: Pydantic model for the supervisor's final output.
 
 # 3. Tools Definition: A global registry of tools available to agents.
 tools:
   my_tool:
-    module: "my_tool_module"
-    class: "MyToolClass"
+    module: my_tool_module
+    class: MyToolClass
 
 # 4. Skills Definition: A global registry of skills available to agents.
 skills:
-  skill_dir: "./skills"
+  skill_dir: ./skills
   registry:
     url: "http://localhost:8083/api/v1/skills-registry"  # overrides SKILLS_REGISTRY_URL
     token: ""                                             # overrides SKILLS_REGISTRY_AUTH_TOKEN
 
 # 5. Structured Output: Defines the Pydantic models for structured responses.
 structured_output:
-  script_dir: "./structured_output"
+  script_dir: ./structured_output
 
 # 6. Knowledge Base: Provides documents for Retrieval-Augmented Generation (RAG).
 #
 #   Registry style: credentials defined once, agents reference KBs by name.
 knowledge_base:
   registry:
-    url: "http://localhost:8085"   # overrides KB_REGISTRY_URL
+    url: http://localhost:8085   # overrides KB_REGISTRY_URL
     token: ""                      # overrides KB_REGISTRY_AUTH_TOKEN
   sources:                         # optional: global context-augmentation KBs
-    - name: "company_docs"
-      description: "Search company policies and procedures."
+    - name: company_docs
+      description: Search company policies and procedures.
       retrieval_settings:
         top_k: 5
         score_threshold: 0.4
@@ -419,10 +421,10 @@ knowledge_base:
 # 7. Memory: Enables the agent to remember past conversations.
 memory:
   vector_store:
-    type: "chroma"
+    type: chroma
     settings:
-      collection_name: "chat_memory"
-      persist_directory: "./memory_db"
+      collection_name: chat_memory
+      persist_directory: ./memory_db
   settings:
     max_recent_turns: 5
     max_relevant_turns: 3
@@ -430,30 +432,34 @@ memory:
 # 8. MCP Servers: Connects to external tools via the Model Context Protocol.
 mcps:
   filesystem_server:
-    command: "mcp-server-filesystem"
-    args: ["/data"]
+    command: mcp-server-filesystem
+    args:
+      - /data
 
 # 9. Guardrails: Adds input and output validation.
 guardrails:
   validators:
-    - name: "profanity_check"
-      full_name: "guardrails/profanity_free"
-      on_fail: "fix"
+    - name: profanity_check
+      full_name: guardrails/profanity_free
+      on_fail: fix
   output:
     validators:
-      - ref: "profanity_check"
+      - ref: profanity_check
 
 # 10. Agent Definitions: The list of agents in the system.
 agent_list:
   - researcher:
-      system_prompt: "You are a research assistant."
-      tools: ["my_tool"] # Assign tools from the global registry.
-      skills: ["my_skill"] # Assign skills from the global registry.
-      knowledge_base: ["company_docs"] # Assign a knowledge base.
-      structured_output_model: "MyOutputModel" # Optional: Specify a Pydantic model for structured output.
+      system_prompt: You are a research assistant.
+      tools:
+        - my_tool # Assign tools from the global registry.
+      skills:
+        - my_skill # Assign skills from the global registry.
+      knowledge_base:
+        - name: company_docs # Assign a knowledge base from registry/inline config.
+      structured_output_model: MyOutputModel # Optional: Specify a Pydantic model for structured output.
 
 # 11. Supervisor System Prompt: Instructions for the main supervisor agent.
-system_prompt: "You are a supervisor. Your job is to manage the agents."
+system_prompt: You are a supervisor. Your job is to manage the agents.
 ```
 
 ## 🔗 Orchestration Patterns
@@ -1689,6 +1695,8 @@ async for chunk in agent.astream("Research quantum computing"):
         print(content['text'], end='', flush=True)
 ```
 
+If streaming fails, `astream()` yields a final error chunk with the same dict contract (including `content`, `model`, `session_id`, and `final: true`) plus an `error` field. This lets consumers handle success and error events with one parser.
+
 ## 📈 Observability
 
 ### Langfuse Integration
@@ -1758,18 +1766,28 @@ The main class for creating and managing OpenAI agents.
 class OpenAIAgent:
     def __init__(
         agent_name: str,
-        agent_config: Dict[str, Any],
+        agent_config: Optional[Dict[str, Any]] = None,
+        llm: Any = None,
+        tools: List[Any] = None,
         session_id: str = "default",
         user_id: str = "default",
-        config_root: Optional[str] = None
+        config_root: Optional[str] = None,
+        document_loader: Optional[Any] = None,
+        vector_store: Optional[Any] = None,
+        **kwargs
     ):
         """
         Initializes the agent.
         - agent_name: A unique name for this agent instance.
-        - agent_config: The dictionary loaded from your YAML configuration file.
+        - agent_config: Optional dictionary loaded from your YAML configuration file.
+        - llm: Optional pre-built model object. If omitted, one is created from config.
+        - tools: Optional pre-loaded tools list (legacy/backward-compatible path).
         - session_id: An identifier for the current conversation session.
         - user_id: An identifier for the user interacting with the agent.
         - config_root: The root directory for configuration files.
+        - document_loader: Optional custom document loader implementation.
+        - vector_store: Optional custom vector store implementation.
+        - kwargs: Additional options forwarded to the shared base class.
         """
 
     async def initialize() -> None:
@@ -1778,32 +1796,44 @@ class OpenAIAgent:
         Must be called before invoking the agent.
         """
 
-    async def ainvoke(message: str, config: Dict = None) -> Dict:
+    async def ainvoke(user_message: str, config: Dict = None) -> Dict:
         """
         Asynchronously invokes the agent with a user message.
-        - message: The user's input string.
+        - user_message: The user's input string.
         - config: Optional dict for providing dynamic inputs or flags such as
                   'inputs', 'include_raw', 'include_input_message',
-                  'original_message'.
+                  'include_original_message', 'original_message'.
         Returns: A dict with keys 'content' (dict with 'text'), 'model',
                  'token_usage', 'session_id', and optionally 'raw_result'.
         """
 
-    def invoke(message: str, config: Dict = None) -> Dict:
+    def invoke(user_message: str, config: Dict = None) -> Dict:
         """
-        Synchronous wrapper around ainvoke. Runs the event loop internally.
-        (See ainvoke for parameter details.)
+        Synchronous wrapper around ainvoke.
+
+        - If no event loop is active in the current thread, uses asyncio.run().
+        - If a loop is already active (for example in notebooks or ASGI apps),
+          runs ainvoke() in a dedicated worker thread.
+
+        This makes invoke() callable from both sync and async-hosted environments,
+        but it is still blocking. Prefer ainvoke() in async code paths.
         """
 
-    async def astream(message: str, config: Dict = None) -> AsyncGenerator:
+    async def astream(user_message: str, config: Dict = None) -> AsyncGenerator:
         """
         Streams the agent's output as it's generated.
         Yields: Formatted response dicts. Text is at chunk['content']['text'].
                 Tool-call events have chunk['type'] == 'tool_call_item'.
+                On error, yields one final error chunk with an 'error' field.
         """
 ```
 
-### Model ID format (LiteLLM)
+### Invocation Guidance
+
+- Use `await agent.ainvoke(...)` and `async for ... in agent.astream(...)` inside async applications (FastAPI, notebooks, workers).
+- Use `agent.invoke(...)` from synchronous call sites only; it blocks until completion.
+
+### Model ID Format (LiteLLM)
 
 `model_id` in the YAML follows LiteLLM's model-string conventions:
 

@@ -221,7 +221,7 @@ system_prompt: You are a supervisor managing a team of agents.
 
 ```python
 import yaml
-from oai_agent_core.aws_strands_core.agents.strands_agent import StrandsAgent
+from oai_agent_core.aws_strands_core import StrandsAgent
 
 # Load configuration
 with open("research_agent.yaml", "r") as f:
@@ -326,19 +326,19 @@ For a simple, single-agent system, your configuration can be very concise.
 ```yaml
 # 1. Define the model
 model:
-  model_id: "anthropic.claude-3-sonnet-20240229-v1:0"
-  cloud_provider: "aws"
+  model_id: anthropic.claude-3-sonnet-20240229-v1:0
+  cloud_provider: aws
 
 # 2. Define the agent
 agent_list:
   - researcher:
-      system_prompt: "You are a helpful research assistant."
+      system_prompt: You are a helpful research assistant.
 
 # 3. (Optional) Define a tool
 tools:
   search:
-    module: "langchain_community.tools"
-    class: "DuckDuckGoSearchRun"
+    module: langchain_community.tools
+    class: DuckDuckGoSearchRun
 ```
 
 ### Complete YAML Template
@@ -348,17 +348,17 @@ This template shows all the possible configuration options available. You can mi
 ```yaml
 # 1. Model Configuration
 model:
-  model_id: "bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0"
-  region_name: "us-west-2"
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
   params:                          # Optional: override model defaults
     temperature: 0.7
     max_tokens: 4096
 
 # 2. Architecture Configuration
 crew_config:
-  pattern: "graph"                 # Options: graph, swarm, sequential, hierarchical, agent-as-tool
-  entry_agent: "researcher"        # Required for graph / swarm
-  structured_output_model: "FinalReport"  # Optional: supervisor-level output model
+  pattern: graph                 # Options: graph, swarm, sequential, hierarchical, agent-as-tool
+  entry_agent: researcher        # Required for graph / swarm
+  structured_output_model: FinalReport  # Optional: supervisor-level output model
 
 # 3. Tools — global registry available to all agents
 tools:
@@ -372,25 +372,25 @@ tools:
 
 # 4. Skills — local directory + optional Skills Registry
 skills:
-  skill_dir: "./skills"
+  skill_dir: ./skills
   registry:
     url: "http://localhost:8083/api/v1/skills-registry"  # overrides SKILLS_REGISTRY_URL
     token: ""                                             # overrides SKILLS_REGISTRY_AUTH_TOKEN
 
 # 5. Structured Output — directory of Pydantic model files
 structured_output:
-  script_dir: "./structured_output"
+  script_dir: ./structured_output
 
 # 6. Knowledge Base — registry style (recommended) or inline
 #
 #   Registry style: credentials defined once, agents reference KBs by name.
 knowledge_base:
   registry:
-    url: "http://localhost:8085"   # overrides KB_REGISTRY_URL
+    url: http://localhost:8085   # overrides KB_REGISTRY_URL
     token: ""                      # overrides KB_REGISTRY_AUTH_TOKEN
   sources:                         # optional: global context-augmentation KBs
-    - name: "company_docs"
-      description: "Search company policies and procedures."
+    - name: company_docs
+      description: Search company policies and procedures.
       retrieval_settings:
         top_k: 5
         score_threshold: 0.4
@@ -417,13 +417,13 @@ knowledge_base:
 # 7. Memory
 memory:
   vector_store:
-    type: "chroma"
+    type: chroma
     settings:
-      collection_name: "chat_memory"
-      persist_directory: "./memory_db"
+      collection_name: chat_memory
+      persist_directory: ./memory_db
   embedding:
-    model_id: "bedrock/amazon.titan-embed-text-v1"
-    region_name: "us-west-2"
+    model_id: bedrock/amazon.titan-embed-text-v1
+    region_name: us-west-2
   settings:
     max_recent_turns: 5
     max_relevant_turns: 3
@@ -432,44 +432,45 @@ memory:
 # 8. MCP Servers — global, available to all agents
 mcps:
   filesystem_server:
-    command: "mcp-server-filesystem"
-    args: ["/data"]
+    command: mcp-server-filesystem
+    args:
+      - /data
   remote_api:
-    url: "http://api.internal.example.com/mcp"
+    url: http://api.internal.example.com/mcp
     headers:
       Authorization: "Bearer ${API_KEY}"
 
 # 9. Guardrails
 guardrails:
   validators:
-    - name: "profanity_check"
-      full_name: "guardrails/profanity_free"
-      on_fail: "fix"
+    - name: profanity_check
+      full_name: guardrails/profanity_free
+      on_fail: fix
   output:
     validators:
-      - ref: "profanity_check"
+      - ref: profanity_check
 
 # 10. Agent Definitions
 agent_list:
   - researcher:
-      system_prompt: "You are a research assistant. Use web_search to gather information."
+      system_prompt: You are a research assistant. Use web_search to gather information.
       tools:
         - web_search
       skills:
         - research-skill          # resolved from Skills Registry or skill_dir
       knowledge_base:             # flat list — credentials from knowledge_base.registry
         - name: company_docs
-          description: "Search company documents"
-      structured_output_model: "ResearchFindings"
+          description: Search company documents
+      structured_output_model: ResearchFindings
 
   - analyst:
-      system_prompt: "Analyse the researcher's findings and produce a report."
+      system_prompt: Analyse the researcher's findings and produce a report.
       context:
         - researcher              # can read researcher's output
-      structured_output_model: "AnalysisReport"
+      structured_output_model: AnalysisReport
 
 # 11. Global system prompt (supervisor / orchestrator)
-system_prompt: "You are the editor. Coordinate research and analysis to produce a final report."
+system_prompt: You are the editor. Coordinate research and analysis to produce a final report.
 ```
 
 ## 🔗 Orchestration Patterns
@@ -1739,9 +1740,14 @@ system_prompt: You are an editor. Coordinate the research and writing process.
 
 ```python
 async for chunk in agent.astream("Research quantum computing"):
-    if 'content' in chunk:
-        print(chunk['content']['text'], end='', flush=True)
+    content = chunk.get("content")
+    if isinstance(content, dict) and content.get("text"):
+        print(content["text"], end="", flush=True)
+    elif chunk.get("type") == "error":
+        print(f"\n[stream error] {content}")
 ```
+
+On stream failure, `astream()` yields a final error payload with `type: "error"`, `final: true`, and a string `content` message.
 
 ## 📈 Observability
 
@@ -1802,22 +1808,30 @@ The main class for creating and managing AWS Strands agents.
 class StrandsAgent:
     def __init__(
         agent_name: str,
-        agent_config: Dict[str, Any],
-        llm: Optional[Any] = None,
+        agent_config: Optional[Dict[str, Any]] = None,
+        llm: Any = None,
         session_id: str = "default",
         user_id: str = "default",
-        config_root: Optional[str] = None
+        config_root: Optional[str] = None,
+        region_name: str = "us-west-2",
+        document_loader: Optional[Any] = None,
+        vector_store: Optional[Any] = None,
+        **kwargs
     ):
         """
         Initializes the agent.
         - agent_name: A unique name for this agent instance.
-        - agent_config: The dictionary loaded from your YAML configuration file.
+        - agent_config: Optional dictionary loaded from your YAML configuration file.
         - llm: Optional pre-configured model instance. When provided, the framework
           uses this instance directly and does not replace it with a model created
           from YAML config.
         - session_id: An identifier for the current conversation session.
         - user_id: An identifier for the user interacting with the agent.
         - config_root: The root directory for configuration files.
+        - region_name: Deprecated compatibility parameter.
+        - document_loader: Optional custom document loader implementation.
+        - vector_store: Optional custom vector store implementation.
+        - kwargs: Additional options forwarded to the shared base class.
         """
     
     async def initialize() -> None:
@@ -1826,24 +1840,30 @@ class StrandsAgent:
         Must be called before invoking the agent.
         """
 
-    async def ainvoke(message: str, config: Dict = None) -> Dict:
+    async def ainvoke(user_message: str, config: Dict = None) -> Dict:
         """
         Asynchronously invokes the agent with a user message.
-        - message: The user's input string.
-        - config: A dictionary for providing dynamic inputs.
+        - user_message: The user's input string.
+        - config: Optional dict for dynamic inputs and output flags
+                  (for example: 'inputs', 'include_raw',
+                  'include_input_message', 'include_original_message').
         Returns: A dictionary containing the agent's final response.
         """
 
-    def invoke(message: str, config: Dict = None) -> Dict:
+    def invoke(user_message: str, config: Dict = None) -> Dict:
         """
         Synchronously invokes the agent.
-        (See ainvoke for parameter details.)
+
+        This method calls `asyncio.run(...)` internally and should be used only
+        when no event loop is already running on the current thread.
+        In async environments, prefer `await agent.ainvoke(...)`.
         """
 
-    async def astream(message: str, config: Dict = None) -> AsyncGenerator:
+    async def astream(user_message: str, config: Dict = None) -> AsyncGenerator:
         """
         Streams the agent's output as it's generated.
         Yields: Chunks of the response, including text and tool calls.
+                On failure, yields one final error payload.
         """
 
     def validate_tasks() -> Dict[str, Any]:
