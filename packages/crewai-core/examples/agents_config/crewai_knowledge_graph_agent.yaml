@@ -1,0 +1,63 @@
+name: Knowledge Graph Agent
+description: An agent that answers questions using a Neo4j knowledge graph (GraphRAG)
+type: crewai
+cloud_provider: aws
+port: 8103
+order: 1
+instructions: |
+  This agent uses a Neo4j knowledge graph to answer questions about policies,
+  coverages, customers and claims, grounded in the graph's entities and relationships.
+
+model:
+  model_id: bedrock/us.anthropic.claude-3-5-sonnet-20241022-v2:0
+  region_name: us-west-2
+  temperature: 0.0
+
+# Neo4j knowledge graph as a knowledge base (GraphRAG, read-only).
+# The graph is assumed to be ALREADY loaded (see knowledge_graph_seed.cypher).
+# Requires: pip install 'oai-agent-core[neo4j]'
+agent_list:
+  - graph_agent:
+      name: "Knowledge Graph Specialist"
+      role: "Insurance Knowledge Graph Specialist"
+      goal: "Answer questions using the insurance knowledge graph"
+      backstory: |
+        You answer questions grounded in the entities and relationships retrieved
+        from the insurance knowledge graph.
+      verbose: true
+      allow_delegation: false
+      tasks:
+        - answer_question:
+            description: |
+              Answer the user's question using the knowledge graph.
+              Question: {user_message}
+            expected_output: |
+              A clear answer grounded in the graph's entities and relationships.
+            async_execution: false
+            human_input: false
+      knowledge_base:
+        - name: insurance_graph
+          description: "Search the insurance knowledge graph for policies, coverages, customers and claims"
+          vector_store:
+            type: neo4j_graph
+            settings:
+              url: bolt://localhost:7687
+              username: neo4j                  # local container's default user
+              password: testpassword123        # local testing only — prefer ${NEO4J_PASSWORD}
+              database: neo4j
+              retrieval_mode: traversal        # traversal (default) | text2cypher
+              entry_strategy: fulltext         # fulltext | entity_linking | vector (hybrid)
+              fulltext_index: entityNames      # name of an existing Neo4j full-text index
+              max_hops: 2
+              rel_limit: 50
+              node_text_props: [name, title, id, description]
+              query_timeout: 30
+          retrieval_settings:
+            top_k: 5
+            score_threshold: 0.1
+
+crew_config:
+  process: "sequential"
+  verbose: true
+  memory: false
+  cache: true

@@ -1,0 +1,43 @@
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+# Neo4j knowledge graph as a knowledge base (GraphRAG, read-only).
+#
+# The graph is assumed to be ALREADY loaded by a separate, governed pipeline —
+# the agent only queries it (note: no `data_sources`, no `embedding` block).
+# Schema is introspected at startup; no embeddings are used in phase 1.
+#
+# Requires:  pip install 'oai-agent-core[neo4j]'
+knowledge_base:
+  - name: insurance_graph
+    description: "Answer questions about insurance policies, coverages and claims using the knowledge graph"
+    vector_store:
+      type: neo4j_graph
+      settings:
+        url: bolt://localhost:7687
+        username: neo4j                  # local container's default user
+        password: testpassword123        # local testing only — prefer ${NEO4J_PASSWORD}
+        database: neo4j
+        retrieval_mode: traversal        # traversal (default) | text2cypher
+        entry_strategy: fulltext         # fulltext (default) | entity_linking
+        fulltext_index: entityNames      # name of an existing Neo4j full-text index
+        max_hops: 2                      # neighbourhood radius around entry nodes
+        rel_limit: 50                    # max relationships pulled per entry node
+        node_text_props: [name, title, id, description]
+        query_timeout: 30
+    retrieval_settings:
+      top_k: 5
+      # Graph relevance is rank-normalised (top hit = 1.0); keep the threshold
+      # low so traversal results are not filtered out.
+      score_threshold: 0.1
+
+agent_list:
+  - graph_assistant:
+      system_prompt: |
+        You are a helpful assistant who answers questions using an insurance
+        knowledge graph. Ground every answer in the retrieved graph context and
+        cite the entities and relationships you relied on.
+
+crew_config:
+  pattern: single

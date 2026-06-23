@@ -1,0 +1,28 @@
+model:
+  model_id: bedrock-claude-sonnet-4.6
+  region_name: us-west-2
+
+tools:
+  utils:
+    module: demo_tools
+    base_path: "./utils"
+
+mcps:
+  file_utils:
+    url: http://0.0.0.0:8020/mcp
+
+agent_list:
+  - simple_assistant:
+      system_prompt: |
+        You are a helpful assistant. You can help with general queries.
+        You also have access to flight and hotel search tools.
+      tools:
+        - search_flights
+        - search_hotels
+        - book_hotel
+        - book_flight
+      mcps:
+        - file_utils
+
+crew_config:
+  pattern: supervisor

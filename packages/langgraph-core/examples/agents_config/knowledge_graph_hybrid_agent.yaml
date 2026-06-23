@@ -1,0 +1,62 @@
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+# Neo4j knowledge graph with NODE-LEVEL VECTOR ENTRY (hybrid, read-only).
+#
+# How it differs from knowledge_graph_agent.yaml:
+#   entry_strategy: vector  →  the entry node is found by SEMANTIC similarity
+#   (e.g. "what if my basement floods?" matches the "Flood Damage" node even
+#   though "basement" never appears in the graph), then we traverse from there.
+#
+# Two stores are composed:
+#   - vector_store.type: neo4j_graph   → the graph (structured data, traversal)
+#   - vector_entry                     → a vector index holding ONE embedding per
+#                                        graph node, each row tagged with the
+#                                        node's shared id in metadata[node_id]
+#
+# OFFLINE PREREQUISITE (governed pipeline, not the agent):
+#   After loading Neo4j, embed each entry-able node's text (name + description +
+#   key props) into the `kg_nodes` collection, writing metadata.node_id = the
+#   value of the node's `id` property. The agent only READS both stores.
+#
+# Requires: pip install 'oai-agent-core[neo4j,postgres]'
+knowledge_base:
+  - name: insurance_graph_hybrid
+    description: "Answer insurance questions over the knowledge graph using semantic entry"
+    vector_store:
+      type: neo4j_graph
+      settings:
+        url: bolt://localhost:7687
+        username: neo4j
+        password: ${NEO4J_PASSWORD}
+        database: neo4j
+        retrieval_mode: traversal        # traversal | text2cypher
+        entry_strategy: vector           # fulltext | entity_linking | vector (hybrid)
+        max_hops: 2
+        rel_limit: 50
+        node_text_props: [name, title, id, description]
+        query_timeout: 30
+        # --- node-level vector entry index ---
+        entry_id_field: node_id          # metadata key on vector rows holding the id
+        entry_id_property: id            # Neo4j node property to match that id against
+        vector_entry:
+          type: postgres                 # reuse the standard PostgresVectorStore
+          settings:
+            collection_name: kg_nodes
+            connection_string: ${PG_CONN}
+    embedding:                            # needed to embed the query for vector entry
+      model_id: bedrock/amazon.titan-embed-text-v1
+      region_name: us-west-2
+    retrieval_settings:
+      top_k: 5
+      score_threshold: 0.1
+
+agent_list:
+  - graph_assistant:
+      system_prompt: |
+        You are a helpful insurance assistant. Use the knowledge graph to ground
+        answers in the retrieved entities and their relationships.
+
+crew_config:
+  pattern: single

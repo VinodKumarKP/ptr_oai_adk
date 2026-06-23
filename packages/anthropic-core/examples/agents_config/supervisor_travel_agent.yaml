@@ -1,0 +1,141 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Supervisor Pattern Example — Travel Booking Coordinator
+#
+# In this pattern:
+#   - One COORDINATOR agent (entry_agent) receives user requests
+#   - It can delegate to FLIGHT_SPECIALIST and HOTEL_SPECIALIST sub-agents
+#   - Each specialist has dedicated tools for their domain
+#   - The coordinator synthesizes responses and books based on specialist recommendations
+#
+# Architecture:
+#   User Query
+#       ↓
+#   Coordinator (entry agent)
+#       ├→ calls Agent tool → Flight Specialist (searches/books flights)
+#       ├→ calls Agent tool → Hotel Specialist (searches/books hotels)
+#       └→ synthesizes response
+#
+# Use this pattern when:
+#   - One agent needs to orchestrate work across multiple specialists
+#   - Different domains need separate context/tools
+#   - Final decision-making stays with the coordinator
+# ─────────────────────────────────────────────────────────────────────────────
+
+model:
+  model_id: bedrock-claude-sonnet-4.6
+  region_name: us-west-2
+
+# Global tools shared by all agents
+tools:
+  utils:
+    module: demo_tools
+    base_path: "./utils"
+
+# Global MCP servers (optional)
+mcps:
+  filesystem:
+    url: http://0.0.0.0:8020/mcp
+
+# ── Agent Definitions ──────────────────────────────────────────────────────
+
+agent_list:
+  # ── Specialist 1: Flight Booking Agent ────────────────────────────────────
+  - flight_specialist:
+      description: "Expert in searching and booking flights. Handles all flight-related queries."
+      system_prompt: |
+        You are a specialized flight booking agent.
+
+        Your responsibilities:
+        - Search for available flights based on passenger requirements
+        - Provide recommendations with pricing and airline options
+        - Book flights once the passenger confirms their choice
+        - Handle flight modifications and cancellations
+
+        Always provide clear options and let the coordinator decide on final booking.
+
+      tools:
+        - search_flights
+        - book_flight
+
+      # Flight specialist can reference global MCP servers
+      mcps:
+        - filesystem
+
+  # ── Specialist 2: Hotel Booking Agent ──────────────────────────────────────
+  - hotel_specialist:
+      description: "Expert in searching and booking hotels. Handles all accommodation queries."
+      system_prompt: |
+        You are a specialized hotel booking agent.
+
+        Your responsibilities:
+        - Search for available hotels based on location and dates
+        - Provide recommendations with pricing and amenities
+        - Book hotels once the guest confirms their choice
+        - Handle modifications and cancellations
+
+        Always provide clear options and let the coordinator decide on final booking.
+
+      tools:
+        - search_hotels
+        - book_hotel
+
+  # ── Coordinator: Main Entry Agent ──────────────────────────────────────────
+  - coordinator:
+      description: "Travel booking coordinator. Orchestrates flight and hotel searches, synthesizes recommendations."
+      system_prompt: |
+        You are a travel booking coordinator. Your role is to help customers book complete trips.
+
+        When a customer needs travel arrangements:
+        1. Understand their complete requirements (destination, dates, budget, preferences)
+        2. Delegate to specialists:
+           - Use the Agent tool to call Flight Specialist for flight options
+           - Use the Agent tool to call Hotel Specialist for accommodation options
+        3. Synthesize recommendations:
+           - Compare options across price, convenience, and customer preferences
+           - Present a cohesive travel package
+        4. Guide the customer to confirm selections before booking
+
+        Always ask clarifying questions to understand customer needs fully.
+        Present options in an easy-to-understand format with total costs.
+        Coordinate the specialists to create the best overall experience.
+
+      # Coordinator uses the built-in "Agent" tool to call specialists
+      # "Agent" is auto-added by claude-agent-sdk for supervisor patterns
+      # No explicit tools list needed — it's the "Agent" tool only
+
+# ── Crew Configuration ─────────────────────────────────────────────────────
+
+crew_config:
+  pattern: supervisor
+  entry_agent: coordinator
+
+  # Optional: thinking budget for the coordinator's reasoning
+  # thinking_budget_tokens: 8000
+
+# ── Optional: Global Configuration ────────────────────────────────────────
+
+# Knowledge bases (optional — applied to all agents if global)
+# knowledge_bases:
+#   - name: travel_policies
+#     type: chroma
+#     collection: travel_policies
+#     description: "Company travel policies and guidelines"
+
+# Memory store (optional — shared across agents)
+# memory:
+#   type: redis
+#   host: localhost
+#   port: 6379
+#   ttl: 3600
+
+# Observability (Langfuse)
+# Set LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST env vars
+# anthropic_config:
+#   # Langfuse will trace all tool calls, agent handoffs, and token usage
+
+# Skills (optional)
+# skills:
+#   skill_dir: ./skills
+#   registry:
+#     url: "https://skills-registry.example.com"
+#     auth_token: "${SKILLS_REGISTRY_TOKEN}"

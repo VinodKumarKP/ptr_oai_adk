@@ -1,0 +1,95 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Extended Thinking Pattern — Agent with Internal Reasoning
+#
+# In this pattern:
+#   - Agent uses Claude's extended thinking capability
+#   - Thinking blocks are hidden from the user (redacted in responses)
+#   - Agent can reason through complex problems step-by-step
+#   - Budget controls how much thinking is allowed (tokens)
+#
+# Architecture:
+#   User Query
+#       ↓
+#   Agent with Extended Thinking
+#       ├→ Internal reasoning (hidden from user)
+#       ├→ Uses tools based on reasoning
+#       └→ Returns final answer (thinking redacted)
+#
+# Use this pattern when:
+#   - Problems require multi-step reasoning
+#   - Complex decision-making is needed
+#   - You want Claude's "thinking" without showing work to users
+#   - Trade-off: slower response time, higher token usage
+#
+# Extended Thinking Availability:
+#   - Model: Claude Sonnet 4-5+, Claude Opus 4-5+
+#   - Provider: Direct Anthropic API or Bedrock (tested with Sonnet 4.6)
+#   - LiteLLM: Routed through Bedrock
+# ─────────────────────────────────────────────────────────────────────────────
+
+model:
+  model_id: bedrock-claude-sonnet-4.6
+  region_name: us-west-2
+
+tools:
+  utils:
+    module: demo_tools
+    base_path: "./utils"
+
+agent_list:
+  - reasoning_travel_agent:
+      description: "Travel booking agent with extended reasoning for complex itineraries."
+      system_prompt: |
+        You are an expert travel planning agent.
+
+        When planning complex trips, use your reasoning ability to:
+        - Think through multi-leg itineraries carefully
+        - Consider time zones and layover impacts
+        - Optimize cost vs. convenience tradeoffs
+        - Account for connection times and airport layouts
+        - Identify potential issues before they occur
+
+        Then use tools to search and book the optimal flights and hotels.
+
+        Be thorough in your thinking but concise in your response.
+
+      tools:
+        - search_flights
+        - search_hotels
+        - book_flight
+        - book_hotel
+
+crew_config:
+  pattern: extended-thinking
+  entry_agent: reasoning_travel_agent
+
+  # Configure thinking budget (tokens allocated for internal reasoning)
+  # Higher budget = more complex reasoning possible = slower/more expensive
+  # Typical range: 5000-16000 tokens
+  thinking_budget_tokens: 10000
+
+# ── Extended Thinking Cost/Performance Tradeoff ────────────────────────────
+#
+# Budget   | Use Case                      | Speed      | Cost
+# ─────────┼───────────────────────────────┼────────────┼──────────
+# 5,000    | Simple multi-step problems    | Fast       | Low
+# 8,000    | Moderate complexity routing   | Medium     | Medium
+# 12,000   | Complex itineraries           | Slower     | Higher
+# 16,000   | Very complex optimization     | Very slow  | Highest
+#
+# Recommendation: Start with 8,000 and adjust based on problem complexity.
+#
+# ────────────────────────────────────────────────────────────────────────────
+
+# ── Notes on Bedrock Extended Thinking ──────────────────────────────────────
+#
+# Bedrock support for extended thinking:
+#   ✓ Anthropic Sonnet 4-5+ (bedrock-claude-sonnet-4.5+)
+#   ✓ Anthropic Opus 4-5+ (bedrock-claude-opus-4.5)
+#   ✗ Older models (Sonnet 3.5, etc.)
+#
+# With LiteLLM routing through thinking_strip_proxy:
+#   - Strip thinking params from requests (to avoid Bedrock errors)
+#   - Sonnet 4.6 handles this internally (no proxy needed)
+#
+# ────────────────────────────────────────────────────────────────────────────

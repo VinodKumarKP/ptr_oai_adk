@@ -1,0 +1,44 @@
+model:
+  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  region_name: us-west-2
+
+# Neo4j knowledge graph exposed as an agent TOOL (GraphRAG, read-only).
+#
+# Unlike knowledge_graph_agent.yaml (top-level knowledge_base, always searched),
+# here the knowledge_base block is nested UNDER the agent, so it becomes a tool
+# the agent decides to call when a question needs the graph.
+#
+# Assumes the graph is already loaded (see knowledge_graph_seed.cypher) with the
+# `entityNames` full-text index.  Requires: pip install 'oai-agent-core[neo4j]'
+agent_list:
+  - graph_assistant:
+      system_prompt: |
+        You are a helpful insurance assistant. When a question concerns policies,
+        coverages, customers or claims, call the insurance knowledge-graph tool to
+        retrieve grounded context, then answer based on the entities and
+        relationships it returns. Cite what you relied on.
+      knowledge_base:
+        - name: insurance_graph
+          description: "Search the insurance knowledge graph for policies, coverages, customers and claims, and how they relate"
+          vector_store:
+            type: neo4j_graph
+            settings:
+              url: bolt://localhost:7687
+              username: neo4j                  # local container's default user
+              password: testpassword123        # local testing only — prefer ${NEO4J_PASSWORD}
+              database: neo4j
+              retrieval_mode: traversal        # traversal (default) | text2cypher
+              entry_strategy: entity_linking         # fulltext (default) | entity_linking
+              fulltext_index: entityNames      # name of an existing Neo4j full-text index
+              max_hops: 2                      # neighbourhood radius around entry nodes
+              rel_limit: 50                    # max relationships pulled per entry node
+              node_text_props: [name, title, id, description]
+              query_timeout: 30
+          retrieval_settings:
+            top_k: 5
+            # Graph relevance is rank-normalised (top hit = 1.0); keep the
+            # threshold low so traversal results are not filtered out.
+            score_threshold: 0.1
+
+crew_config:
+  pattern: single

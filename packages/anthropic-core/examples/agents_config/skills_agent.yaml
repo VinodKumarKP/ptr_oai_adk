@@ -1,0 +1,19 @@
+model:
+  model_id: bedrock-claude-sonnet-4.6
+  region_name: us-west-2
+
+skills:
+  skill_dir: "./skills"
+#  registry:
+#    url: "http://localhost:8083/api/v1/skills-registry"
+#    token: ""
+
+agent_list:
+  - simple_assistant:
+      system_prompt: |
+        You are a helpful assistant with access to pdf processing skills
+      skills:
+        - file-processing
+
+crew_config:
+  pattern: supervisor

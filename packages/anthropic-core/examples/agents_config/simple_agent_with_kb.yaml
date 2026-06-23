@@ -1,0 +1,174 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Simple Agent with Knowledge Base & Memory
+#
+# This example shows how to:
+#   - Load custom Python tools (flight/hotel search)
+#   - Integrate a knowledge base (travel guides, policies)
+#   - Enable conversation memory (context from previous turns)
+#   - Configure structured output (JSON responses)
+#   - Enable Langfuse observability
+#
+# Pattern: Single (one agent, entry point for all requests)
+# ─────────────────────────────────────────────────────────────────────────────
+
+model:
+  model_id: bedrock-claude-sonnet-4.6
+  region_name: us-west-2
+  # Optional: direct Anthropic API instead of Bedrock
+  # model_id: claude-opus-4-5-20251101
+  # api_key: "${ANTHROPIC_API_KEY}"
+
+# ── Custom Python Tools ────────────────────────────────────────────────────
+
+tools:
+  utils:
+    module: demo_tools
+    base_path: "./utils"
+    # Optional: specify specific functions (if omitted, loads all @tool functions)
+    # function_list:
+    #   - search_flights
+    #   - book_flight
+    #   - search_hotels
+    #   - book_hotel
+
+# ── MCP Servers (External Tools) ───────────────────────────────────────────
+
+mcps:
+  filesystem:
+    url: http://0.0.0.0:8020/mcp
+  # database:
+  #   command: python
+  #   args: ["-m", "mcp.server.database"]
+
+# ── Knowledge Bases (Optional) ─────────────────────────────────────────────
+
+# knowledge_bases:
+#   - name: travel_policies
+#     description: "Company travel policies and booking guidelines"
+#     type: chroma                    # or: postgres, pinecone, s3
+#     config:
+#       collection: travel_policies
+#       persist_directory: "./kb_data"
+#       # Additional type-specific config
+
+#   - name: travel_guides
+#     description: "Destination guides and travel information"
+#     type: chroma
+#     config:
+#       collection: travel_guides
+
+# ── Memory Store (Optional) ────────────────────────────────────────────────
+
+# memory:
+#   type: redis                       # or: sqlite, postgres, valkey
+#   config:
+#     host: localhost
+#     port: 6379
+#     ttl: 3600                       # 1 hour (seconds)
+#
+# OR use SQLite as fallback (no external dependency):
+# memory:
+#   type: sqlite
+#   config:
+#     db_path: "./memory.db"
+
+# ── Agent Configuration ────────────────────────────────────────────────────
+
+agent_list:
+  - simple_assistant:
+      system_prompt: |
+        You are a helpful travel assistant with access to flight and hotel booking tools.
+
+        Your capabilities:
+        1. Search for flights and hotels
+        2. Book flights and hotels
+        3. Access travel policies and guidelines (via knowledge base)
+        4. Remember previous conversations (via memory)
+
+        Approach:
+        - Always confirm prices and details before booking
+        - Ask for complete requirements (dates, preferences, budget)
+        - Use previous conversation context to personalize recommendations
+        - Provide structured booking confirmations
+
+      description: "Single travel booking assistant with KB and memory"
+
+      tools:
+        - search_flights
+        - search_hotels
+        - book_hotel
+        - book_flight
+
+      mcps:
+        - filesystem
+
+      # Agent-specific knowledge bases (optional, in addition to global KB)
+      # knowledge_bases:
+      #   - name: travel_policies
+      #   - name: travel_guides
+
+      # Skills (optional)
+      # skills:
+      #   - trip_planning
+      #   - customer_service
+
+# ── Crew Configuration ─────────────────────────────────────────────────────
+
+crew_config:
+  pattern: single
+  # entry_agent not needed for single pattern (optional)
+
+# ── Structured Output (Optional) ───────────────────────────────────────────
+#
+# For structured responses, define a Pydantic model and register it
+# structured_output:
+#   model: TravelBookingConfirmation  # Must be registered in OutputModelRegistry
+#
+# Example response format:
+# {
+#   "booking_id": "TRV-20250601-001",
+#   "flights": [...],
+#   "hotels": [...],
+#   "total_cost": 1500.00,
+#   "confirmation_date": "2025-06-01"
+# }
+
+# ── Langfuse Observability (Optional) ──────────────────────────────────────
+#
+# Set these environment variables:
+#   LANGFUSE_PUBLIC_KEY=pk_...
+#   LANGFUSE_SECRET_KEY=sk_...
+#   LANGFUSE_HOST=https://your-langfuse-host.com
+#
+# Then all tool calls, agent decisions, and token usage will be traced.
+#
+# anthropic_config:
+#   # Config automatically picked up when env vars are set
+#   thinking_budget_tokens: 8000  # if using extended-thinking pattern
+
+# ── Skills Registry (Optional) ─────────────────────────────────────────────
+#
+# skills:
+#   skill_dir: ./skills
+#   registry:
+#     url: "https://skills-registry.example.com"
+#     auth_token: "${SKILLS_REGISTRY_TOKEN}"
+
+# ────────────────────────────────────────────────────────────────────────────
+# Usage:
+#
+#   from oai_agent_core.anthropic_core.agents.anthropic_agent import AnthropicAgent
+#
+#   agent = AnthropicAgent(
+#       agent_name="travel_agent",
+#       agent_config=yaml_config,
+#       config_root="./examples/agents_config",
+#       session_id="user-123",
+#       user_id="user-123"
+#   )
+#
+#   await agent.initialize()
+#   result = await agent.ainvoke("Search for flights from BOS to JFK tomorrow")
+#   print(result)
+#
+# ────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,101 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent-as-Tool Pattern Example — One Agent with Another as a Tool
+#
+# In this pattern:
+#   - Main agent has access to a specialized agent as a callable tool
+#   - Main agent decides when to delegate to the specialist
+#   - Specialist agent is treated as a tool invocation (not a handoff)
+#   - Response from specialist is pulled back into main agent's context
+#
+# Architecture:
+#   User Query
+#       ↓
+#   Main Agent
+#       ├→ Can use regular tools (search_flights, book_flight)
+#       ├→ Can call Agent tool → Delegate to Researcher (as a tool)
+#       └→ Synthesizes final response
+#
+# Use this pattern when:
+#   - One agent needs both direct tool access AND delegation capability
+#   - You want lightweight sub-agent invocations (not full handoffs)
+#   - Main agent keeps full context and decision-making power
+# ─────────────────────────────────────────────────────────────────────────────
+
+model:
+  model_id: bedrock-claude-sonnet-4.6
+  region_name: us-west-2
+
+tools:
+  utils:
+    module: demo_tools
+    base_path: "./utils"
+
+agent_list:
+  # ── Specialist Agent: Travel Researcher ────────────────────────────────────
+  - travel_researcher:
+      description: "Researches travel destinations and provides insights on best times to visit, cultural info, and travel tips."
+      system_prompt: |
+        You are a travel research specialist. When asked about a destination:
+        - Provide information on the best times to visit
+        - Share cultural highlights and attractions
+        - Offer practical travel tips (visa requirements, language, currency)
+        - Recommend popular activities and experiences
+
+  # ── Main Agent: Travel Planner ─────────────────────────────────────────────
+  - travel_planner:
+      description: "Main travel planning agent. Can search/book flights/hotels and research destinations."
+      system_prompt: |
+        You are a comprehensive travel planner. When helping customers plan trips:
+
+        1. If they need destination information:
+           - Call the Agent tool to delegate to Travel Researcher
+           - Ask specific questions (destination name, what they want to know)
+           - Incorporate researcher insights into your recommendations
+
+        2. If they need flight/hotel bookings:
+           - Use search_flights and search_hotels tools directly
+           - Present options with pricing
+
+        3. Synthesize everything:
+           - Combine research insights with booking options
+           - Present a complete travel package
+           - Answer questions about the destination during planning
+
+        Always gather complete requirements before delegating or booking.
+
+      tools:
+        - search_flights
+        - search_hotels
+        - book_flight
+        - book_hotel
+        # Note: "Agent" tool is auto-added for multi-agent patterns
+
+crew_config:
+  pattern: agent-as-tool
+  entry_agent: travel_planner
+
+# ── Key Differences from Supervisor Pattern ────────────────────────────────
+#
+# SUPERVISOR:
+#   - One coordinator agent (entry_agent)
+#   - Coordinator orchestrates specialist agents
+#   - All agents EXCEPT coordinator are registered as callables
+#   - Coordinator is main orchestrator
+#   - Example: coordinator → flight_specialist, hotel_specialist
+#
+# AGENT-AS-TOOL:
+#   - One main agent (entry_agent)
+#   - Main agent has regular tools + Agent tool for delegation
+#   - All agents EXCEPT entry_agent are registered as callables
+#   - Main agent keeps full control and context
+#   - Calls to helper agents are optional (lightweight)
+#   - Example: travel_planner → travel_researcher (optional call)
+#
+# ────────────────────────────────────────────────────────────────────────────
+#
+# Implementation Detail:
+# The entry_agent is automatically EXCLUDED from the agents dict that's
+# passed to ClaudeAgentOptions. This ensures the main agent is the orchestrator,
+# not a delegatee. The "Agent" tool is auto-added for calling registered agents.
+#
+# ────────────────────────────────────────────────────────────────────────────

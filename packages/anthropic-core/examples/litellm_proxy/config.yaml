@@ -1,0 +1,45 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# LiteLLM Proxy — Anthropic Agent SDK + Bedrock
+#
+# Thinking-strip middleware sits in front of this proxy and removes the
+# "thinking" param before requests reach here.  See thinking_strip_proxy.py.
+#
+# Start order:
+#   1. litellm --config config.yaml          (port 4000)
+#   2. python thinking_strip_proxy.py        (port 4001, forwards to 4000)
+#   3. Set ANTHROPIC_BASE_URL=http://localhost:4001  (Claude CLI → proxy)
+# ─────────────────────────────────────────────────────────────────────────────
+
+litellm_settings:
+  drop_params: true     # strips ?beta=true and anthropic-beta headers
+
+model_list:
+  - model_name: bedrock-claude-sonnet-4.6
+    litellm_params:
+        model: "bedrock/global.anthropic.claude-sonnet-4-6"
+        aws_region_name: "us-east-1"
+
+  - model_name: bedrock-claude-sonnet-3.5
+    litellm_params:
+      model: "bedrock/us.anthropic.claude-3-5-sonnet-20240620-v1:0"
+      aws_region_name: "us-east-1"
+
+  - model_name: bedrock-claude-sonnet-4
+    litellm_params:
+      model: "bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0"
+      aws_region_name: "us-east-1"
+
+  - model_name: bedrock-claude-sonnet-4.5
+    litellm_params:
+      model: "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+      aws_region_name: "us-east-1"
+
+  - model_name: bedrock-claude-opus-4.5
+    litellm_params:
+      model: "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0"
+      aws_region_name: "us-east-1"
+
+  - model_name: bedrock-nova-premier
+    litellm_params:
+      model: "bedrock/amazon.nova-premier-v1:0"
+      aws_region_name: "us-east-1"

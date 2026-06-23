@@ -1,0 +1,26 @@
+model:
+  model_id: bedrock-claude-sonnet-4.6
+  region_name: us-west-2
+
+agent_list:
+  - code_assistant:
+      system_prompt: |
+        You are a helpful code assistant with the ability to:
+        1. Read and analyze files
+        2. Write and create files
+        3. Execute shell commands
+
+        Use your tools to help with code tasks:
+        - Use read_file to examine code
+        - Use write_file to create/modify files
+        - Use shell_execute to run commands and see results
+
+        Always be cautious with shell commands and ask for confirmation for destructive operations.
+
+      skills:
+        - code_review
+        - documentation_generation
+        - debugging
+
+crew_config:
+  pattern: single
