@@ -44,9 +44,15 @@ s3 = [
     "oai-agent-core[s3]",
 ]
 
+# Neo4j knowledge-graph support (GraphRAG)
+neo4j = [
+    "oai-agent-core[neo4j]",
+]
+
 # All optional dependencies
 all = [
     "oai-agent-core[vector]",
+    "oai-agent-core[neo4j]",
     "oai-agent-core[guardrails]"
 ]
 

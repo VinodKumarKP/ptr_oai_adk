@@ -68,6 +68,7 @@ class BaseKnowledgeBaseFactory(ABC):
         """
         self.logger = logger or logging.getLogger(__name__)
         self.project_root = project_root
+        self.llm = llm
         self.query_analyzer = PromptAnalyzer(llm, self.logger) if llm else None
         self.vector_store = vector_store
         self.document_loader = document_loader
@@ -324,11 +325,33 @@ class BaseKnowledgeBaseFactory(ABC):
             os.makedirs(persist_directory, exist_ok=True)
             vector_store_settings['persist_directory'] = persist_directory
 
-        # Create Embeddings
-        embeddings = self._create_embeddings(embedding_model_id, region_name)
-        if not embeddings:
-            self.logger.error(f"Could not create embeddings for knowledge base: {name}")
-            return
+        # Knowledge-graph stores (e.g. Neo4j) need no local embeddings and are
+        # assumed to be pre-loaded, so they skip the embedding + document-loader
+        # path entirely and instead receive the LLM for entity extraction /
+        # text2cypher retrieval.
+        is_graph_store = vector_store_type.lower() in ('neo4j_graph', 'neo4j_kg')
+        # Hybrid (node-level vector entry) needs embeddings to query the node
+        # index; pure traversal / text2cypher graph stores do not.
+        graph_needs_embeddings = (
+            is_graph_store
+            and str(vector_store_settings.get('entry_strategy', '')).lower() == 'vector'
+        )
+
+        if is_graph_store:
+            vector_store_settings = {**vector_store_settings, 'llm': self.llm}
+            if graph_needs_embeddings:
+                embeddings = self._create_embeddings(embedding_model_id, region_name)
+                if not embeddings:
+                    self.logger.error(f"Could not create embeddings for knowledge base: {name}")
+                    return
+            else:
+                embeddings = None
+        else:
+            # Create Embeddings
+            embeddings = self._create_embeddings(embedding_model_id, region_name)
+            if not embeddings:
+                self.logger.error(f"Could not create embeddings for knowledge base: {name}")
+                return
 
         # Create Vector Store
         try:
@@ -344,32 +367,36 @@ class BaseKnowledgeBaseFactory(ABC):
             self.logger.error(f"Failed to create vector store for {name}: {e}", exc_info=True)
             return
 
-        # Load Documents
-        data_sources = kb_config.get('data_sources', [])
-        text_splitter_settings = kb_config.get('text_splitter', {})
-        loader_settings = kb_config.get("loader", {})
-        docs_paths = self._process_data_sources(data_sources, text_splitter_settings, loader_settings)
-
-        if self.document_loader:
-            self.loader = self.document_loader(
-                db_name=vector_store_settings.get('collection_name', 'default'),
-                embedding=embeddings,
-                persist_directory=persist_directory,
-                vector_store=vector_store
-            )
+        if is_graph_store:
+            # Pre-loaded graph: no ingestion path, query-only.
+            vector_load_type = 'graph'
         else:
-            from oai_agent_core.components.loaders.document_loader import DocumentLoader
-            self.loader = DocumentLoader(
-                db_name=vector_store_settings.get('collection_name', 'default'),
-                embedding=embeddings,
-                persist_directory=persist_directory,
-                vector_store=vector_store
-            )
+            # Load Documents
+            data_sources = kb_config.get('data_sources', [])
+            text_splitter_settings = kb_config.get('text_splitter', {})
+            loader_settings = kb_config.get("loader", {})
+            docs_paths = self._process_data_sources(data_sources, text_splitter_settings, loader_settings)
 
-        vector_load_type = 'custom'
-        if docs_paths:
-            self.loader.load_db(docs_paths)
-            vector_load_type = 'preloaded'
+            if self.document_loader:
+                self.loader = self.document_loader(
+                    db_name=vector_store_settings.get('collection_name', 'default'),
+                    embedding=embeddings,
+                    persist_directory=persist_directory,
+                    vector_store=vector_store
+                )
+            else:
+                from oai_agent_core.components.loaders.document_loader import DocumentLoader
+                self.loader = DocumentLoader(
+                    db_name=vector_store_settings.get('collection_name', 'default'),
+                    embedding=embeddings,
+                    persist_directory=persist_directory,
+                    vector_store=vector_store
+                )
+
+            vector_load_type = 'custom'
+            if docs_paths:
+                self.loader.load_db(docs_paths)
+                vector_load_type = 'preloaded'
 
         # Create Tool
         self.knowledge_base_tools[name] = {
@@ -486,6 +513,10 @@ class BaseKnowledgeBaseFactory(ABC):
 
         distance_type = self._detect_distance_type(scores)
 
+        # Stores such as the Neo4j knowledge-graph return relevance already
+        # normalised to 0..1; skip the distance→similarity conversion for them.
+        scores_prenormalized = getattr(vector_store, 'returns_normalized_scores', False) is True
+
         for item in all_results:
             if isinstance(item, tuple) and len(item) == 2:
                 doc, score = item
@@ -494,7 +525,10 @@ class BaseKnowledgeBaseFactory(ABC):
                 score = getattr(doc, 'score', 0.0)
 
             # Normalize score
-            normalized_score = self._normalize_score(score, distance_type)
+            if scores_prenormalized:
+                normalized_score = score
+            else:
+                normalized_score = self._normalize_score(score, distance_type)
 
             # Filter by threshold
             if normalized_score < score_threshold:

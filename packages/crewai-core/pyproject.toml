@@ -44,6 +44,11 @@ s3 = [
     "oai-agent-core[s3]",
 ]
 
+# Neo4j knowledge-graph support (GraphRAG)
+neo4j = [
+    "oai-agent-core[neo4j]",
+]
+
 guardrails = [
     "oai-agent-core[guardrails-ai]"
 ]
@@ -51,6 +56,7 @@ guardrails = [
 # All optional dependencies
 all = [
     "oai-crewai-core[chromadb]",
+    "oai-agent-core[neo4j]",
     "oai-agent-core[guardrails]"
 ]
 

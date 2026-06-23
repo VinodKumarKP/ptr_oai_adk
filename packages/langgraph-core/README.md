@@ -181,6 +181,9 @@ pip install "oai-langgraph-core[postgres]"
 # For S3 vector store support
 pip install "oai-langgraph-core[s3]"
 
+# For Neo4j knowledge graph (GraphRAG) support
+pip install "oai-langgraph-core[neo4j]"
+
 # For all features
 pip install "oai-langgraph-core[all]"
 ```
@@ -1157,6 +1160,29 @@ vector_store:
     bucket_name: "my-vector-data-bucket"
     prefix: "indexes/" # Optional folder inside the bucket.
 ```
+
+#### 4. Neo4j Knowledge Graph (GraphRAG)
+**Best for:** Structured, connected data where relationships matter (e.g. policies → coverages → claims). **Read-only** — assumes the graph is already loaded by a governed pipeline.
+```yaml
+vector_store:
+  type: neo4j_graph
+  settings:
+    url: bolt://localhost:7687
+    username: neo4j               # use a read-only role in production
+    password: ${NEO4J_PASSWORD}
+    database: neo4j
+    retrieval_mode: traversal     # traversal | text2cypher
+    entry_strategy: fulltext      # fulltext | entity_linking | vector (hybrid)
+    fulltext_index: entityNames   # an existing Neo4j full-text index
+    max_hops: 2
+```
+Install the extra: `pip install "oai-langgraph-core[neo4j]"`
+
+**Retrieval modes**
+- **`traversal`** (default, deterministic) — find entry nodes, then expand an N-hop neighbourhood. Entry strategies: `fulltext`, `entity_linking` (LLM extracts entities), or `vector` (semantic, node-level hybrid).
+- **`text2cypher`** — the LLM generates a **read-only** Cypher query from the introspected schema (hardened prompts; mutating queries are refused). Best for aggregate / multi-hop questions.
+
+**Hybrid (node-level vector entry):** set `entry_strategy: vector` and add a `vector_entry` index of node embeddings so natural-language questions map to graph entry nodes. See `examples/agents_config/knowledge_graph_hybrid_agent.yaml`.
 
 ### Two Ways to Use a Knowledge Base
 

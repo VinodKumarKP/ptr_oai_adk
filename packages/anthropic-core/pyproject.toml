@@ -47,12 +47,18 @@ pinecone = [
     "oai-agent-core[pinecone]",
 ]
 
+# Neo4j knowledge-graph support (GraphRAG)
+neo4j = [
+    "oai-agent-core[neo4j]",
+]
+
 guardrails = [
     "oai-agent-core[guardrails-ai]",
 ]
 
 all = [
     "oai-agent-core[vector]",
+    "oai-agent-core[neo4j]",
     "oai-agent-core[guardrails]",
 ]
 

@@ -54,6 +54,12 @@ s3 = [
     "numpy"
 ]
 
+neo4j = [
+    "oai-agent-core[vector-required]",
+    "neo4j>=5.0.0",
+    "langchain-neo4j"
+]
+
 guardrails = [
     "guardrails-ai @ git+https://github.com/guardrails-ai/guardrails.git@v0.10.0"
 ]
@@ -80,6 +86,7 @@ all = [
     "oai-agent-core[chromadb]",
     "oai-agent-core[postgres]",
     "oai-agent-core[s3]",
+    "oai-agent-core[neo4j]",
     "oai-agent-core[guardrails]",
     "oai-agent-core[tracing]",
     "oai-agent-core[metrics]"

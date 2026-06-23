@@ -40,5 +40,8 @@ class VectorStoreFactory:
         elif vector_store_type == 'pinecone':
             from oai_agent_core.components.vector_store.pinecone_vector_store import PineconeVectorStore
             return PineconeVectorStore(**kwargs)
+        elif vector_store_type in ('neo4j_graph', 'neo4j_kg'):
+            from oai_agent_core.components.vector_store.neo4j_graph_store import Neo4jGraphStore
+            return Neo4jGraphStore(**kwargs)
         else:
             raise ValueError(f"Unknown vector store type: {vector_store_type}")
