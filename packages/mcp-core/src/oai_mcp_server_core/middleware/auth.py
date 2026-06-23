@@ -81,7 +81,6 @@ class AuthenticationMiddleware(Middleware):
         if not api_token:
             self.logger.warning(f"Authentication failed: No API token provided for {self.server_name}")
             # We use Starlette's HTTPException here because it's caught by the server framework to return a proper 401 response
-            from starlette.exceptions import HTTPException
             raise HTTPException(status_code=401, detail="API token required")
 
         if is_saml_token(api_token):
@@ -98,20 +97,17 @@ class AuthenticationMiddleware(Middleware):
             except TokenValidationError as e:
                 raise AuthenticationException(reason=str(e))
             except Exception as e:
-                from starlette.exceptions import HTTPException
                 raise HTTPException(status_code=500, detail="SAML token validation service unavailable")
         else:
             # Validate token using TokenManager
             if not self.token_manager:
                 self.logger.error("TokenManager not available")
-                from starlette.exceptions import HTTPException
                 raise HTTPException(status_code=500, detail="Authentication service unavailable")
 
             is_valid = self.token_manager.validate_token(self.server_name, api_token)
 
             if not is_valid:
                 self.logger.warning(f"Authentication failed: Invalid or expired token for {self.server_name}")
-                from starlette.exceptions import HTTPException
                 raise HTTPException(status_code=401, detail="Invalid or expired API token")
 
         # Token is valid, proceed with request

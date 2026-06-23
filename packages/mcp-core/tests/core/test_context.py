@@ -52,10 +52,47 @@ class TestRequestAwareEnviron:
         # Clear env for clean test or mock it, but here we just check inclusion
         wrapper = RequestAwareEnviron(os.environ)
         token = request_env.set({"UNIQUE_REQ_VAR": "1"})
-        
+
         try:
             keys = list(wrapper)
             assert "UNIQUE_REQ_VAR" in keys
             assert "PATH" in keys  # Assuming PATH is always in os.environ
+        finally:
+            request_env.reset(token)
+
+    def test_keys_returns_keysview(self):
+        """keys() should return a real KeysView (matching its annotation)."""
+        from collections.abc import KeysView
+        os.environ["ORIGINAL"] = "1"
+        wrapper = RequestAwareEnviron(os.environ)
+        token = request_env.set({"UNIQUE_REQ_VAR": "1"})
+        try:
+            keys = wrapper.keys()
+            assert isinstance(keys, KeysView)
+            assert "UNIQUE_REQ_VAR" in keys
+            assert "ORIGINAL" in keys
+        finally:
+            request_env.reset(token)
+            del os.environ["ORIGINAL"]
+
+    def test_values_returns_valuesview(self):
+        """values() should return a real ValuesView (matching its annotation)."""
+        from collections.abc import ValuesView
+        wrapper = RequestAwareEnviron(os.environ)
+        token = request_env.set({"UNIQUE_REQ_VAR": "req_val"})
+        try:
+            values = wrapper.values()
+            assert isinstance(values, ValuesView)
+            assert "req_val" in values
+        finally:
+            request_env.reset(token)
+
+    def test_keys_request_value_merged(self):
+        """Request-scoped keys must appear alongside original keys."""
+        wrapper = RequestAwareEnviron(os.environ)
+        token = request_env.set({"UNIQUE_REQ_VAR": "1"})
+        try:
+            assert "UNIQUE_REQ_VAR" in set(wrapper.keys())
+            assert "PATH" in set(wrapper.keys())
         finally:
             request_env.reset(token)

@@ -2,6 +2,7 @@ import traceback
 import argparse
 import os
 import asyncio
+import threading
 import httpx
 from abc import ABC
 from typing import Literal, List, Optional
@@ -26,6 +27,10 @@ from oai_mcp_server_core.core.exceptions import TransportError
 from oai_mcp_server_core.core.routes import register_server_routes
 
 VALID_TRANSPORTS = {"stdio", "streamable-http", "sse"}
+
+# Guards the one-time, process-global swap of os.environ -> RequestAwareEnviron
+# so concurrent server construction can't race on the check-then-set.
+_isolation_lock = threading.Lock()
 
 
 class BaseMCPServer(ABC):
@@ -73,16 +78,18 @@ class BaseMCPServer(ABC):
 
     def _setup_request_isolation(self):
         """
-        Setup request-aware environment wrapper.
+        Setup request-aware environment wrapper (thread-safe).
         This makes os.environ automatically use request-scoped values.
         """
-        # Only wrap once
-        if not isinstance(os.environ, RequestAwareEnviron):
-            original_environ = os.environ
-            os.environ = RequestAwareEnviron(original_environ)
-            self.logger.info("Request isolation enabled: os.environ is now request-aware")
-        else:
-            self.logger.debug("Request isolation already enabled")
+        # Only wrap once; the lock prevents a check-then-set race when multiple
+        # servers are constructed concurrently.
+        with _isolation_lock:
+            if not isinstance(os.environ, RequestAwareEnviron):
+                original_environ = os.environ
+                os.environ = RequestAwareEnviron(original_environ)
+                self.logger.info("Request isolation enabled: os.environ is now request-aware")
+            else:
+                self.logger.debug("Request isolation already enabled")
 
     def base_directory(self, file_name):
         """Get the base directory of the MCP server."""
@@ -112,9 +119,6 @@ class BaseMCPServer(ABC):
             return None
 
         self.logger.info(f"MCP_BASE_URL detected: {mcp_base_url}")
-
-        if not mcp_base_url:
-            return None
 
         try:
             if not mcp_base_url.startswith('http'):

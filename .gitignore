@@ -32,3 +32,4 @@ redis.config
 .run
 *.db-shm
 *.db-wal
+packages/agent-registry/src/oai_agent_registry/resources/docker/targets/agents.json

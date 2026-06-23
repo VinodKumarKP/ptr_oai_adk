@@ -51,7 +51,7 @@ def register_server_routes(config_root, mcp_app, server_name: str, server_config
                 "GET /info": "Get MCP Server information",
                 "GET /debug/env": "Debug request environment (if enabled)",
                 "GET /docs": "Swagger UI documentation",
-                "GET /readme: Get the MCP Server readme"
+                "GET /readme": "Get the MCP Server readme",
                 "POST /token/custom": "Generate a token with custom TTL",
                 "POST /token/short-term": "Generate a short-term token (5 min)",
                 "POST /token/long-term": "Generate a long-term token (30 days)",

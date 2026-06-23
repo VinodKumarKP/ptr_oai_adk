@@ -82,7 +82,7 @@ class HeaderCaptureMiddleware(Middleware):
 
         # Filter and transform headers
         env_dict = {}
-        self.logger.info(f"Capturing os environment variables from system str(os.environ): {len(os.environ)} variables")
+        self.logger.info(f"Capturing environment variables from {len(headers)} HTTP header(s)")
         for key, value in headers.items():
             # Apply prefix filter if specified
             if self.header_prefix and not key.lower().startswith(self.header_prefix):

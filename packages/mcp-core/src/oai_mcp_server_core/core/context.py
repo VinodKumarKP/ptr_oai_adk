@@ -116,13 +116,14 @@ class RequestAwareEnviron:
     def keys(self) -> KeysView[str]:
         """
         Return all keys (merged from request context and original).
-        
+
         Returns:
             View of all keys
         """
         req_env = request_env.get()
-        all_keys = set(self._original.keys()) | set(req_env.keys())
-        return all_keys
+        merged = dict(self._original)
+        merged.update(req_env)
+        return merged.keys()
 
     def items(self) -> ItemsView[str, str]:
         """
@@ -139,11 +140,14 @@ class RequestAwareEnviron:
     def values(self) -> ValuesView[str]:
         """
         Return all values.
-        
+
         Returns:
             View of all values
         """
-        return [v for k, v in self.items()]
+        req_env = request_env.get()
+        merged = dict(self._original)
+        merged.update(req_env)
+        return merged.values()
 
     # Delegate other methods to original
     def __getattr__(self, name):
