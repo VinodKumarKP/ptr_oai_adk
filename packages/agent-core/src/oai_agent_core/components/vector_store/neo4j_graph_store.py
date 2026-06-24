@@ -138,6 +138,8 @@ class Neo4jGraphStore(BaseVectorStore):
         self._text_props = tuple(kwargs.get("node_text_props") or _DEFAULT_TEXT_PROPS)
         self._timeout = float(kwargs.get("query_timeout", 30))
         self._llm = kwargs.get("llm")
+        # Optional region for a bare model-id LLM (e.g. Bedrock); used by LiteLLM.
+        self._llm_region = kwargs.get("llm_region")
 
         # Vector entry (hybrid, node-level): a separate vector index holds one
         # embedding per graph node; its hits give the entry node ids we traverse
@@ -404,9 +406,11 @@ class Neo4jGraphStore(BaseVectorStore):
         model_id = self._resolve_model_id(llm)
         if model_id:
             from litellm import completion  # noqa: PLC0415
+            extra = {"aws_region_name": self._llm_region} if self._llm_region else {}
             resp = completion(
                 model=model_id,
                 messages=[{"role": "user", "content": prompt}],
+                **extra,
             )
             return resp["choices"][0]["message"]["content"]
         if hasattr(llm, "invoke"):

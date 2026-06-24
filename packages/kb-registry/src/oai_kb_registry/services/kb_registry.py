@@ -397,6 +397,18 @@ class KBRegistry:
 
         return await loop.run_in_executor(_executor, _do_add)
 
+    async def _assert_ingestable(self, kb_name: str) -> None:
+        """Reject document ingestion for read-only graph KBs (managed externally)."""
+        kb = await self.db.get_knowledge_base(kb_name)
+        if kb and str(kb.get("vector_db_type", "")).lower() in (
+            "neo4j_graph", "neo4j_kg", "neo4j",
+        ):
+            raise ValueError(
+                f"Document ingestion is not supported for Neo4j knowledge graph "
+                f"'{kb_name}'. The graph is managed by an external pipeline; the "
+                f"registry only queries it."
+            )
+
     async def index_document_from_upload(
         self,
         kb_name: str,
@@ -405,6 +417,7 @@ class KBRegistry:
         performed_by: str = "system",
     ) -> Dict[str, Any]:
         """Index a file uploaded via the API."""
+        await self._assert_ingestable(kb_name)
         kb = await self.db.get_knowledge_base(kb_name)
         if not kb:
             raise ValueError(f"Knowledge base not found: {kb_name!r}")
@@ -456,6 +469,7 @@ class KBRegistry:
         aws_secret_access_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Index an object already stored in S3."""
+        await self._assert_ingestable(kb_name)
         kb = await self.db.get_knowledge_base(kb_name)
         if not kb:
             raise ValueError(f"Knowledge base not found: {kb_name!r}")
@@ -519,6 +533,7 @@ class KBRegistry:
         Used by the source sync service — each LangChain Document becomes one
         ``kb_documents`` record that is chunked, embedded, and stored.
         """
+        await self._assert_ingestable(kb_name)
         kb = await self.db.get_knowledge_base(kb_name)
         if not kb:
             raise ValueError(f"Knowledge base not found: {kb_name!r}")

@@ -18,9 +18,11 @@ the API request body.
 
 Supported vector DB types
 -------------------------
-chroma    — ChromaDB (HTTP or persistent local)
-postgres  — PostgreSQL with pgvector extension
-s3        — AWS S3 JSON index with in-memory cosine similarity
+chroma      — ChromaDB (HTTP or persistent local)
+postgres    — PostgreSQL with pgvector extension
+s3          — AWS S3 JSON index with in-memory cosine similarity
+pinecone    — Pinecone (always external, server-side embeddings)
+neo4j_graph — Neo4j knowledge graph (GraphRAG; always external, read-only)
 """
 
 from __future__ import annotations
@@ -189,6 +191,64 @@ class VectorStoreProviderFactory:
                 api_key=api_key,
                 index_name=index_name,
                 namespace=namespace,
+            )
+
+        # ---- Neo4j knowledge graph (GraphRAG) ----------------------------
+        # Handled BEFORE embeddings: read-only graph store; traversal needs no
+        # embeddings. Embeddings are created only for the hybrid 'vector' entry.
+        if vdb in ("neo4j_graph", "neo4j_kg", "neo4j"):
+            url = configs.get("neo4j_url")
+            if not url:
+                raise ValueError(
+                    "neo4j_url is required in vector_db_config for Neo4j knowledge graph"
+                )
+            retrieval_mode = (configs.get("neo4j_retrieval_mode") or "traversal").lower()
+            llm_model_id = configs.get("neo4j_llm_model_id") or None
+            if retrieval_mode == "text2cypher" and not llm_model_id:
+                raise ValueError(
+                    "retrieval_mode 'text2cypher' requires 'neo4j_llm_model_id' "
+                    "(a LiteLLM model id). Credentials come from the registry's "
+                    "environment."
+                )
+            entry_strategy = (configs.get("neo4j_entry_strategy") or "fulltext").lower()
+            settings: Dict[str, Any] = {
+                "url": url,
+                "username": configs.get("neo4j_username"),
+                "password": configs.get("neo4j_password"),
+                "database": configs.get("neo4j_database") or "neo4j",
+                "retrieval_mode": configs.get("neo4j_retrieval_mode") or "traversal",
+                "entry_strategy": entry_strategy,
+                "fulltext_index": configs.get("neo4j_fulltext_index"),
+                "max_hops": int(configs.get("neo4j_max_hops") or 2),
+                "rel_limit": int(configs.get("neo4j_rel_limit") or 50),
+                "entry_id_field": configs.get("neo4j_entry_id_field") or "node_id",
+                "entry_id_property": configs.get("neo4j_entry_id_property") or "id",
+            }
+            # LLM (model id only) for text2cypher / entity_linking. The store
+            # routes a bare model-id string through LiteLLM; credentials come
+            # from the registry's environment.
+            if llm_model_id:
+                settings["llm"] = llm_model_id
+                if configs.get("neo4j_llm_region"):
+                    settings["llm_region"] = configs.get("neo4j_llm_region")
+            graph_embedding_fn = None
+            if entry_strategy == "vector":
+                raw_ve = configs.get("neo4j_vector_entry")
+                if not raw_ve:
+                    raise ValueError(
+                        "neo4j_vector_entry (JSON) is required when "
+                        "neo4j_entry_strategy='vector'"
+                    )
+                import json  # noqa: PLC0415
+                settings["vector_entry"] = json.loads(raw_ve)
+                graph_embedding_fn = _make_litellm_embeddings(
+                    model_id=embedding_model_id, region_name=embedding_region,
+                )
+            return VectorStoreFactory.create_vector_store(
+                "neo4j_graph",
+                collection_name=kb_name,
+                embedding_function=graph_embedding_fn,
+                **settings,
             )
 
         # For all other backends, create the LiteLLM embedding function first.

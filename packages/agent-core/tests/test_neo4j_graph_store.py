@@ -362,6 +362,52 @@ def test_resolve_model_id_from_string_and_attrs():
     assert Neo4jGraphStore._resolve_model_id(M()) == "azure/gpt-4o"
 
 
+def test_invoke_llm_passes_region_to_litellm():
+    import sys
+    import types
+
+    store = _make_store()
+    store._llm = "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0"
+    store._llm_region = "us-west-2"
+
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    fake_litellm = types.ModuleType("litellm")
+    fake_litellm.completion = fake_completion
+    with patch.dict(sys.modules, {"litellm": fake_litellm}):
+        out = store._invoke_llm("hi")
+
+    assert out == "ok"
+    assert captured["model"] == "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0"
+    assert captured["aws_region_name"] == "us-west-2"
+
+
+def test_invoke_llm_omits_region_when_unset():
+    import sys
+    import types
+
+    store = _make_store()
+    store._llm = "gpt-4o"
+    store._llm_region = None
+
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    fake_litellm = types.ModuleType("litellm")
+    fake_litellm.completion = fake_completion
+    with patch.dict(sys.modules, {"litellm": fake_litellm}):
+        store._invoke_llm("hi")
+
+    assert "aws_region_name" not in captured
+
+
 # --- text2cypher (LLM → Cypher → guarded read → LLM answer) ---------------
 
 class FakeRecord(dict):

@@ -20,6 +20,7 @@ class VectorDBType(str, Enum):
     POSTGRES = "postgres"
     S3 = "s3"
     PINECONE = "pinecone"
+    NEO4J = "neo4j_graph"   # Neo4j knowledge graph (GraphRAG) — always external, read-only
 
 
 class DeploymentMode(str, Enum):
@@ -75,6 +76,30 @@ class VectorDBConfig(BaseModel):
     pinecone_namespace: Optional[str] = None
     pinecone_cloud: Optional[str] = "aws"
     pinecone_region: Optional[str] = "us-east-1"
+    # Neo4j knowledge graph (always external, read-only — the graph is loaded
+    # by an external pipeline; the registry only queries it).
+    neo4j_url: Optional[str] = None
+    neo4j_username: Optional[str] = None
+    neo4j_password: Optional[str] = None
+    neo4j_database: Optional[str] = "neo4j"
+    # traversal (default) | text2cypher. NOTE: text2cypher and the
+    # entity_linking entry strategy need an LLM, which the registry runtime does
+    # not supply — registry-managed graphs should use traversal.
+    neo4j_retrieval_mode: Optional[str] = "traversal"
+    neo4j_entry_strategy: Optional[str] = "fulltext"   # fulltext | entity_linking | vector
+    neo4j_fulltext_index: Optional[str] = None
+    neo4j_max_hops: Optional[int] = 2
+    neo4j_rel_limit: Optional[int] = 50
+    # Hybrid (entry_strategy='vector'): a node-level vector index as a JSON
+    # string, e.g. '{"type":"postgres","settings":{"collection_name":"kg_nodes",
+    # "connection_string":"..."}}', plus the shared-id mapping.
+    neo4j_vector_entry: Optional[str] = None
+    neo4j_entry_id_field: Optional[str] = "node_id"
+    neo4j_entry_id_property: Optional[str] = "id"
+    # LLM for text2cypher / entity_linking. A LiteLLM model id only — the
+    # registry reads credentials from its environment (like the embedding model).
+    neo4j_llm_model_id: Optional[str] = None
+    neo4j_llm_region: Optional[str] = None
 
 
 class EmbeddingConfig(BaseModel):
@@ -135,10 +160,29 @@ class KBRegistration(BaseModel):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
 
     @model_validator(mode="after")
-    def pinecone_is_always_external(self) -> "KBRegistration":
-        """Pinecone has no builtin container — force deployment_mode to external."""
-        if self.vector_db_type == VectorDBType.PINECONE:
+    def force_external_for_unmanaged_backends(self) -> "KBRegistration":
+        """Pinecone and Neo4j have no builtin container — force external mode."""
+        if self.vector_db_type in (VectorDBType.PINECONE, VectorDBType.NEO4J):
             self.deployment_mode = DeploymentMode.EXTERNAL
+        return self
+
+    @model_validator(mode="after")
+    def neo4j_text2cypher_requires_llm(self) -> "KBRegistration":
+        """``text2cypher`` generates Cypher with an LLM, so it needs a model id.
+
+        Provide ``neo4j_llm_model_id`` (a LiteLLM model identifier); the registry
+        reads the credentials from its environment. ``traversal`` with
+        ``fulltext``/``vector`` entry needs no LLM; ``entity_linking`` optionally
+        uses one and degrades to the raw query without it.
+        """
+        if self.vector_db_type == VectorDBType.NEO4J and self.vector_db_config:
+            mode = (self.vector_db_config.neo4j_retrieval_mode or "traversal").lower()
+            if mode == "text2cypher" and not self.vector_db_config.neo4j_llm_model_id:
+                raise ValueError(
+                    "retrieval_mode 'text2cypher' requires 'neo4j_llm_model_id' "
+                    "(a LiteLLM model id). Credentials come from the registry's "
+                    "environment."
+                )
         return self
 
 
