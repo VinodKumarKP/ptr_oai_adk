@@ -642,6 +642,29 @@ class KBRegistry:
             )
         return output
 
+    async def graph_stats(self, kb_name: str, sample_limit: int = 5) -> Dict[str, Any]:
+        """Return a read-only snapshot of a Neo4j knowledge graph.
+
+        Lets a user judge whether the KB has usable data (node/relationship
+        counts, labels, full-text index presence, sample nodes) before relying
+        on it. Only valid for ``neo4j_graph`` KBs.
+        """
+        kb = await self.db.get_knowledge_base(kb_name)
+        if not kb:
+            raise ValueError(f"Knowledge base not found: {kb_name!r}")
+        if str(kb.get("vector_db_type", "")).lower() not in (
+            "neo4j_graph", "neo4j_kg", "neo4j",
+        ):
+            raise ValueError(
+                f"graph-stats is only available for Neo4j knowledge graphs "
+                f"(KB '{kb_name}' is '{kb.get('vector_db_type')}')."
+            )
+        loop = asyncio.get_event_loop()
+        vs = await self._get_or_create_vector_store(kb_name)
+        return await loop.run_in_executor(
+            _executor, lambda: vs.graph_stats(sample_limit=sample_limit)
+        )
+
     # ------------------------------------------------------------------ #
     #  Reindex                                                             #
     # ------------------------------------------------------------------ #

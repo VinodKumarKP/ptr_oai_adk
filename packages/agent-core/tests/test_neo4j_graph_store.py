@@ -345,6 +345,75 @@ def test_count_uses_node_count():
         assert store.count() == 42
 
 
+# --- graph_stats ----------------------------------------------------------
+
+def test_graph_stats_collects_snapshot():
+    store = _make_store(fulltext_index="entityNames")
+    pol = FakeNode(["Policy"], {"name": "Home Shield 360"}, element_id="p1")
+
+    def fake_read(cypher, params=None):
+        if "count(n)" in cypher:
+            return [{"c": 1234}]
+        if "db.labels()" in cypher:
+            return [{"label": "Policy"}, {"label": "Coverage"}]
+        if "db.relationshipTypes()" in cypher:
+            return [{"relationshipType": "HAS_COVERAGE"}]
+        if "apoc.meta.stats()" in cypher:
+            return [{"labels": {"Policy": 10, "Coverage": 50}, "relCount": 120}]
+        if "SHOW FULLTEXT INDEXES" in cypher:
+            return [{"name": "entityNames"}]
+        if "RETURN n LIMIT" in cypher:
+            return [{"n": pol}]
+        return []
+
+    with patch.object(store, "_read", side_effect=fake_read):
+        stats = store.graph_stats(sample_limit=5)
+
+    assert stats["node_count"] == 1234
+    assert stats["labels"] == ["Policy", "Coverage"]
+    assert stats["relationship_types"] == ["HAS_COVERAGE"]
+    assert stats["label_counts"] == {"Policy": 10, "Coverage": 50}
+    assert stats["relationship_count"] == 120
+    assert stats["fulltext_index_present"] is True
+    assert stats["sample_nodes"][0]["display"] == "Home Shield 360"
+
+
+def test_graph_stats_flags_missing_fulltext_index():
+    store = _make_store(fulltext_index="entityNames")
+
+    def fake_read(cypher, params=None):
+        if "count(n)" in cypher:
+            return [{"c": 0}]
+        if "SHOW FULLTEXT INDEXES" in cypher:
+            return [{"name": "someOtherIndex"}]
+        return []
+
+    with patch.object(store, "_read", side_effect=fake_read):
+        stats = store.graph_stats()
+
+    assert stats["node_count"] == 0
+    assert stats["fulltext_index_configured"] == "entityNames"
+    assert stats["fulltext_index_present"] is False
+
+
+def test_graph_stats_degrades_without_apoc():
+    store = _make_store()
+
+    def fake_read(cypher, params=None):
+        if "apoc.meta.stats()" in cypher:
+            raise Exception("There is no procedure with the name `apoc.meta.stats`")
+        if "count(n)" in cypher:
+            return [{"c": 7}]
+        return []
+
+    with patch.object(store, "_read", side_effect=fake_read):
+        stats = store.graph_stats()
+
+    assert stats["node_count"] == 7
+    assert stats["label_counts"] is None          # APOC absent → optional field stays None
+    assert stats["relationship_count"] is None
+
+
 # --- LLM model-id resolution ---------------------------------------------
 
 def test_resolve_model_id_from_strands_get_config():

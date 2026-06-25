@@ -89,6 +89,22 @@ async def get_knowledge_base(
     return kb
 
 
+@router.get("/knowledge-bases/{kb_name}/graph-stats")
+async def get_graph_stats(
+    kb_name: str,
+    _auth: bool = Depends(verify_bearer_token),
+    registry: KBRegistry = Depends(get_registry),
+):
+    """Read-only snapshot of a Neo4j knowledge graph (counts, labels, indexes,
+    sample nodes) so a user can decide whether the KB has usable data."""
+    try:
+        return await registry.graph_stats(kb_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read graph stats: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Agent-core config endpoint
 # ---------------------------------------------------------------------------

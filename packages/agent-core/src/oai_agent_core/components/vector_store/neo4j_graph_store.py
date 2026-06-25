@@ -580,6 +580,85 @@ class Neo4jGraphStore(BaseVectorStore):
             self.logger.warning("count() failed: %s", exc)
             return 0
 
+    def graph_stats(self, sample_limit: int = 5) -> dict:
+        """Read-only snapshot of the graph so a user can judge if this KB fits.
+
+        Returns node count, labels, relationship types, optional per-label counts
+        (when APOC is available), full-text index presence (validates the
+        configured index), and a few sample nodes. Every query is read-only and
+        bounded; failures degrade to empty fields rather than raising.
+        """
+        stats: dict = {
+            "node_count": 0,
+            "relationship_count": None,
+            "labels": [],
+            "label_counts": None,
+            "relationship_types": [],
+            "fulltext_indexes": [],
+            "fulltext_index_configured": self._fulltext_index,
+            "fulltext_index_present": None,
+            "sample_nodes": [],
+            "retrieval_mode": self._mode,
+            "entry_strategy": self._entry_strategy,
+        }
+
+        try:
+            rows = self._read("MATCH (n) RETURN count(n) AS c")
+            stats["node_count"] = int(rows[0]["c"]) if rows else 0
+        except Exception as exc:
+            self.logger.warning("graph_stats: node count failed: %s", exc)
+
+        try:
+            rows = self._read("CALL db.labels() YIELD label RETURN label ORDER BY label")
+            stats["labels"] = [r["label"] for r in rows]
+        except Exception as exc:
+            self.logger.warning("graph_stats: labels failed: %s", exc)
+
+        try:
+            rows = self._read(
+                "CALL db.relationshipTypes() YIELD relationshipType "
+                "RETURN relationshipType ORDER BY relationshipType"
+            )
+            stats["relationship_types"] = [r["relationshipType"] for r in rows]
+        except Exception as exc:
+            self.logger.warning("graph_stats: relationship types failed: %s", exc)
+
+        # Per-label counts + total rel count — cheap via APOC when present.
+        try:
+            rows = self._read(
+                "CALL apoc.meta.stats() YIELD labels, relCount "
+                "RETURN labels, relCount"
+            )
+            if rows:
+                stats["label_counts"] = rows[0].get("labels")
+                stats["relationship_count"] = int(rows[0].get("relCount") or 0)
+        except Exception:
+            pass  # APOC not installed — optional
+
+        # Full-text indexes — validate the configured one actually exists.
+        try:
+            rows = self._read("SHOW FULLTEXT INDEXES YIELD name RETURN name")
+            names = [r["name"] for r in rows]
+            stats["fulltext_indexes"] = names
+            if self._fulltext_index:
+                stats["fulltext_index_present"] = self._fulltext_index in names
+        except Exception as exc:
+            self.logger.warning("graph_stats: fulltext index listing failed: %s", exc)
+
+        try:
+            rows = self._read(f"MATCH (n) RETURN n LIMIT {int(sample_limit)}")
+            stats["sample_nodes"] = [
+                {
+                    "labels": list(getattr(r["n"], "labels", []) or []),
+                    "display": self._node_display(r["n"]),
+                }
+                for r in rows
+            ]
+        except Exception as exc:
+            self.logger.warning("graph_stats: sample nodes failed: %s", exc)
+
+        return stats
+
     # ------------------------------------------------------------------
     # BaseVectorStore — write seam (read-only: refused)
     # ------------------------------------------------------------------
