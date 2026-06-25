@@ -49,6 +49,21 @@ def _client_in_trusted_network(request: Request) -> bool:
     return any(ip in net for net in _trusted_networks())
 
 
+def _is_localhost_request(request: Request) -> bool:
+    """Return True when request peer is a loopback address or localhost."""
+    if not request.client:
+        return False
+
+    host = getattr(request.client, "host", None)
+    if not isinstance(host, str) or not host:
+        return False
+
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host.lower() == "localhost"
+
+
 @lru_cache(maxsize=1)
 def _get_token_manager():
     """Lazy module-level singleton for TokenManager (re-uses Redis connection)."""
@@ -89,6 +104,10 @@ async def verify_api_key(
     # Bypass authentication for /health, /ready, /status and /metrics endpoints
     # /metrics must be unauthenticated so Prometheus can scrape it without credentials
     if request.url.path in ["/health", "/ready", "/status", "/metrics"]:
+        return True
+
+    # Always allow local loopback calls for local tooling and health checks.
+    if _is_localhost_request(request):
         return True
 
     # 1. Check if Auth is globally enabled
@@ -188,6 +207,9 @@ async def verify_jwt_token(
     if not auth_enabled:
         return {}
 
+    if _is_localhost_request(request):
+        return True
+
     force_auth = original_environ.get('FORCE_AUTH', 'true').lower() != 'false'
     if not force_auth and _client_in_trusted_network(request):
         return True
@@ -260,15 +282,19 @@ async def verify_api_key_strict(
 ):
     """Strict API-key validator for destructive endpoints (e.g. /restart, /kill).
 
-    Always validates the token: it does NOT honor the FORCE_AUTH /
-    TRUSTED_CIDRS bypass. A misconfigured trusted CIDR must never enable
-    a remote kill switch. AGENT_AUTH_ENABLED=false still disables auth
-    globally (intentional, matches the rest of the system).
+    Always validates the token for non-local peers: it does NOT honor the
+    FORCE_AUTH / TRUSTED_CIDRS bypass. Loopback callers (localhost,
+    127.0.0.1, ::1) are allowed for local-only operations.
+    AGENT_AUTH_ENABLED=false still disables auth globally (intentional,
+    matches the rest of the system).
     """
     original_environ = get_original_environ()
     auth_enabled = original_environ.get('AGENT_AUTH_ENABLED', 'true').lower() == 'true'
 
     if not auth_enabled:
+        return True
+
+    if _is_localhost_request(request):
         return True
 
     token = api_token or api_token_underscore or x_api_key
