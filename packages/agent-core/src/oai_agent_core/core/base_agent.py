@@ -512,7 +512,8 @@ class BaseAgent(ABC):
             resolved_env = self.tool_registry.update_env(environ_dict)
             import os
             for k, v in resolved_env.items():
-                os.environ[k] = v
+                if v and len(v) != 0:
+                    os.environ[k] = v
 
         async def _init_agent_skills():
             # Only initialize skills if registry exists (agent uses skills)
