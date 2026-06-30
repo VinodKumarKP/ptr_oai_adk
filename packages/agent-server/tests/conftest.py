@@ -108,6 +108,7 @@ if 'a2a' not in sys.modules:
     a2a_routes.create_rest_routes = MagicMock(return_value=MagicMock())
     sys.modules['a2a.server.routes'] = a2a_routes
 
+
 @pytest.fixture
 def mock_agent():
     agent = MockBaseAgent(agent_name="test_agent")

@@ -33,13 +33,13 @@ try:
     try:
         from opentelemetry.exporter.jaeger.thrift import JaegerExporter
         _JAEGER_AVAILABLE = True
-    except (ImportError, ModuleNotFoundError):
+    except (ImportError, ModuleNotFoundError, AttributeError):
         _JAEGER_AVAILABLE = False
         # Fall back to OTLP which is more universally available
         try:
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
             _OTLP_AVAILABLE = True
-        except (ImportError, ModuleNotFoundError):
+        except (ImportError, ModuleNotFoundError, AttributeError):
             _OTLP_AVAILABLE = False
 
     from opentelemetry.sdk.trace import TracerProvider

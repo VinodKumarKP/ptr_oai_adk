@@ -82,6 +82,59 @@ class TestStreamingJSONEncoder:
         parsed = json.loads(result)
         assert isinstance(parsed, dict)
 
+    def test_streaming_encoder_datetime_and_pydantic(self):
+        from datetime import datetime
+        from pydantic import BaseModel
+        
+        class PydanticV2Model(BaseModel):
+            name: str
+            
+        class PydanticV1Model:
+            def dict(self):
+                return {"v1": "data"}
+                
+        now = datetime(2026, 6, 30, 0, 0, 0)
+        v2_model = PydanticV2Model(name="test-v2")
+        v1_model = PydanticV1Model()
+        
+        data = {
+            "dt": now,
+            "v2": v2_model,
+            "v1": v1_model
+        }
+        
+        res = serialize_chunk_safe(data)
+        parsed = json.loads(res)
+        assert parsed["dt"] == now.isoformat()
+        assert parsed["v2"] == {"name": "test-v2"}
+        assert parsed["v1"] == {"v1": "data"}
+
+    def test_serialize_chunk_safe_error_fallback(self):
+        class BadStrObj:
+            __slots__ = ('fail',)
+            def __init__(self):
+                self.fail = True
+            def __str__(self):
+                if self.fail:
+                    self.fail = False
+                    raise TypeError("cannot stringify")
+                return "recovered"
+                
+        data = BadStrObj()
+        
+        # Test fallback_to_string=True (default)
+        res = serialize_chunk_safe(data, fallback_to_string=True)
+        parsed = json.loads(res)
+        assert "error" in parsed
+        assert parsed["error"] == "recovered"
+        assert parsed["original_type"] == "BadStrObj"
+        
+        # Reset and test fallback_to_string=False raises TypeError
+        data2 = BadStrObj()
+        with pytest.raises(TypeError):
+            serialize_chunk_safe(data2, fallback_to_string=False)
+
+
 
 class TestJudgeServicePreInitialization:
     """Test judge service pre-initialization and concurrent evaluation."""

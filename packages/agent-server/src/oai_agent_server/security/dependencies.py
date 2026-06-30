@@ -106,10 +106,6 @@ async def verify_api_key(
     if request.url.path in ["/health", "/ready", "/status", "/metrics"]:
         return True
 
-    # Always allow local loopback calls for local tooling and health checks.
-    if _is_localhost_request(request):
-        return True
-
     # 1. Check if Auth is globally enabled
     original_environ = get_original_environ()
     auth_enabled = original_environ.get('AGENT_AUTH_ENABLED', 'true').lower() == 'true'
@@ -121,8 +117,12 @@ async def verify_api_key(
     # Default FORCE_AUTH=true → auth is required unless operators explicitly opt
     # out AND the connection's actual peer IP is in TRUSTED_CIDRS.
     force_auth = original_environ.get('FORCE_AUTH', 'true').lower() != 'false'
-    if not force_auth and _client_in_trusted_network(request):
-        return True
+    if not force_auth:
+        # Always allow local loopback calls for local tooling and health checks.
+        if _is_localhost_request(request):
+            return True
+        if _client_in_trusted_network(request):
+            return True
 
     # 3. Extract Token (Support api-token, api_token, x-api-key header or Authorization: Bearer)
     token = api_token or api_token_underscore or x_api_key
@@ -159,6 +159,8 @@ async def verify_api_key(
                 raise AuthenticationException(reason=validation_result.error_message or "Invalid SAML token")
         except TokenValidationError as e:
             raise AuthenticationException(reason=str(e))
+        except AuthenticationException:
+            raise
         except Exception:
             raise HTTPException(status_code=500, detail="SAML token validation service unavailable")
     else:
@@ -230,6 +232,8 @@ async def verify_jwt_token(
             raise AuthenticationException(reason=validation_result.error_message or "Invalid SAML token")
         except TokenValidationError as e:
             raise AuthenticationException(reason=str(e))
+        except AuthenticationException:
+            raise
         except Exception:
             raise HTTPException(status_code=500, detail="SAML token validation service unavailable")
     else:
@@ -326,6 +330,8 @@ async def verify_api_key_strict(
             raise AuthenticationException(reason=validation_result.error_message or "Invalid SAML token")
         except TokenValidationError as e:
             raise AuthenticationException(reason=str(e))
+        except AuthenticationException:
+            raise
         except Exception:
             raise HTTPException(status_code=500, detail="SAML token validation service unavailable")
     else:

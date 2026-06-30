@@ -41,6 +41,16 @@ class FakePath:
         self.relationships = relationships
 
 
+@pytest.fixture(autouse=True)
+def enable_logging_propagation():
+    import logging
+    logger = logging.getLogger("oai_agent_core")
+    old_prop = logger.propagate
+    logger.propagate = True
+    yield
+    logger.propagate = old_prop
+
+
 def _make_store(**overrides):
     settings = dict(url="bolt://localhost:7687", username="neo4j", password="pw")
     settings.update(overrides)

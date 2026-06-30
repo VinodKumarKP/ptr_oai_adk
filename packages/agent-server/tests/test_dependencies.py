@@ -262,10 +262,11 @@ async def test_verify_api_key_strict_disabled_when_global_auth_off():
 
 
 @pytest.mark.asyncio
-async def test_verify_api_key_strict_ignores_trusted_ip():
+async def test_verify_api_key_strict_ignores_trusted_ip(monkeypatch):
     """Strict path must NOT honor TRUSTED_CIDRS bypass."""
+    monkeypatch.setenv("TRUSTED_CIDRS", "192.168.1.0/24")
     _trusted_networks.cache_clear()
-    request = _make_request(host="127.0.0.1")
+    request = _make_request(host="192.168.1.5")
     with patch('oai_agent_server.security.dependencies.get_original_environ',
                return_value={'AGENT_AUTH_ENABLED': 'true', 'FORCE_AUTH': 'false'}):
         with pytest.raises(AuthenticationException):
@@ -307,3 +308,166 @@ async def test_verify_api_key_bearer_authorization_extracted():
             ) is True
             tm.validate_token.assert_called_once()
             assert tm.validate_token.call_args[0][1] == "my-token"
+
+
+from oai_platform_core.security.saml_token_validation import TokenValidationError
+
+@pytest.mark.asyncio
+async def test_verify_api_key_saml_valid():
+    request = _make_request()
+    with patch('oai_agent_server.security.dependencies.get_original_environ',
+               return_value={'AGENT_AUTH_ENABLED': 'true'}):
+        with patch('oai_agent_server.security.dependencies.is_saml_token', return_value=True):
+            with patch('oai_agent_server.security.dependencies.TokenValidator') as MockValidator:
+                validator = MagicMock()
+                res = MagicMock()
+                res.is_valid = True
+                res.role = "admin"
+                res.email = "admin@example.com"
+                validator.validate_token_and_get_role.return_value = res
+                MockValidator.return_value = validator
+                
+                assert await verify_api_key(request, api_token="saml-token") is True
+                assert request.state.user_role == "admin"
+                assert request.state.user_email == "admin@example.com"
+
+@pytest.mark.asyncio
+async def test_verify_api_key_saml_invalid():
+    request = _make_request()
+    with patch('oai_agent_server.security.dependencies.get_original_environ',
+               return_value={'AGENT_AUTH_ENABLED': 'true'}):
+        with patch('oai_agent_server.security.dependencies.is_saml_token', return_value=True):
+            with patch('oai_agent_server.security.dependencies.TokenValidator') as MockValidator:
+                validator = MagicMock()
+                res = MagicMock()
+                res.is_valid = False
+                res.error_message = "SAML validation failed"
+                validator.validate_token_and_get_role.return_value = res
+                MockValidator.return_value = validator
+                
+                with pytest.raises(AuthenticationException) as exc:
+                    await verify_api_key(request, api_token="saml-token")
+                assert "SAML validation failed" in str(exc.value)
+
+@pytest.mark.asyncio
+async def test_verify_api_key_saml_validation_error():
+    request = _make_request()
+    with patch('oai_agent_server.security.dependencies.get_original_environ',
+               return_value={'AGENT_AUTH_ENABLED': 'true'}):
+        with patch('oai_agent_server.security.dependencies.is_saml_token', return_value=True):
+            with patch('oai_agent_server.security.dependencies.TokenValidator') as MockValidator:
+                validator = MagicMock()
+                validator.validate_token_and_get_role.side_effect = TokenValidationError("Validation error")
+                MockValidator.return_value = validator
+                
+                with pytest.raises(AuthenticationException) as exc:
+                    await verify_api_key(request, api_token="saml-token")
+                assert "Validation error" in str(exc.value)
+
+@pytest.mark.asyncio
+async def test_verify_jwt_token_saml_valid():
+    request = _make_request()
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="saml-token")
+    with patch('oai_agent_server.security.dependencies.get_original_environ',
+               return_value={'AGENT_AUTH_ENABLED': 'true'}):
+        with patch('oai_agent_server.security.dependencies.is_saml_token', return_value=True):
+            with patch('oai_agent_server.security.dependencies.TokenValidator') as MockValidator:
+                validator = MagicMock()
+                res = MagicMock()
+                res.is_valid = True
+                res.role = "admin"
+                res.email = "admin@example.com"
+                validator.validate_token_and_get_role.return_value = res
+                MockValidator.return_value = validator
+                
+                assert await verify_jwt_token(request, credentials) is True
+                assert request.state.user_role == "admin"
+                assert request.state.user_email == "admin@example.com"
+
+@pytest.mark.asyncio
+async def test_verify_jwt_token_saml_invalid():
+    request = _make_request()
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="saml-token")
+    with patch('oai_agent_server.security.dependencies.get_original_environ',
+               return_value={'AGENT_AUTH_ENABLED': 'true'}):
+        with patch('oai_agent_server.security.dependencies.is_saml_token', return_value=True):
+            with patch('oai_agent_server.security.dependencies.TokenValidator') as MockValidator:
+                validator = MagicMock()
+                res = MagicMock()
+                res.is_valid = False
+                res.error_message = "SAML validation failed"
+                validator.validate_token_and_get_role.return_value = res
+                MockValidator.return_value = validator
+                
+                with pytest.raises(AuthenticationException) as exc:
+                    await verify_jwt_token(request, credentials)
+                assert "SAML validation failed" in str(exc.value)
+
+@pytest.mark.asyncio
+async def test_verify_jwt_token_saml_validation_error():
+    request = _make_request()
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="saml-token")
+    with patch('oai_agent_server.security.dependencies.get_original_environ',
+               return_value={'AGENT_AUTH_ENABLED': 'true'}):
+        with patch('oai_agent_server.security.dependencies.is_saml_token', return_value=True):
+            with patch('oai_agent_server.security.dependencies.TokenValidator') as MockValidator:
+                validator = MagicMock()
+                validator.validate_token_and_get_role.side_effect = TokenValidationError("Validation error")
+                MockValidator.return_value = validator
+                
+                with pytest.raises(AuthenticationException) as exc:
+                    await verify_jwt_token(request, credentials)
+                assert "Validation error" in str(exc.value)
+
+@pytest.mark.asyncio
+async def test_verify_api_key_strict_saml_valid():
+    request = _make_request()
+    with patch('oai_agent_server.security.dependencies.get_original_environ',
+               return_value={'AGENT_AUTH_ENABLED': 'true'}):
+        with patch('oai_agent_server.security.dependencies.is_saml_token', return_value=True):
+            with patch('oai_agent_server.security.dependencies.TokenValidator') as MockValidator:
+                validator = MagicMock()
+                res = MagicMock()
+                res.is_valid = True
+                res.role = "admin"
+                res.email = "admin@example.com"
+                validator.validate_token_and_get_role.return_value = res
+                MockValidator.return_value = validator
+                
+                assert await verify_api_key_strict(request, api_token="saml-token") is True
+                assert request.state.user_role == "admin"
+                assert request.state.user_email == "admin@example.com"
+
+@pytest.mark.asyncio
+async def test_verify_api_key_strict_saml_invalid():
+    request = _make_request()
+    with patch('oai_agent_server.security.dependencies.get_original_environ',
+               return_value={'AGENT_AUTH_ENABLED': 'true'}):
+        with patch('oai_agent_server.security.dependencies.is_saml_token', return_value=True):
+            with patch('oai_agent_server.security.dependencies.TokenValidator') as MockValidator:
+                validator = MagicMock()
+                res = MagicMock()
+                res.is_valid = False
+                res.error_message = "SAML validation failed"
+                validator.validate_token_and_get_role.return_value = res
+                MockValidator.return_value = validator
+                
+                with pytest.raises(AuthenticationException) as exc:
+                    await verify_api_key_strict(request, api_token="saml-token")
+                assert "SAML validation failed" in str(exc.value)
+
+@pytest.mark.asyncio
+async def test_verify_api_key_strict_saml_validation_error():
+    request = _make_request()
+    with patch('oai_agent_server.security.dependencies.get_original_environ',
+               return_value={'AGENT_AUTH_ENABLED': 'true'}):
+        with patch('oai_agent_server.security.dependencies.is_saml_token', return_value=True):
+            with patch('oai_agent_server.security.dependencies.TokenValidator') as MockValidator:
+                validator = MagicMock()
+                validator.validate_token_and_get_role.side_effect = TokenValidationError("Validation error")
+                MockValidator.return_value = validator
+                
+                with pytest.raises(AuthenticationException) as exc:
+                    await verify_api_key_strict(request, api_token="saml-token")
+                assert "Validation error" in str(exc.value)
+

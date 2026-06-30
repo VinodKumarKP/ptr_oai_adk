@@ -130,3 +130,67 @@ class TestFileUploadManager:
         message = "Hello"
         result = FileUploadManager.append_files_to_message(message, [])
         assert result == message
+
+    @pytest.mark.asyncio
+    async def test_save_files_empty_filename(self):
+        mock_file = AsyncMock(spec=UploadFile)
+        mock_file.filename = ""
+        mock_file.size = 5
+        mock_file.read = AsyncMock(return_value=b"hello")
+        
+        file_paths, temp_dir = await FileUploadManager.save_files([mock_file])
+        try:
+            assert len(file_paths) == 1
+            assert file_paths[0].endswith("file")
+        finally:
+            FileUploadManager.cleanup(temp_dir)
+
+    @pytest.mark.asyncio
+    async def test_save_files_duplicate_names(self):
+        mock_file1 = AsyncMock(spec=UploadFile)
+        mock_file1.filename = "dup.txt"
+        mock_file1.size = 5
+        mock_file1.read = AsyncMock(return_value=b"first")
+        
+        mock_file2 = AsyncMock(spec=UploadFile)
+        mock_file2.filename = "dup.txt"
+        mock_file2.size = 6
+        mock_file2.read = AsyncMock(return_value=b"second")
+        
+        file_paths, temp_dir = await FileUploadManager.save_files([mock_file1, mock_file2])
+        try:
+            assert len(file_paths) == 2
+            assert os.path.basename(file_paths[0]) == "dup.txt"
+            assert os.path.basename(file_paths[1]) == "dup_1.txt"
+        finally:
+            FileUploadManager.cleanup(temp_dir)
+
+    @pytest.mark.asyncio
+    async def test_save_files_exception(self):
+        mock_file = AsyncMock(spec=UploadFile)
+        mock_file.filename = "fail.txt"
+        mock_file.size = 5
+        mock_file.read = AsyncMock(side_effect=Exception("Disk error"))
+        
+        with pytest.raises(IOError, match="Failed to save files"):
+            await FileUploadManager.save_files([mock_file])
+
+    def test_cleanup_exception(self):
+        temp_dir = tempfile.mkdtemp()
+        with patch('shutil.rmtree', side_effect=Exception("rmtree failed")), \
+             patch('logging.error') as mock_log:
+            FileUploadManager.cleanup(temp_dir)
+            mock_log.assert_called_once()
+            
+        # Clean up the actual temp dir now
+        if os.path.exists(temp_dir):
+            import shutil
+            shutil.rmtree(temp_dir)
+
+    def test_append_files_to_message_dict_with_text_key(self):
+        message = {"text": "Hello"}
+        files = ["/path/to/file.txt"]
+        result = FileUploadManager.append_files_to_message(message, files)
+        assert "Hello" in result["text"]
+        assert "/path/to/file.txt" in result["text"]
+
