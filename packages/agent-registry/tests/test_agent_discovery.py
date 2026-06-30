@@ -177,3 +177,74 @@ async def test_discover(mock_parse_yaml, mock_find_yaml, discovery):
 async def test_discover_invalid_url(discovery):
     with pytest.raises(ValueError, match="Cannot parse GitHub URL"):
         await discovery.discover("invalid_url")
+
+
+def test_load_yaml_fallbacks():
+    import os
+    from unittest.mock import patch
+    from oai_agent_registry.services.agent_discovery import _load_yaml
+    
+    # Test PyYAML parse error
+    assert _load_yaml("{") is None
+
+
+@pytest.mark.asyncio
+@patch.object(AgentDiscovery, "_find_yaml_entries")
+@patch.object(AgentDiscovery, "_parse_yaml_entry")
+async def test_discover_unauthenticated_and_status_available(mock_parse_yaml, mock_find_yaml, discovery):
+    import os
+    mock_find_yaml.return_value = [{"name": "agent1.yaml"}]
+    mock_parse_yaml.return_value = {"name": "agent1", "status": "", "error": None}
+    
+    with patch.dict(os.environ, {}, clear=True):
+        result = await discovery.discover("https://github.com/owner/repo")
+        
+    assert result["available_to_register"] == 1
+    assert result["agents"][0]["status"] == "available"
+
+
+@pytest.mark.asyncio
+@patch("httpx.AsyncClient.get")
+async def test_find_yaml_entries_not_found_explicit_and_no_yaml(mock_get, discovery):
+    mock_response = MagicMock()
+    mock_response.status_code = 404
+    mock_get.return_value = mock_response
+    
+    async with __import__("httpx").AsyncClient() as client:
+        # User supplied an explicit path that returns 404
+        entries = await discovery._find_yaml_entries(client, "owner/repo", {}, config_path="explicit/")
+        assert entries == []
+
+
+@pytest.mark.asyncio
+@patch("httpx.AsyncClient.get")
+async def test_find_yaml_entries_invalid_json(mock_get, discovery):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"not": "a list"}
+    mock_get.return_value = mock_response
+    
+    async with __import__("httpx").AsyncClient() as client:
+        entries = await discovery._find_yaml_entries(client, "owner/repo", {})
+        assert entries == []
+
+
+@pytest.mark.asyncio
+@patch("httpx.AsyncClient.get")
+async def test_parse_yaml_entry_not_mapping_and_exception(mock_get, discovery):
+    # 1. Not a mapping
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = "not a mapping"
+    mock_get.return_value = mock_response
+    
+    entry = {"name": "test.yaml", "download_url": "http://dl.com/test.yaml"}
+    async with __import__("httpx").AsyncClient() as client:
+        res = await discovery._parse_yaml_entry(client, entry, "https://github.com/owner/repo", {})
+        assert "YAML did not parse to a mapping" in res["error"]
+        
+    # 2. General exception during parsing
+    mock_get.side_effect = Exception("HTTP client error")
+    async with __import__("httpx").AsyncClient() as client:
+        res = await discovery._parse_yaml_entry(client, entry, "https://github.com/owner/repo", {})
+        assert "HTTP client error" in res["error"]

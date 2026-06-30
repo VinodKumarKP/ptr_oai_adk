@@ -111,3 +111,37 @@ async def test_start_file_not_found(tmp_path):
 async def test_wait_for_postgres_classmethod(mock_wait_tcp):
     await InfraManager.wait_for_postgres(host="test_host", port=9999, timeout=30)
     mock_wait_tcp.assert_called_once_with("test_host", 9999)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_tcp_with_asyncpg(temp_compose_file):
+    # Test using asyncpg when it is available
+    mock_conn = AsyncMock()
+    mock_asyncpg = MagicMock()
+    mock_asyncpg.connect = AsyncMock(return_value=mock_conn)
+    
+    manager = InfraManager(compose_file=temp_compose_file, startup_timeout=5)
+    with patch.dict("sys.modules", {"asyncpg": mock_asyncpg}):
+        await manager._wait_for_tcp("localhost", 5433)
+        
+    mock_asyncpg.connect.assert_called_once_with(
+        host="localhost",
+        port=5433,
+        database="postgres",
+        user="postgres",
+        password="postgres",
+    )
+    mock_conn.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+@patch("oai_agent_registry.services.infra_manager.asyncio.sleep", new_callable=AsyncMock)
+async def test_wait_for_tcp_timeout(mock_sleep, temp_compose_file):
+    # Test timeout raised when postgres is never ready
+    manager = InfraManager(compose_file=temp_compose_file, startup_timeout=1)
+    
+    # Force connection to fail
+    with patch.dict("sys.modules", {"asyncpg": None}):
+        with patch("oai_agent_registry.services.infra_manager.asyncio.open_connection", side_effect=Exception("connection failed")):
+            with pytest.raises(TimeoutError, match="Postgres at localhost:5433 did not become ready"):
+                await manager._wait_for_tcp("localhost", 5433)
