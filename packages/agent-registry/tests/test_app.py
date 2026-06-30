@@ -82,3 +82,20 @@ def test_create_app_can_be_called_multiple_times(mock_registry, mock_security, m
 
     assert app1 is not app2
     assert app1.title == app2.title
+
+
+def test_app_lifespan(mock_registry, mock_security, mock_networking):
+    app = create_app()
+    with TestClient(app) as client:
+        pass
+    mock_registry.initialize.assert_called_once()
+    mock_registry.shutdown.assert_called_once()
+
+
+def test_app_lifespan_with_auto_discovery(mock_registry, mock_security, mock_networking):
+    mock_registry.registry_config.enable_auto_discovery = True
+    mock_registry.discover_agents = AsyncMock()
+    app = create_app()
+    with TestClient(app) as client:
+        pass
+    mock_registry.discover_agents.assert_called_once()
