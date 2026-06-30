@@ -337,7 +337,7 @@ class AgentEvaluator:
             elif scenario.agent_config and 'model' in scenario.agent_config and 'model_id' in scenario.agent_config['model']:
                 model_id = scenario.agent_config['model']['model_id']
             elif isinstance(response, dict) and 'model' in response:
-                model_id = response.get('model', {}).get('model_id', 'unknown')
+                model_id = (response.get('model') or {}).get('model_id', 'unknown')
                 if model_id is None:
                     if hasattr(agent, 'llm'):
                         if hasattr(agent.llm, 'model'):

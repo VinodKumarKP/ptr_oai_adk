@@ -34,3 +34,22 @@ def test_scenario_custom_metrics():
     )
     assert "safety" in scenario.metrics
     assert "relevance" in scenario.metrics
+
+
+def test_scenario_invalid_pass_threshold():
+    with pytest.raises(ValueError, match="pass_threshold must be between 0 and 10"):
+        TestScenario(
+            name="Test 1",
+            description="Desc",
+            input_message="Input",
+            expected_output="Output",
+            pass_threshold=11.0
+        )
+    with pytest.raises(ValueError, match="pass_threshold must be between 0 and 10"):
+        TestScenario(
+            name="Test 1",
+            description="Desc",
+            input_message="Input",
+            expected_output="Output",
+            pass_threshold=-1.0
+        )

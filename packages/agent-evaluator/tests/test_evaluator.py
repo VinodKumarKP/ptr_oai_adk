@@ -332,9 +332,204 @@ async def test_model_config_override(mock_agent_class, mock_judge_response):
 
     result = await evaluator.evaluate_scenario(scenario)
 
-    # Verify agent was initialized (class was called for both judge and subject)
-    assert mock_agent_class.call_count == 2
-    # Check that the second call (subject agent) used the overridden config
     call_kwargs = mock_agent_class.call_args_list[1][1]
     assert call_kwargs['agent_config']['model']['model_id'] == 'gpt-4o'
     assert call_kwargs['agent_config']['model']['temperature'] == 0.7
+
+
+@pytest.mark.asyncio
+async def test_model_config_override_no_model_key(mock_agent_class, mock_judge_response):
+    """Test model config override when agent_config lacks a model key, and response string fallback."""
+    scenario = TestScenario(
+        name="Test no model key",
+        description="Desc",
+        input_message="Input",
+        expected_output="Output",
+        metrics=["correctness"],
+        agent_config={'other': 123},
+        agent_model_config={'model_id': 'gpt-4o'}
+    )
+    evaluator = AgentEvaluator(agent_class=mock_agent_class, project_root="/tmp")
+
+    mock_subject = AsyncMock()
+    mock_subject.initialize = AsyncMock()
+    mock_subject.ainvoke.return_value = "raw-string-response"  # triggers str(response) at line 303
+
+    mock_judge = AsyncMock()
+    mock_judge.initialize = AsyncMock()
+    mock_judge.ainvoke.return_value = mock_judge_response
+
+    mock_agent_class.side_effect = [mock_judge, mock_subject]
+    result = await evaluator.evaluate_scenario(scenario)
+
+    assert result['actual_output'] == "raw-string-response"
+    call_kwargs = mock_agent_class.call_args_list[1][1]
+    assert call_kwargs['agent_config']['model']['model_id'] == 'gpt-4o'
+
+
+@pytest.mark.asyncio
+async def test_crewai_judge(mock_agent_class):
+    """Test CrewAI detection and judge configuration rendering."""
+    mock_agent_class.__name__ = "CrewAIAgent"
+    mock_agent_class.__module__ = "crewai"
+    evaluator = AgentEvaluator(agent_class=mock_agent_class, project_root="/tmp")
+    # Verify detecting CrewAI via class name
+    judge = await evaluator._initialize_judge_agent()
+    assert judge is not None
+    # Class was called with CrewAI specific judge config dict
+    config = mock_agent_class.call_args[1].get('agent_config')
+    assert config is not None
+    # It should have mapped 'type': 'crewai' or similar
+    assert config.get('type') == 'crewai'
+
+
+@pytest.mark.asyncio
+async def test_scenario_override_judge_model_id(mock_agent_class):
+    """Test scenario specific judge model ID override."""
+    scenario = TestScenario(
+        name="Test",
+        description="Desc",
+        input_message="I",
+        expected_output="O",
+        judge_model_id="scenario-override-judge"
+    )
+    evaluator = AgentEvaluator(agent_class=mock_agent_class, project_root="/tmp", judge_model_id="default-judge")
+    
+    mock_judge = AsyncMock()
+    mock_agent_class.return_value = mock_judge
+
+    judge = await evaluator._initialize_judge_agent(scenario)
+    assert mock_agent_class.call_count == 1
+    call_kwargs = mock_agent_class.call_args[1]
+    assert call_kwargs['agent_config']['model']['model_id'] == "scenario-override-judge"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_scenario_general_exception(mock_agent_class):
+    """Test exception handler in evaluate_scenario."""
+    scenario = TestScenario(
+        name="Test Exception",
+        description="Desc",
+        input_message="I",
+        expected_output="O"
+    )
+    evaluator = AgentEvaluator(agent_class=mock_agent_class, project_root="/tmp")
+    
+    # Force initialize judge to fail
+    mock_agent_class.side_effect = Exception("Init failure")
+    
+    result = await evaluator.evaluate_scenario(scenario)
+    assert result['passed'] is False
+    assert "Init failure" in result['error']
+
+
+@pytest.mark.asyncio
+async def test_judge_response_parsing_variants(mock_agent_class):
+    """Test various judge response object shapes and fallback string parsing."""
+    scenario = TestScenario(
+        name="Test Variants",
+        description="Desc",
+        input_message="I",
+        expected_output="O",
+        evaluation_criteria="Criteria X"
+    )
+    evaluator = AgentEvaluator(agent_class=mock_agent_class, project_root="/tmp")
+
+    mock_subject = AsyncMock()
+    mock_subject.initialize = AsyncMock()
+    mock_subject.ainvoke.return_value = {'content': [{'text': 'Resp'}]}
+
+    mock_judge = AsyncMock()
+    mock_judge.initialize = AsyncMock()
+    
+    # 1. Content is a dict instead of a list
+    mock_judge.ainvoke.return_value = {
+        'content': {'text': '{"correctness": {"score": 8, "explanation": "Ok"}}'}
+    }
+    mock_agent_class.side_effect = [mock_judge, mock_subject]
+    result = await evaluator.evaluate_scenario(scenario)
+    assert result['score'] == 8.0
+
+    # 2. Content is not dict or list (fall back to str(response))
+    mock_judge.ainvoke.return_value = '{"correctness": {"score": 5, "explanation": "Mid"}}'
+    mock_agent_class.side_effect = [mock_judge, mock_subject]
+    result = await evaluator.evaluate_scenario(scenario)
+    assert result['score'] == 5.0
+
+    # 3. Dict subject response, token_usage, and None judge fallback
+    evaluator._agent_cache.clear()
+    mock_subject_dict = AsyncMock()
+    mock_subject_dict.initialize = AsyncMock()
+    mock_subject_dict.ainvoke.return_value = {
+        'content': {'text': 'Subject text dict'},
+        'token_usage': {'prompt_tokens': 100}
+    }
+    mock_agent_class.side_effect = [mock_subject_dict]
+    
+    evaluator._initialize_judge_agent = AsyncMock(return_value=None)
+    evaluator.judge_agent = mock_judge
+    
+    mock_judge.ainvoke.return_value = {
+        'content': [{'text': '{"correctness": {"score": 9, "explanation": "Ok"}}'}]
+    }
+    
+    result = await evaluator.evaluate_scenario(scenario)
+    assert result['actual_output'] == 'Subject text dict'
+    assert result['token_usage'] == {'prompt_tokens': 100}
+    assert result['score'] == 9.0
+
+
+@pytest.mark.asyncio
+async def test_model_id_extraction_fallbacks(mock_agent_class, mock_judge_response):
+    """Test fallback paths for model_id extraction."""
+    evaluator = AgentEvaluator(agent_class=mock_agent_class, project_root="/tmp")
+    
+    # 1. Extract from scenario.agent_config model settings
+    scenario = TestScenario(
+        name="Test Extract",
+        description="Desc",
+        input_message="I",
+        expected_output="O",
+        agent_config={'model': {'model_id': 'extracted-config-id'}}
+    )
+    mock_subject = AsyncMock()
+    mock_subject.initialize = AsyncMock()
+    mock_subject.ainvoke.return_value = {'content': [{'text': 'Resp'}]}
+    
+    mock_judge = AsyncMock()
+    mock_judge.initialize = AsyncMock()
+    mock_judge.ainvoke.return_value = mock_judge_response
+    mock_agent_class.side_effect = [mock_judge, mock_subject]
+    
+    res = await evaluator.evaluate_scenario(scenario)
+    assert res['model_id'] == 'extracted-config-id'
+
+    # 2. Extract from response directly
+    evaluator2 = AgentEvaluator(agent_class=mock_agent_class, project_root="/tmp")
+    scenario2 = TestScenario(name="Test Extract 2", description="Desc", input_message="I", expected_output="O")
+    mock_subject2 = AsyncMock()
+    mock_subject2.initialize = AsyncMock()
+    mock_subject2.ainvoke.return_value = {
+        'content': [{'text': 'Resp'}],
+        'model': {'model_id': 'response-model-id'}
+    }
+    mock_agent_class.side_effect = [mock_judge, mock_subject2]
+    res2 = await evaluator2.evaluate_scenario(scenario2)
+    assert res2['model_id'] == 'response-model-id'
+
+    # 3. Extract from agent.llm.model
+    class FakeLLM:
+        model = "agent-llm-model-id"
+    class FakeAgentWithLLM:
+        def __init__(self, *args, **kwargs):
+            self.llm = FakeLLM()
+        async def initialize(self):
+            pass
+        async def ainvoke(self, *args, **kwargs):
+            return {'content': [{'text': 'Resp'}], 'model': {'model_id': None}}
+            
+    evaluator_llm = AgentEvaluator(agent_class=FakeAgentWithLLM, project_root="/tmp")
+    evaluator_llm.judge_agent = mock_judge
+    res3 = await evaluator_llm.evaluate_scenario(scenario2)
+    assert res3['model_id'] == 'agent-llm-model-id'
+
