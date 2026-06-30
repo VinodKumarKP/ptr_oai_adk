@@ -22,7 +22,7 @@ def mock_registry():
     
     # history directly calls db_logger
     registry.db_logger = MagicMock()
-    registry.db_logger.get_agent_actions = AsyncMock(return_value=[{"action": "start", "timestamp": "2023-01-01", "version": "1", "success": True, "error_msg": ""}])
+    registry.db_logger.get_agent_actions = AsyncMock(return_value=[{"id": 1, "agent_name": "test_agent", "action": "start", "version": "1.0", "created_at": "2023-01-01T00:00:00Z"}])
     registry.db_logger.get_agent_action_count = AsyncMock(return_value=0)
     
     return registry

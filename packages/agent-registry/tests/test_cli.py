@@ -36,12 +36,11 @@ def test_main_with_config(mock_uvicorn, mock_registry_instance):
         main()
         
     assert mock_registry_instance.config_path == "test_config.yaml"
-    mock_registry_instance.load_configuration.assert_called_once()
-    mock_registry_instance.initialize_proxies.assert_called_once()
+    mock_registry_instance.load_config.assert_called_once()
 
 def test_main_config_failure(mock_uvicorn, mock_registry_instance):
     test_args = ["agent-registry", "--config", "test_config.yaml"]
-    mock_registry_instance.load_configuration.side_effect = Exception("Config error")
+    mock_registry_instance.load_config.side_effect = Exception("Config error")
     with patch.object(sys, "argv", test_args), patch("sys.exit") as mock_exit:
         main()
         mock_exit.assert_called_once_with(1)

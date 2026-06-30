@@ -96,7 +96,7 @@ async def test_start(mock_wait_tcp, mock_compose_up, temp_compose_file):
     await manager.start()
     
     mock_compose_up.assert_called_once()
-    mock_wait_tcp.assert_called_once_with("localhost", 5433)
+    mock_wait_tcp.assert_called_once_with("localhost", 5432)
 
 @pytest.mark.asyncio
 async def test_start_file_not_found(tmp_path):

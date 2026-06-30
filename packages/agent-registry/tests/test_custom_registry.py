@@ -29,7 +29,7 @@ def mock_registry():
     mock_docker.remove_agent = AsyncMock()
     r._deployers = {"docker": mock_docker, "python_package": mock_docker}
     
-    r._get_merged_agent_values = AsyncMock(return_value={"endpoint": "http", "port": 8000, "source": "src", "active": True, "framework": "", "prompts": [], "tags": [], "description": "desc", "current_version": "1.0", "available_versions": [], "deployment_mode": "docker", "env_vars": {}, "sensitive_vars": []})
+    r._get_merged_agent_values = AsyncMock(return_value={"endpoint": "http", "port": 8000, "source": "src", "active": True, "framework": None, "prompts": [], "tags": [], "description": "desc", "current_version": "1.0", "available_versions": [], "deployment_mode": "docker", "env_vars": {}, "sensitive_vars": []})
     
     return r
 

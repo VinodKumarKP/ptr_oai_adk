@@ -23,7 +23,7 @@ def test_get_service_env(manager):
 
 def test_get_server_py_path(manager, tmp_path):
     # Test primary path
-    primary_dir = tmp_path / "agent_registry_servers" / "servers" / "test_svc"
+    primary_dir = tmp_path / "agentic_registry_agents" / "agents" / "test_svc"
     primary_dir.mkdir(parents=True)
     (primary_dir / "server.py").touch()
     
@@ -38,7 +38,7 @@ def test_get_server_py_path(manager, tmp_path):
 
 def test_get_start_command(manager):
     cmd = manager._get_start_command(Path("/venv/bin/python"), Path("/srv/server.py"), 8080)
-    assert cmd == ["/venv/bin/python", "/srv/server.py", "--port", "8080", "--transport", "streamable-http"]
+    assert cmd == ["/venv/bin/python", "/srv/server.py", "--port", "8080"]
 
 @pytest.mark.asyncio
 async def test_deploy_agent(manager):

@@ -43,9 +43,9 @@ def test_build_infra_compose_dict(manager):
     assert "valkey" in infra["services"]
     assert "postgres" in infra["services"]
 
-def test_add_server_from_registration(manager):
+def test_add_agent_from_registration(manager):
     with patch.object(manager, "_add_service_from_registration") as mock_add:
-        manager.add_server_from_registration(
+        manager.add_agent_from_registration(
             "test_srv", "http://src", port=9090
         )
         mock_add.assert_called_once_with(

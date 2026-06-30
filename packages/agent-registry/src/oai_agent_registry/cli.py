@@ -35,8 +35,13 @@ def main():
     args = parser.parse_args()
 
     if args.config:
-        registry_instance.config_path = args.config
-        registry_instance.load_config()
+        try:
+            registry_instance.config_path = args.config
+            registry_instance.load_config()
+        except Exception as e:
+            logger.critical(f"Failed to start with provided config: {e}")
+            import sys
+            sys.exit(1)
 
     if args.enable_auto_discovery:
         registry_instance.registry_config.enable_auto_discovery = True
