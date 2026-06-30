@@ -3,9 +3,7 @@ import sys
 import os
 from unittest.mock import MagicMock, patch
 
-# Mock Guard class before importing GuardrailManager to ensure Guard is never None
-mock_guard_class = MagicMock()
-sys.modules['guardrails'] = MagicMock()
+# guardrails is mocked globally in conftest.py — no need to mock again here
 
 from oai_agent_core.components.guardrails.guardrails_manager import (
     GuardrailManager, GuardrailError, GuardrailConfigurationError, GuardrailInitializationError

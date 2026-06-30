@@ -6,6 +6,23 @@ import pytest
 import logging
 from unittest.mock import MagicMock
 
+# ── Global module mocks ──────────────────────────────────────────────────────
+# These must be in place before ANY test module imports packages that depend on
+# optional third-party libraries.  Putting them here (conftest.py) ensures the
+# mocks are applied regardless of test collection order.
+
+# guardrails / guardrails-hub
+if 'guardrails' not in sys.modules:
+    sys.modules['guardrails'] = MagicMock()
+if 'guardrails.hub' not in sys.modules:
+    sys.modules['guardrails.hub'] = MagicMock()
+
+# langfuse (optional observability dependency)
+if 'langfuse' not in sys.modules:
+    sys.modules['langfuse'] = MagicMock()
+if 'langfuse.callback' not in sys.modules:
+    sys.modules['langfuse.callback'] = MagicMock()
+
 # Add src to sys.path to ensure local packages are discoverable
 src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
 if src_path not in sys.path:

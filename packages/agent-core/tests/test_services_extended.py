@@ -214,3 +214,17 @@ class TestMemoryServiceExtended:
         with patch.object(service, 'create_memory_store', return_value=None):
             result = service.create_memory_store({"type": "simple"})
             assert result is None
+
+    def test_validate_memory_config_none(self):
+        service = MemoryService()
+        assert service.validate_memory_config(None) is True
+        assert service.validate_memory_config({}) is True
+
+    def test_validate_memory_config_valid_types(self):
+        service = MemoryService()
+        for t in ["redis", "mongodb", "diskcache", "simple", "pinecone"]:
+            assert service.validate_memory_config({"type": t}) is True
+
+    def test_validate_memory_config_unknown_type(self):
+        service = MemoryService()
+        assert service.validate_memory_config({"type": "unknown_backend"}) is False
