@@ -66,3 +66,50 @@ def test_get_history(client, mock_registry):
     res = client.get("/history/test_agent")
     assert res.status_code == 200
 
+@patch("oai_agent_registry.services.agent_discovery.AgentDiscovery")
+def test_discover_agents(mock_discovery_cls, client, mock_registry):
+    mock_discovery = MagicMock()
+    mock_discovery.discover = AsyncMock(return_value={
+        "git_repository_url": "https://github.com/example/repo",
+        "total_found": 1,
+        "available_to_register": 1,
+        "already_registered": 0,
+        "invalid": 0,
+        "agents": [
+            {
+                "name": "agent1",
+                "description": "desc",
+                "framework": "openai",
+                "agent_type": "type",
+                "tags": [],
+                "prompts": [],
+                "port": 8080,
+                "source": "src",
+                "status": "available",
+                "config_file": "agent.yaml",
+                "error": None,
+                "required_env": []
+            }
+        ]
+    })
+    mock_discovery_cls.return_value = mock_discovery
+    
+    # Missing git_repository_url
+    res = client.post("/agents/discover", json={})
+    assert res.status_code == 400
+    
+    # Success
+    res = client.post("/agents/discover", json={"git_repository_url": "https://github.com/example/repo"})
+    assert res.status_code == 200
+    assert res.json()["total_found"] == 1
+    
+    # ValueError
+    mock_discovery.discover.side_effect = ValueError("invalid repo")
+    res = client.post("/agents/discover", json={"git_repository_url": "https://github.com/example/repo"})
+    assert res.status_code == 400
+    
+    # General Exception
+    mock_discovery.discover.side_effect = Exception("error")
+    res = client.post("/agents/discover", json={"git_repository_url": "https://github.com/example/repo"})
+    assert res.status_code == 500
+
