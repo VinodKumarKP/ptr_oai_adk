@@ -3,13 +3,18 @@ Advanced tests for SkillDiscovery service with HTTP operations.
 """
 
 import pytest
-from unittest.mock import AsyncMock, patch
+import base64
+from unittest.mock import AsyncMock, patch, MagicMock
 from oai_skills_registry.services.skill_discovery import SkillDiscovery
 
 
 @pytest.mark.asyncio
 class TestSkillDiscoveryAdvanced:
-    """Advanced tests for SkillDiscovery with mocked HTTP."""
+    """Advanced tests for SkillDiscovery with mocked HTTP and DB."""
+
+    @pytest.fixture
+    def mock_db_logger(self):
+        return MagicMock()
 
     @pytest.fixture
     def skill_discovery(self, mock_db_logger):
@@ -18,155 +23,148 @@ class TestSkillDiscoveryAdvanced:
 
     async def test_discover_skills_success(self, skill_discovery, mock_db_logger):
         """Test successful skill discovery from repository."""
-        mock_db_logger.get_skill.return_value = None
+        # Mock database response: skill1 is not registered, skill2 is
+        async def mock_get_skill(name):
+            return {"id": 1} if name == "skill2" else None
+        mock_db_logger.get_skill = AsyncMock(side_effect=mock_get_skill)
 
-        # Mock aiohttp response
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value=[
-            {
-                "name": "skill1",
-                "type": "dir",
-                "url": "https://api.github.com/repos/owner/repo/contents/skills/skill1"
-            },
-            {
-                "name": "skill2",
-                "type": "dir",
-                "url": "https://api.github.com/repos/owner/repo/contents/skills/skill2"
-            }
-        ])
+        # Contents of skills/ directory
+        mock_resp_contents = AsyncMock()
+        mock_resp_contents.status = 200
+        mock_resp_contents.json.return_value = [
+            {"name": "skill1", "type": "dir"},
+            {"name": "skill2", "type": "dir"},
+            {"name": "README.md", "type": "file"}
+        ]
 
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.__aexit__.return_value = None
+        # SKILL.md contents
+        skill1_md = base64.b64encode(b"---\nname: skill1\nversion: 1.0.0\ndescription: skill1 desc\ncategory: utility\nauthor: tester\n---\n").decode()
+        skill2_md = base64.b64encode(b"---\nname: skill2\nversion: 2.0.0\ndescription: skill2 desc\ncategory: utility\nauthor: tester\n---\n").decode()
 
-        # Mock directory listing response
-        mock_session.get.return_value.__aenter__.return_value = mock_response
-        mock_session.get.return_value.__aexit__.return_value = None
+        mock_resp_md1 = AsyncMock()
+        mock_resp_md1.status = 200
+        mock_resp_md1.json.return_value = {"content": skill1_md}
 
-        with patch('aiohttp.ClientSession', return_value=mock_session):
-            # This will fail at the SKILL.md fetch stage, but we test the structure
-            try:
-                result = await skill_discovery.discover_skills_from_git(
-                    "https://github.com/owner/repo.git"
-                )
-            except Exception:
-                # Expected due to mock limitations
-                pass
+        mock_resp_md2 = AsyncMock()
+        mock_resp_md2.status = 200
+        mock_resp_md2.json.return_value = {"content": skill2_md}
+
+        mock_session = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(side_effect=[mock_resp_contents, mock_resp_md1, mock_resp_md2])
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get.return_value = mock_cm
+
+        mock_client_session = MagicMock()
+        mock_client_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_client_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession", return_value=mock_client_session):
+            result = await skill_discovery.discover_skills_from_git(
+                "https://github.com/owner/repo.git",
+                auth_token="token"
+            )
+            assert result["total_found"] == 2
+            assert result["available_to_register"] == 1
+            assert result["already_registered"] == 1
+            assert result["skills"][0]["name"] == "skill1"
+            assert result["skills"][0]["status"] == "available"
+            assert result["skills"][1]["name"] == "skill2"
+            assert result["skills"][1]["status"] == "already_registered"
 
     async def test_discover_skills_invalid_url(self, skill_discovery):
         """Test discovery with invalid URL raises error."""
-        with pytest.raises(ValueError, match="Invalid GitHub URL"):
+        with pytest.raises(ValueError, match="Failed to parse GitHub URL"):
             await skill_discovery.discover_skills_from_git("invalid-url")
 
     async def test_discover_skills_api_error(self, skill_discovery):
         """Test discovery handles API errors gracefully."""
-        # Skip this test - requires complex async context manager mocking
-        pytest.skip("Requires complex aiohttp mocking")
+        mock_resp = AsyncMock()
+        mock_resp.status = 404
 
-    async def test_discover_skills_with_auth_token(self, skill_discovery):
-        """Test discovery with authentication token."""
-        # The method should accept auth_token parameter
-        assert hasattr(skill_discovery, 'discover_skills_from_git')
+        mock_session = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get.return_value = mock_cm
 
-    async def test_discover_skills_empty_directory(self, skill_discovery):
+        mock_client_session = MagicMock()
+        mock_client_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_client_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession", return_value=mock_client_session):
+            with pytest.raises(ValueError, match="Failed to access skills directory"):
+                await skill_discovery.discover_skills_from_git("https://github.com/owner/repo.git")
+
+    async def test_discover_skills_empty_directory(self, skill_discovery, mock_db_logger):
         """Test discovery with empty skills directory."""
-        # Mock empty directory response
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value=[])  # Empty directory
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json.return_value = []
 
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.__aexit__.return_value = None
-        mock_session.get.return_value.__aenter__.return_value = mock_response
-        mock_session.get.return_value.__aexit__.return_value = None
+        mock_session = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get.return_value = mock_cm
 
-        with patch('aiohttp.ClientSession', return_value=mock_session):
-            try:
-                result = await skill_discovery.discover_skills_from_git(
-                    "https://github.com/owner/repo.git"
-                )
-            except Exception:
-                # Expected with mocked API
-                pass
+        mock_client_session = MagicMock()
+        mock_client_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_client_session.__aexit__ = AsyncMock(return_value=False)
 
-    async def test_discover_skills_handles_single_file_response(self, skill_discovery):
-        """Test discovery handles single file response from API."""
-        # GitHub API sometimes returns a single dict for single item
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={
-            "name": "skill1",
-            "type": "dir"
-        })
+        with patch("aiohttp.ClientSession", return_value=mock_client_session):
+            result = await skill_discovery.discover_skills_from_git("https://github.com/owner/repo")
+            assert result["total_found"] == 0
 
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.__aexit__.return_value = None
-        mock_session.get.return_value.__aenter__.return_value = mock_response
-        mock_session.get.return_value.__aexit__.return_value = None
+    async def test_discover_skills_single_item_dict(self, skill_discovery, mock_db_logger):
+        """Test discovery handles single file response (dict) from API."""
+        mock_db_logger.get_skill = AsyncMock(return_value=None)
 
-        with patch('aiohttp.ClientSession', return_value=mock_session):
-            try:
-                result = await skill_discovery.discover_skills_from_git(
-                    "https://github.com/owner/repo.git"
-                )
-            except Exception:
-                # Expected due to mock limitations
-                pass
+        mock_resp_contents = AsyncMock()
+        mock_resp_contents.status = 200
+        mock_resp_contents.json.return_value = {"name": "skill1", "type": "dir"}
 
-    async def test_discover_skills_filters_only_directories(self, skill_discovery):
-        """Test discovery only processes directories."""
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value=[
-            {"name": "skill1", "type": "dir"},
-            {"name": "README.md", "type": "file"},  # Should be filtered out
-            {"name": "skill2", "type": "dir"}
-        ])
+        mock_resp_md = AsyncMock()
+        mock_resp_md.status = 200
+        mock_resp_md.json.return_value = {"content": base64.b64encode(b"---\nname: skill1\n---\n").decode()}
 
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.__aexit__.return_value = None
-        mock_session.get.return_value.__aenter__.return_value = mock_response
-        mock_session.get.return_value.__aexit__.return_value = None
+        mock_session = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(side_effect=[mock_resp_contents, mock_resp_md])
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get.return_value = mock_cm
 
-        with patch('aiohttp.ClientSession', return_value=mock_session):
-            try:
-                result = await skill_discovery.discover_skills_from_git(
-                    "https://github.com/owner/repo.git"
-                )
-            except Exception:
-                # Expected due to mock limitations
-                pass
+        mock_client_session = MagicMock()
+        mock_client_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_client_session.__aexit__ = AsyncMock(return_value=False)
 
-    async def test_discover_skills_different_repository_formats(self, skill_discovery):
-        """Test discovery with different repository URL formats."""
-        urls = [
-            "https://github.com/owner/repo.git",
-            "https://github.com/owner/repo",
-            "https://github.com/owner/repo.git/",
-            "https://github.com/owner-name/repo-name.git"
-        ]
+        with patch("aiohttp.ClientSession", return_value=mock_client_session):
+            result = await skill_discovery.discover_skills_from_git("https://github.com/owner/repo")
+            assert result["total_found"] == 1
+            assert result["skills"][0]["name"] == "skill1"
 
-        for url in urls:
-            # Should parse without error
-            try:
-                # We expect this to fail at the API call stage
-                await skill_discovery.discover_skills_from_git(url)
-            except ValueError as e:
-                if "Invalid GitHub URL" in str(e):
-                    pytest.fail(f"Failed to parse valid URL: {url}")
-            except Exception:
-                # Other exceptions are expected due to mocking
-                pass
+    async def test_fetch_skill_metadata_error_handling(self, skill_discovery, mock_db_logger):
+        """Test that fetching individual skill metadata failure is handled (returns invalid status)."""
+        mock_resp_contents = AsyncMock()
+        mock_resp_contents.status = 200
+        mock_resp_contents.json.return_value = [{"name": "skill1", "type": "dir"}]
 
-    async def test_discover_skills_result_structure(self, skill_discovery, mock_db_logger):
-        """Test discovery returns proper result structure."""
-        # This tests the expected output structure
-        assert hasattr(skill_discovery, 'discover_skills_from_git')
+        # Metadata fetch returns 500 error
+        mock_resp_md = AsyncMock()
+        mock_resp_md.status = 500
 
-    async def test_fetch_skill_metadata_handles_errors(self, skill_discovery):
-        """Test that metadata fetching handles errors gracefully."""
-        assert hasattr(skill_discovery, '_fetch_skill_metadata')
+        mock_session = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(side_effect=[mock_resp_contents, mock_resp_md])
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get.return_value = mock_cm
+
+        mock_client_session = MagicMock()
+        mock_client_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_client_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession", return_value=mock_client_session):
+            result = await skill_discovery.discover_skills_from_git("https://github.com/owner/repo")
+            assert result["total_found"] == 1
+            assert result["skills"][0]["name"] == "skill1"
+            assert result["skills"][0]["status"] == "invalid"

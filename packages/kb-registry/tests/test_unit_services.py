@@ -644,14 +644,14 @@ class TestSourcesRouter:
             "sync_status": "success", "last_sync_at": None, "last_sync_error": None,
             "document_count": 5, "created_at": now,
         })
-        sources_mock_registry.db.get_sync_runs = AsyncMock(return_value=[
+        sources_mock_registry.db.get_source_sync_runs = AsyncMock(return_value=[
             {"id": 1, "source_id": "s1", "started_at": now, "completed_at": None,
              "status": "success", "document_count": 5, "error_message": None}
         ])
         resp = sources_client.get("/api/v1/kb-registry/knowledge-bases/mykb/sources/s1/status")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["document_count"] == 5
+        assert data["source"]["document_count"] == 5
 
     def test_trigger_sync_kb_not_found(self, sources_client, sources_mock_registry):
         sources_mock_registry.db.get_knowledge_base = AsyncMock(return_value=None)
@@ -715,7 +715,7 @@ class TestSourcesRouter:
 class TestMainApp:
     def test_cors_middleware_present(self):
         from oai_kb_registry.main import app
-        middleware_types = [type(m).__name__ for m in app.user_middleware]
+        middleware_types = [m.cls.__name__ for m in app.user_middleware]
         assert any("CORS" in t for t in middleware_types)
 
     def test_app_has_routes(self):

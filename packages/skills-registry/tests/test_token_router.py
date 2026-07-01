@@ -97,6 +97,13 @@ class TestGenerateToken:
         assert data["user_id"] == "alice"
         assert data["role_id"] == "admin"
 
+    def test_generate_429_on_value_error(self, client, mock_tm):
+        mock_tm.generate_token.side_effect = ValueError("Token limit reached")
+
+        resp = client.post("/tokens/generate")
+        assert resp.status_code == 429
+        assert "Token limit" in resp.json()["detail"]
+
     def test_generate_500_on_exception(self, client, mock_tm):
         mock_tm.generate_token.side_effect = RuntimeError("redis down")
 

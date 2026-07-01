@@ -12,13 +12,14 @@ class TestSkillsRegistryAdvanced:
     """Advanced tests for SkillsRegistry methods."""
 
     @pytest.fixture
-    def registry(self, mock_db_logger):
+    def registry(self, mock_db_logger, mock_git_provider):
         """Create a SkillsRegistry instance."""
-        return SkillsRegistry(mock_db_logger)
+        reg = SkillsRegistry(mock_db_logger)
+        reg.git_providers["github"] = mock_git_provider
+        return reg
 
     async def test_list_skill_versions_from_url_valid_url(self, registry, mock_git_provider):
         """Test listing versions from valid GitHub URL."""
-        # Setup mock
         mock_git_provider.get_tags.return_value = [
             {
                 "name": "v1.0.0",
@@ -28,7 +29,7 @@ class TestSkillsRegistryAdvanced:
                 "tagger": {"name": "John Doe"}
             }
         ]
-        mock_git_provider.fetch_skill_files.return_value = {
+        mock_git_provider.fetch_skill_md_from_api = AsyncMock(return_value={
             "SKILL.md": """---
 name: test-skill
 version: 1.0.0
@@ -39,7 +40,7 @@ tags:
   - test
 ---
 Content"""
-        }
+        })
 
         result = await registry.list_skill_versions_from_url(
             "test-skill",
@@ -47,6 +48,50 @@ Content"""
         )
 
         assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["version"] == "1.0.0"
+
+    async def test_list_skill_versions_from_url_fallback(self, registry, mock_git_provider):
+        """Test listing versions fallback when provider lacks fetch_skill_md_from_api."""
+        del mock_git_provider.fetch_skill_md_from_api  # remove hasattr
+
+        mock_git_provider.get_tags.return_value = [
+            {
+                "name": "v1.0.0",
+                "commit": {"sha": "abc123"},
+                "created_at": "2024-01-15T10:00:00Z",
+                "message": "Release 1.0.0"
+            }
+        ]
+        mock_git_provider.fetch_skill_files = AsyncMock(return_value={
+            "SKILL.md": "---\nname: test-skill\nversion: 1.0.0\n---\nContent"
+        })
+
+        result = await registry.list_skill_versions_from_url(
+            "test-skill",
+            "https://github.com/owner/repo.git"
+        )
+        assert len(result) == 1
+
+    async def test_list_skill_versions_from_url_file_not_found(self, registry, mock_git_provider):
+        """Test listing versions handles FileNotFoundError gracefully (skips)."""
+        mock_git_provider.get_tags.return_value = [{"name": "v1.0.0"}]
+        mock_git_provider.fetch_skill_md_from_api = AsyncMock(side_effect=FileNotFoundError("SKILL.md not found"))
+
+        result = await registry.list_skill_versions_from_url(
+            "test-skill",
+            "https://github.com/owner/repo.git"
+        )
+        assert result == []
+
+    async def test_list_skill_versions_from_url_provider_missing(self, registry):
+        """Test listing versions returns empty list when provider not configured."""
+        registry.git_providers = {}
+        result = await registry.list_skill_versions_from_url(
+            "test-skill",
+            "https://github.com/owner/repo.git"
+        )
+        assert result == []
 
     async def test_list_skill_versions_from_url_invalid_url(self, registry):
         """Test listing versions from invalid URL returns empty list."""
@@ -97,31 +142,32 @@ Content"""
         mock_db_logger.get_skill.return_value = None
         mock_db_logger.create_skill.return_value = {"id": 1, "name": "test-skill"}
 
-        # Mock aiohttp for metadata fetching
-        with patch('aiohttp.ClientSession') as mock_session_class:
-            mock_response = AsyncMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={
-                "content": "LS0tCm5hbWU6IHRlc3Qtc2tpbGwKdmVyc2lvbjogMS4wLjAKLS0t"  # base64 encoded
-            })
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json.return_value = {
+            "content": "LS0tCm5hbWU6IHRlc3Qtc2tpbGwKdmVyc2lvbjogMS4wLjAKLS0tCg=="  # base64 encoded with trailing newline
+        }
 
-            mock_session = AsyncMock()
-            mock_session.get.return_value.__aenter__.return_value = mock_response
-            mock_session.get.return_value.__aexit__.return_value = None
-            mock_session.__aenter__.return_value = mock_session
-            mock_session.__aexit__.return_value = None
+        mock_session = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get.return_value = mock_cm
 
-            mock_session_class.return_value = mock_session
+        mock_client_session = MagicMock()
+        mock_client_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_client_session.__aexit__ = AsyncMock(return_value=False)
 
+        with patch('aiohttp.ClientSession', return_value=mock_client_session):
             result = await registry.register_skills_bulk(
                 "https://github.com/owner/repo.git",
                 ["test-skill"],
                 "test-user"
             )
 
-            assert "total_registered" in result
-            assert "successful" in result
-            assert "failed" in result
+            assert result["total_registered"] == 1
+            assert result["successful"] == ["test-skill"]
+            assert len(result["failed"]) == 0
 
     async def test_register_skills_bulk_with_auth_token(self, registry, mock_db_logger):
         """Test bulk registration with authentication token."""
@@ -178,26 +224,59 @@ Content"""
         mock_db_logger.get_skill.return_value = None
         mock_db_logger.create_skill.return_value = {"id": 1}
 
-        # Mock aiohttp with error
-        with patch('aiohttp.ClientSession') as mock_session_class:
-            mock_response = AsyncMock()
-            mock_response.status = 404  # Metadata not found
+        mock_response = AsyncMock()
+        mock_response.status = 404
 
-            mock_session = AsyncMock()
-            mock_session.get.return_value.__aenter__.return_value = mock_response
-            mock_session.get.return_value.__aexit__.return_value = None
-            mock_session.__aenter__.return_value = mock_session
-            mock_session.__aexit__.return_value = None
+        mock_session = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get.return_value = mock_cm
 
-            mock_session_class.return_value = mock_session
+        mock_client_session = MagicMock()
+        mock_client_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_client_session.__aexit__ = AsyncMock(return_value=False)
 
+        with patch('aiohttp.ClientSession', return_value=mock_client_session):
             result = await registry.register_skills_bulk(
                 "https://github.com/owner/repo.git",
                 ["skill-no-metadata"],
                 "test-user"
             )
 
-            assert "total_registered" in result
+            assert result["total_registered"] == 1
+            assert result["successful"] == ["skill-no-metadata"]
+
+    async def test_register_skills_bulk_db_failure(self, registry, mock_db_logger):
+        """Test bulk registration handles database logger creation failures."""
+        mock_db_logger.get_skill.return_value = None
+        # Returns None on create_skill
+        mock_db_logger.create_skill.return_value = {}
+
+        mock_response = AsyncMock()
+        mock_response.status = 404
+
+        mock_session = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get.return_value = mock_cm
+
+        mock_client_session = MagicMock()
+        mock_client_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_client_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch('aiohttp.ClientSession', return_value=mock_client_session):
+            result = await registry.register_skills_bulk(
+                "https://github.com/owner/repo.git",
+                ["skill-db-fail"],
+                "test-user"
+            )
+
+            assert result["total_registered"] == 0
+            assert len(result["successful"]) == 0
+            assert len(result["failed"]) == 1
+            assert result["failed"][0]["skill_name"] == "skill-db-fail"
 
     async def test_register_skills_bulk_multiple_skills(self, registry, mock_db_logger):
         """Test bulk registration with multiple skills."""
@@ -291,3 +370,115 @@ Content"""
 
         # Should not include the different skill
         assert len(result) == 0
+
+    async def test_delegations(self, registry):
+        """Test delegation methods to importer and version_manager."""
+        # register_git_source
+        registry.importer.register_git_source = AsyncMock(return_value={"id": 1})
+        res = await registry.register_git_source({"config": "value"})
+        assert res == {"id": 1}
+        registry.importer.register_git_source.assert_called_once_with({"config": "value"})
+
+        # publish_skill_version
+        registry.version_manager.publish_skill_version = AsyncMock(return_value="published")
+        res = await registry.publish_skill_version("skill", "1.0.0", "msg", "user")
+        assert res == "published"
+        registry.version_manager.publish_skill_version.assert_called_once_with("skill", "1.0.0", "msg", "user")
+
+        # upgrade_skill_version
+        registry.version_manager.upgrade_skill_version = AsyncMock(return_value="upgraded")
+        res = await registry.upgrade_skill_version("skill", "1.0.0", "msg", "user")
+        assert res == "upgraded"
+        registry.version_manager.upgrade_skill_version.assert_called_once_with("skill", "1.0.0", "msg", "user")
+
+        # downgrade_skill_version
+        registry.version_manager.downgrade_skill_version = AsyncMock(return_value="downgraded")
+        res = await registry.downgrade_skill_version("skill", "1.0.0", "msg", "user")
+        assert res == "downgraded"
+        registry.version_manager.downgrade_skill_version.assert_called_once_with("skill", "1.0.0", "msg", "user")
+
+        # deprecate_skill_version
+        registry.version_manager.deprecate_skill_version = AsyncMock(return_value="deprecated")
+        res = await registry.deprecate_skill_version("skill", "1.0.0", "msg", "user")
+        assert res == "deprecated"
+        registry.version_manager.deprecate_skill_version.assert_called_once_with("skill", "1.0.0", "msg", "user")
+
+        # delete_skill
+        registry.version_manager.delete_skill = AsyncMock(return_value="deleted")
+        res = await registry.delete_skill("skill", "user")
+        assert res == "deleted"
+        registry.version_manager.delete_skill.assert_called_once_with("skill", "user")
+
+        # get_skill_details
+        registry.queries.get_skill_details = AsyncMock(return_value={"id": 1})
+        res = await registry.get_skill_details("skill")
+        assert res == {"id": 1}
+        registry.queries.get_skill_details.assert_called_once_with("skill")
+
+        # get_skill_history
+        registry.queries.get_skill_history = AsyncMock(return_value={"actions": []})
+        res = await registry.get_skill_history("skill", 10)
+        assert res == {"actions": []}
+        registry.queries.get_skill_history.assert_called_once_with("skill", 10)
+
+        # list_git_versions
+        registry.queries.list_git_versions = AsyncMock(return_value=[])
+        res = await registry.list_git_versions("skill", 1)
+        assert res == []
+        registry.queries.list_git_versions.assert_called_once_with("skill", 1)
+
+        # discover_skills_from_git
+        registry.discovery.discover_skills_from_git = AsyncMock(return_value={"skills": []})
+        res = await registry.discover_skills_from_git("url", "token")
+        assert res == {"skills": []}
+        registry.discovery.discover_skills_from_git.assert_called_once_with("url", "token")
+
+        # close
+        registry.db_logger.close = AsyncMock()
+        await registry.close()
+        registry.db_logger.close.assert_called_once()
+
+    async def test_list_skill_versions_url_parse_exception(self, registry):
+        """Test listing versions handles URL parse exceptions (e.g. passing None) gracefully."""
+        res = await registry.list_skill_versions_from_url("skill", None)
+        assert res == []
+
+    async def test_register_skills_bulk_metadata_parse_error(self, registry, mock_db_logger):
+        """Test bulk registration handles metadata parsing errors gracefully."""
+        mock_db_logger.get_skill.return_value = None
+        mock_db_logger.create_skill.return_value = {"id": 1}
+
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json.side_effect = ValueError("invalid json")
+
+        mock_session = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_session.get.return_value = mock_cm
+
+        mock_client_session = MagicMock()
+        mock_client_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_client_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch('aiohttp.ClientSession', return_value=mock_client_session):
+            result = await registry.register_skills_bulk(
+                "https://github.com/owner/repo.git",
+                ["skill-json-error"],
+                "test-user"
+            )
+            assert result["total_registered"] == 1
+
+    async def test_register_skills_bulk_general_exception(self, registry, mock_db_logger):
+        """Test bulk registration handles general exceptions per skill gracefully."""
+        mock_db_logger.get_skill.side_effect = RuntimeError("Database connection lost")
+
+        result = await registry.register_skills_bulk(
+            "https://github.com/owner/repo.git",
+            ["skill-db-error"],
+            "test-user"
+        )
+        assert result["total_registered"] == 0
+        assert len(result["failed"]) == 1
+        assert "Database connection lost" in result["failed"][0]["error"]
