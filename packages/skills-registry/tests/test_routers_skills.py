@@ -127,11 +127,14 @@ class TestLifecycleRouter:
 # ---------------------------------------------------------------------------
 
 def _collect_paths(rtr):
-    """Reliably collect all route paths from a router across FastAPI versions."""
-    from fastapi import FastAPI
-    app = FastAPI()
-    app.include_router(rtr)
-    return {r.path for r in app.routes if hasattr(r, 'path')}
+    """Recursively collect all route paths from a router."""
+    paths = set()
+    for entry in rtr.routes:
+        if hasattr(entry, 'path') and isinstance(entry.path, str):
+            paths.add(entry.path)
+        if hasattr(entry, 'routes'):
+            paths.update(_collect_paths(entry))
+    return paths
 
 
 class TestComposedRouter:
