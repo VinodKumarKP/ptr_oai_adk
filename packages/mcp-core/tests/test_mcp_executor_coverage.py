@@ -105,7 +105,7 @@ def test_uv_config_error(monkeypatch):
     """Test uv with config error."""
     monkeypatch.setattr(
         "oai_mcp_server_core.core.mcp_server_executor.get_source_url",
-        side_effect=FileNotFoundError("No config")
+        MagicMock(side_effect=FileNotFoundError("No config"))
     )
 
     result = uv("missing_server", [])
