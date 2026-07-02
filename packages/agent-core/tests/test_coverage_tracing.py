@@ -192,7 +192,7 @@ def test_traced_coroutine():
     async def fn(x):
         return x * 2
 
-    assert asyncio.get_event_loop().run_until_complete(fn(3)) == 6
+    assert asyncio.run(fn(3)) == 6
 
 
 def test_traced_async_gen():
@@ -204,7 +204,7 @@ def test_traced_async_gen():
     async def collect():
         return [i async for i in gen()]
 
-    assert asyncio.get_event_loop().run_until_complete(collect()) == [0, 1, 2]
+    assert asyncio.run(collect()) == [0, 1, 2]
 
 
 def test_traced_with_self_agent_name():
@@ -226,4 +226,4 @@ def test_traced_stream():
     async def collect():
         return [i async for i in tracing.traced_stream("op.stream", source(), agent_name="a")]
 
-    assert asyncio.get_event_loop().run_until_complete(collect()) == [0, 1]
+    assert asyncio.run(collect()) == [0, 1]
