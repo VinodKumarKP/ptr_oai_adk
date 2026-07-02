@@ -722,20 +722,10 @@ class TestMainApp:
         from oai_kb_registry.main import app
         from fastapi.testclient import TestClient
         
-        # In some FastAPI versions, routes are deferred until startup.
-        # Instantiating TestClient forces the app.setup() process to populate app.routes.
-        with TestClient(app):
-            pass
-
-        paths = []
-        def _get_paths(routes):
-            for r in routes:
-                if hasattr(r, 'path') and isinstance(r.path, str):
-                    paths.append(r.path)
-                if hasattr(r, 'routes'):
-                    _get_paths(r.routes)
-        _get_paths(app.routes)
-        assert any("knowledge-bases" in p for p in paths)
+        client = TestClient(app)
+        # Test that the knowledge-bases router is correctly mounted by checking an OPTIONS request
+        response = client.options("/api/v1/kb-registry/knowledge-bases")
+        assert response.status_code != 404, "Route '/api/v1/kb-registry/knowledge-bases' not found in main app"
 
     def test_app_title(self):
         from oai_kb_registry.main import app
