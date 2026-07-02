@@ -720,6 +720,13 @@ class TestMainApp:
 
     def test_app_has_routes(self):
         from oai_kb_registry.main import app
+        from fastapi.testclient import TestClient
+        
+        # In some FastAPI versions, routes are deferred until startup.
+        # Instantiating TestClient forces the app.setup() process to populate app.routes.
+        with TestClient(app):
+            pass
+
         paths = []
         def _get_paths(routes):
             for r in routes:
