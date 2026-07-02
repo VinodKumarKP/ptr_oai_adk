@@ -127,19 +127,11 @@ class TestLifecycleRouter:
 # ---------------------------------------------------------------------------
 
 def _collect_paths(rtr):
-    """Recursively collect all route paths from a router.
-
-    Handles both APIRoute objects (which have .path) and _IncludedRouter
-    objects (newer FastAPI) which nest routes under .routes.
-    """
-    paths = set()
-    for entry in rtr.routes:
-        if hasattr(entry, 'path') and isinstance(entry.path, str):
-            paths.add(entry.path)
-        # _IncludedRouter nests sub-routes under .routes
-        if hasattr(entry, 'routes'):
-            paths.update(_collect_paths(entry))
-    return paths
+    """Reliably collect all route paths from a router across FastAPI versions."""
+    from fastapi import FastAPI
+    app = FastAPI()
+    app.include_router(rtr)
+    return {r.path for r in app.routes if hasattr(r, 'path')}
 
 
 class TestComposedRouter:
@@ -157,12 +149,11 @@ class TestComposedRouter:
 
         composed_paths = _collect_paths(router)
         for sub_router in (skills_r, git_r, lc_r):
-            for route in sub_router.routes:
-                route_path = getattr(route, 'path', None)
-                if route_path:
-                    assert route_path in composed_paths, (
-                        f"Route {route_path!r} from {sub_router} not found in composed router"
-                    )
+            sub_paths = _collect_paths(sub_router)
+            for route_path in sub_paths:
+                assert route_path in composed_paths, (
+                    f"Route {route_path!r} from {sub_router} not found in composed router"
+                )
 
     def test_all_lifecycle_routes_present(self):
         from oai_skills_registry.routers import router

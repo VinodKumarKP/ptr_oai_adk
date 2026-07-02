@@ -242,14 +242,20 @@ class TestTokenRouterStructure:
 
     def test_all_routes_present(self):
         from oai_skills_registry.routers.token import router as r
-        paths = {route.path for route in r.routes}
+        from fastapi import FastAPI
+        app = FastAPI()
+        app.include_router(r)
+        paths = {route.path for route in app.routes if hasattr(route, 'path')}
         assert "/tokens/generate" in paths
         assert "/tokens" in paths
         assert "/tokens/{token}" in paths
 
     def test_token_router_included_in_composed_router(self):
         from oai_skills_registry.routers import router as composed
-        paths = {r.path for r in composed.routes}
+        from fastapi import FastAPI
+        app = FastAPI()
+        app.include_router(composed)
+        paths = {r.path for r in app.routes if hasattr(r, 'path')}
         assert "/tokens/generate" in paths
         assert "/tokens" in paths
         assert "/tokens/{token}" in paths
