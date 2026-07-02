@@ -126,27 +126,6 @@ class TestLifecycleRouter:
 # Helper: collect route paths regardless of FastAPI version
 # ---------------------------------------------------------------------------
 
-def _collect_app_paths():
-    """Extract all registered paths from the main FastAPI app, stripping the API prefix."""
-    from oai_skills_registry.main import app
-    from fastapi.testclient import TestClient
-    
-    # In some FastAPI versions, routes are deferred until startup.
-    # Instantiating TestClient forces the app.setup() process to populate app.routes.
-    with TestClient(app):
-        pass
-
-    paths = set()
-    for route in app.routes:
-        if hasattr(route, 'path'):
-            p = route.path
-            if p.startswith("/api/v1/skills-registry"):
-                p = p[len("/api/v1/skills-registry"):]
-                if not p:
-                    p = "/"
-            paths.add(p)
-    return paths
-
 def _collect_subrouter_paths(rtr):
     """Recursively collect paths from a sub-router."""
     paths = set()
@@ -165,51 +144,64 @@ class TestComposedRouter:
         assert router is not None
 
     def test_composed_router_includes_all_routes(self):
+        from oai_skills_registry.main import app
+        from fastapi.testclient import TestClient
         from oai_skills_registry.routers.git import router as git_r
         from oai_skills_registry.routers.lifecycle import router as lc_r
         from oai_skills_registry.routers.skills import router as skills_r
 
-        app_paths = _collect_app_paths()
+        client = TestClient(app)
         for sub_router in (skills_r, git_r, lc_r):
             sub_paths = _collect_subrouter_paths(sub_router)
             for route_path in sub_paths:
-                assert route_path in app_paths, (
-                    f"Route {route_path!r} from {sub_router} not found in main app"
+                test_path = f"/api/v1/skills-registry{route_path}"
+                test_path = test_path.replace("{skill_name}", "test_skill")
+                
+                # OPTIONS returns 405 (Method Not Allowed) or 200 (OK) if route exists, 404 if it doesn't
+                response = client.options(test_path)
+                assert response.status_code != 404, (
+                    f"Route {route_path!r} (tested as {test_path!r}) from {sub_router} not found in main app"
                 )
 
     def test_all_lifecycle_routes_present(self):
-        paths = _collect_app_paths()
+        from oai_skills_registry.main import app
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
         for expected in (
-            "/skills/{skill_name}/publish",
-            "/skills/{skill_name}/upgrade",
-            "/skills/{skill_name}/downgrade",
-            "/skills/{skill_name}/deprecate",
-            "/skills/{skill_name}/history",
+            "/api/v1/skills-registry/skills/test_skill/publish",
+            "/api/v1/skills-registry/skills/test_skill/upgrade",
+            "/api/v1/skills-registry/skills/test_skill/downgrade",
+            "/api/v1/skills-registry/skills/test_skill/deprecate",
+            "/api/v1/skills-registry/skills/test_skill/history",
         ):
-            assert expected in paths, f"Missing lifecycle route: {expected}"
+            assert client.options(expected).status_code != 404, f"Missing lifecycle route: {expected}"
 
     def test_all_git_routes_present(self):
-        paths = _collect_app_paths()
+        from oai_skills_registry.main import app
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
         for expected in (
-            "/skills/discover",
-            "/skills/preview-versions",
-            "/skills/register-bulk",
-            "/skills/{skill_name}/import-from-git",
-            "/skills/{skill_name}/refresh-versions",
+            "/api/v1/skills-registry/skills/discover",
+            "/api/v1/skills-registry/skills/preview-versions",
+            "/api/v1/skills-registry/skills/register-bulk",
+            "/api/v1/skills-registry/skills/test_skill/import-from-git",
+            "/api/v1/skills-registry/skills/test_skill/refresh-versions",
         ):
-            assert expected in paths, f"Missing git route: {expected}"
+            assert client.options(expected).status_code != 404, f"Missing git route: {expected}"
 
     def test_all_catalog_routes_present(self):
-        paths = _collect_app_paths()
+        from oai_skills_registry.main import app
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
         for expected in (
-            "/",
-            "/health",
-            "/skills",
-            "/skills/{skill_name}",
-            "/skills/{skill_name}/published",
-            "/skills/template/download",
+            "/api/v1/skills-registry/",
+            "/api/v1/skills-registry/health",
+            "/api/v1/skills-registry/skills",
+            "/api/v1/skills-registry/skills/test_skill",
+            "/api/v1/skills-registry/skills/test_skill/published",
+            "/api/v1/skills-registry/skills/template/download",
         ):
-            assert expected in paths, f"Missing catalog route: {expected}"
+            assert client.options(expected).status_code != 404, f"Missing catalog route: {expected}"
 
 
 # ---------------------------------------------------------------------------

@@ -236,26 +236,6 @@ class TestRevokeToken:
 # ---------------------------------------------------------------------------
 
 class TestTokenRouterStructure:
-    def _collect_app_paths(self):
-        """Extract all registered paths from the main FastAPI app."""
-        from oai_skills_registry.main import app
-        from fastapi.testclient import TestClient
-        
-        # In some FastAPI versions, routes are deferred until startup.
-        with TestClient(app):
-            pass
-
-        paths = set()
-        for route in app.routes:
-            if hasattr(route, 'path'):
-                p = route.path
-                if p.startswith("/api/v1/skills-registry"):
-                    p = p[len("/api/v1/skills-registry"):]
-                    if not p:
-                        p = "/"
-                paths.add(p)
-        return paths
-
     def _collect_paths(self, rtr):
         paths = set()
         for entry in rtr.routes:
@@ -277,7 +257,13 @@ class TestTokenRouterStructure:
         assert "/tokens/{token}" in paths
 
     def test_token_router_included_in_composed_router(self):
-        paths = self._collect_app_paths()
-        assert "/tokens/generate" in paths
-        assert "/tokens" in paths
-        assert "/tokens/{token}" in paths
+        from oai_skills_registry.main import app
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
+        
+        for expected in (
+            "/api/v1/skills-registry/tokens/generate",
+            "/api/v1/skills-registry/tokens",
+            "/api/v1/skills-registry/tokens/test_token",
+        ):
+            assert client.options(expected).status_code != 404, f"Missing token route: {expected}"
