@@ -64,15 +64,18 @@ def scheduler_db_logger():
 
 @pytest.fixture
 def scheduler_app(mock_agent, scheduler_db_logger, mock_scheduler):
-    router = create_schedule_router(mock_agent, scheduler_db_logger)
-    app = FastAPI()
-    app.include_router(router)
-    app.state.scheduler = mock_scheduler
-    
-    # Bypass auth dependency
-    app.dependency_overrides[verify_api_key] = lambda: True
-    
-    return app
+    with patch("oai_agent_server.routers.scheduler._APSCHEDULER_AVAILABLE", True), \
+         patch("oai_agent_server.routers.scheduler.CronTrigger", MagicMock(), create=True), \
+         patch("oai_agent_server.routers.scheduler.DateTrigger", MagicMock(), create=True):
+        router = create_schedule_router(mock_agent, scheduler_db_logger)
+        app = FastAPI()
+        app.include_router(router)
+        app.state.scheduler = mock_scheduler
+        
+        # Bypass auth dependency
+        app.dependency_overrides[verify_api_key] = lambda: True
+        
+        yield app
 
 def test_create_schedule_cron(scheduler_app, scheduler_db_logger, mock_scheduler):
     client = TestClient(scheduler_app)
@@ -149,15 +152,16 @@ def test_get_results(scheduler_app, scheduler_db_logger):
 def test_get_results_db_inactive(mock_agent, mock_scheduler):
     inactive_logger = MagicMock()
     inactive_logger.is_active = False
-    router = create_schedule_router(mock_agent, inactive_logger)
-    app = FastAPI()
-    app.include_router(router)
-    app.state.scheduler = mock_scheduler
-    app.dependency_overrides[verify_api_key] = lambda: True
-    
-    client = TestClient(app)
-    response = client.get("/schedule/results/job1")
-    assert response.status_code == 500
+    with patch("oai_agent_server.routers.scheduler._APSCHEDULER_AVAILABLE", True):
+        router = create_schedule_router(mock_agent, inactive_logger)
+        app = FastAPI()
+        app.include_router(router)
+        app.state.scheduler = mock_scheduler
+        app.dependency_overrides[verify_api_key] = lambda: True
+        
+        client = TestClient(app)
+        response = client.get("/schedule/results/job1")
+        assert response.status_code == 500
 
 def test_get_results_stream(scheduler_app, scheduler_db_logger):
     client = TestClient(scheduler_app)
