@@ -15,6 +15,10 @@ def client():
     import os
     os.environ["KB_AUTH_ENABLED"] = "false"
     os.environ["REGISTRY_DB_LOGGING_ENABLED"] = "false"
+    os.environ["AUTO_START_INFRA"] = "false"
+
+    import oai_kb_registry.dependencies as _deps
+    _deps._auto_start_infra = False
 
     from oai_kb_registry.main import app
     with TestClient(app) as c:

@@ -124,7 +124,7 @@ packages = ["src/oai_kb_registry"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-ra -q --strict-markers"
+addopts = "-ra -q --strict-markers --cov=src/oai_kb_registry --cov-report=term-missing --cov-report=html"
 testpaths = ["tests"]
 asyncio_mode = "strict"
 
