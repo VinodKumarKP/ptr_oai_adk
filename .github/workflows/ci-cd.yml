@@ -22,8 +22,8 @@ jobs:
       - name: Set up Python
         run: uv python install 3.13
 
-      - name: Setup tmate session
-        uses: mxschmitt/action-tmate@v3
+#      - name: Setup tmate session
+#        uses: mxschmitt/action-tmate@v3
 
       - name: Install and Test
         run: |
