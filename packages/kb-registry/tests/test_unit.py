@@ -1012,7 +1012,7 @@ class TestDependencies:
         req = MagicMock()
         req.state.user_email = "test@example.com"
         req.state.user_id = None
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             get_auth_user(request=req, _auth=True)
         )
         assert result == "test@example.com"
@@ -1023,7 +1023,7 @@ class TestDependencies:
         req = MagicMock()
         req.state.user_email = None
         req.state.user_id = "uid123"
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             get_auth_user(request=req, _auth=True)
         )
         assert result == "uid123"
@@ -1033,7 +1033,7 @@ class TestDependencies:
         from oai_kb_registry.dependencies import get_auth_user
         req = MagicMock(spec=[])
         req.state = MagicMock(spec=[])
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             get_auth_user(request=req, _auth=True)
         )
         assert result == "authenticated_user"
@@ -1053,7 +1053,7 @@ class TestDependencies:
         with patch("oai_kb_registry.dependencies.KBDatabaseLogger", return_value=mock_db):
             with patch("oai_kb_registry.dependencies.KBRegistry", return_value=mock_reg):
                 with patch.dict(os.environ, {"AUTO_START_INFRA": "false"}):
-                    result = asyncio.get_event_loop().run_until_complete(
+                    result = asyncio.run(
                         deps.initialize_registry()
                     )
         assert result is mock_reg
@@ -1070,7 +1070,7 @@ class TestDependencies:
         deps._kb_registry = mock_reg
         deps._infra_started = False
 
-        asyncio.get_event_loop().run_until_complete(deps.close_registry())
+        asyncio.run(deps.close_registry())
         mock_reg.close.assert_called_once()
 
         deps._kb_registry = orig_reg

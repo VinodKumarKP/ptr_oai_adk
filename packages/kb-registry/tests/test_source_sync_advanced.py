@@ -5,7 +5,15 @@ Advanced unit tests for SourceSyncService.
 import pytest
 import os
 import asyncio
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
+
+# Mock langchain_community before it gets imported by anything
+mock_lc = MagicMock()
+sys.modules['langchain_community'] = mock_lc
+sys.modules['langchain_community.document_loaders'] = mock_lc.document_loaders
+sys.modules['langchain_community.document_loaders.sitemap'] = mock_lc.document_loaders.sitemap
+
 from oai_kb_registry.services.source_sync_service import (
     SourceSyncService,
     _resolve_env_vars,

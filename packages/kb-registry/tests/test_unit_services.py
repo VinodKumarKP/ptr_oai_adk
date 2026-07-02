@@ -720,7 +720,14 @@ class TestMainApp:
 
     def test_app_has_routes(self):
         from oai_kb_registry.main import app
-        paths = [r.path for r in app.routes]
+        paths = []
+        def _get_paths(routes):
+            for r in routes:
+                if hasattr(r, 'path') and isinstance(r.path, str):
+                    paths.append(r.path)
+                if hasattr(r, 'routes'):
+                    _get_paths(r.routes)
+        _get_paths(app.routes)
         assert any("knowledge-bases" in p for p in paths)
 
     def test_app_title(self):
