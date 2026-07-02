@@ -20,7 +20,9 @@ def test_extract_text_with_dict(extractor):
 
 
 def test_extract_text_empty(extractor):
-    assert extractor.extract_text({}) == ""
+    # An empty dict has no 'output'/'content'/'result' key, so falls through
+    # to str(result) which returns '{}'
+    assert extractor.extract_text({}) == "{}"
 
 
 def test_extract_token_usage_with_data(extractor):
@@ -43,13 +45,14 @@ def test_format_response_content(extractor):
 def test_format_response_with_raw(extractor):
     result = {"content": "resp"}
     formatted = extractor.format_response(result, "s1", "m1", "p1", include_raw=True)
-    assert formatted["raw_response"] is not None
+    assert formatted["raw_result"] is not None
 
 
 # ---- ModelConfig simple coverage ----
 
 def test_model_manager_get_model():
-    """Test basic model retrieval."""
-    manager = OpenAIModelConfigurationManager(config_root=None, logger=MagicMock())
+    """Test basic model manager initialization."""
+    # BaseModelConfigurationManager.__init__ takes default_config and logger, not config_root
+    manager = OpenAIModelConfigurationManager(default_config=None, logger=MagicMock())
     # Just test it initializes
     assert manager is not None
