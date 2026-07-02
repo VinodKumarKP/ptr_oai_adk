@@ -122,6 +122,26 @@ class TestLifecycleRouter:
 # composed router (__init__)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Helper: collect route paths regardless of FastAPI version
+# ---------------------------------------------------------------------------
+
+def _collect_paths(rtr):
+    """Recursively collect all route paths from a router.
+
+    Handles both APIRoute objects (which have .path) and _IncludedRouter
+    objects (newer FastAPI) which nest routes under .routes.
+    """
+    paths = set()
+    for entry in rtr.routes:
+        if hasattr(entry, 'path') and isinstance(entry.path, str):
+            paths.add(entry.path)
+        # _IncludedRouter nests sub-routes under .routes
+        if hasattr(entry, 'routes'):
+            paths.update(_collect_paths(entry))
+    return paths
+
+
 class TestComposedRouter:
     """Tests for oai_skills_registry.routers (composed router)."""
 
@@ -135,16 +155,18 @@ class TestComposedRouter:
         from oai_skills_registry.routers.lifecycle import router as lc_r
         from oai_skills_registry.routers.skills import router as skills_r
 
-        composed_paths = {r.path for r in router.routes}
+        composed_paths = _collect_paths(router)
         for sub_router in (skills_r, git_r, lc_r):
             for route in sub_router.routes:
-                assert route.path in composed_paths, (
-                    f"Route {route.path!r} from {sub_router} not found in composed router"
-                )
+                route_path = getattr(route, 'path', None)
+                if route_path:
+                    assert route_path in composed_paths, (
+                        f"Route {route_path!r} from {sub_router} not found in composed router"
+                    )
 
     def test_all_lifecycle_routes_present(self):
         from oai_skills_registry.routers import router
-        paths = {r.path for r in router.routes}
+        paths = _collect_paths(router)
         for expected in (
             "/skills/{skill_name}/publish",
             "/skills/{skill_name}/upgrade",
@@ -156,7 +178,7 @@ class TestComposedRouter:
 
     def test_all_git_routes_present(self):
         from oai_skills_registry.routers import router
-        paths = {r.path for r in router.routes}
+        paths = _collect_paths(router)
         for expected in (
             "/skills/discover",
             "/skills/preview-versions",
@@ -168,7 +190,7 @@ class TestComposedRouter:
 
     def test_all_catalog_routes_present(self):
         from oai_skills_registry.routers import router
-        paths = {r.path for r in router.routes}
+        paths = _collect_paths(router)
         for expected in (
             "/",
             "/health",
