@@ -29,7 +29,7 @@ from oai_platform_core.deployers.python_package_base import BasePythonPackageDep
 
 
 def run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 # ---------------------------------------------------------------------------

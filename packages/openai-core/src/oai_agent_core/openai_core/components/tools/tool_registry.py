@@ -1,6 +1,9 @@
 """Tool Registry for OpenAI Agents."""
 
 import functools
+import os
+import shutil
+import sys
 from typing import Dict, Any, Callable, Optional, List
 
 from agents.mcp import MCPServerStreamableHttp, MCPServerSse, MCPServerStdio
@@ -110,16 +113,30 @@ class OpenAIToolRegistry(BaseToolRegistry):
                 client = None
                 if 'command' in mcp:
                     # STDIO MCP client
+                    # Resolve command to absolute path: check system PATH first,
+                    # then fall back to the venv's bin directory so that MCP
+                    # server executables installed into the venv are found even
+                    # when the IDE doesn't add the venv's bin/ to PATH.
+                    raw_cmd = mcp['command']
+                    resolved_cmd = shutil.which(raw_cmd)
+                    if resolved_cmd is None:
+                        venv_bin = os.path.dirname(sys.executable)
+                        candidate = os.path.join(venv_bin, raw_cmd)
+                        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                            resolved_cmd = candidate
+                    if resolved_cmd is None:
+                        resolved_cmd = raw_cmd  # best-effort fallback
+                    self.logger.info(f"Resolved MCP command '{raw_cmd}' -> '{resolved_cmd}'")
                     params = {
                         "name": tool_name,
                         "params": {
-                            "command": mcp['command'],
+                            "command": resolved_cmd,
                             "args": mcp.get('args', []),
                             "env": mcp.get('env', {})
                         },
                         "cache_tools_list": True
                     }
-                    client = MCPServerStdio(**params)
+                    client = MCPServerStdio(**params, client_session_timeout_seconds=1200)
                     self.logger.info(f"Creating STDIO MCP client for '{tool_name}'")
 
                 elif 'url' in mcp:
@@ -135,7 +152,7 @@ class OpenAIToolRegistry(BaseToolRegistry):
                             },
                             "cache_tools_list": True
                         }
-                        client = MCPServerSse(**params)
+                        client = MCPServerSse(**params, client_session_timeout_seconds=1200)
                         self.logger.info(f"Creating SSE MCP client for '{tool_name}' at {url}")
                     elif 'mcp' in url:
                         # HTTP MCP client
@@ -148,7 +165,7 @@ class OpenAIToolRegistry(BaseToolRegistry):
                             },
                             "cache_tools_list": True
                         }
-                        client = MCPServerStreamableHttp(**params)
+                        client = MCPServerStreamableHttp(**params, client_session_timeout_seconds=1200)
                         self.logger.info(f"Creating HTTP MCP client for '{tool_name}' at {url}")
 
                 if client:
