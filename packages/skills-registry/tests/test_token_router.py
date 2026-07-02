@@ -236,6 +236,20 @@ class TestRevokeToken:
 # ---------------------------------------------------------------------------
 
 class TestTokenRouterStructure:
+    def _collect_app_paths(self):
+        """Extract all registered paths from the main FastAPI app."""
+        from oai_skills_registry.main import app
+        paths = set()
+        for route in app.routes:
+            if hasattr(route, 'path'):
+                p = route.path
+                if p.startswith("/api/v1/skills-registry"):
+                    p = p[len("/api/v1/skills-registry"):]
+                    if not p:
+                        p = "/"
+                paths.add(p)
+        return paths
+
     def _collect_paths(self, rtr):
         paths = set()
         for entry in rtr.routes:
@@ -257,8 +271,7 @@ class TestTokenRouterStructure:
         assert "/tokens/{token}" in paths
 
     def test_token_router_included_in_composed_router(self):
-        from oai_skills_registry.routers import router as composed
-        paths = self._collect_paths(composed)
+        paths = self._collect_app_paths()
         assert "/tokens/generate" in paths
         assert "/tokens" in paths
         assert "/tokens/{token}" in paths

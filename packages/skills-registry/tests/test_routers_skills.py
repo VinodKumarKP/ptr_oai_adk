@@ -126,16 +126,29 @@ class TestLifecycleRouter:
 # Helper: collect route paths regardless of FastAPI version
 # ---------------------------------------------------------------------------
 
-def _collect_paths(rtr):
-    """Recursively collect all route paths from a router."""
+def _collect_app_paths():
+    """Extract all registered paths from the main FastAPI app, stripping the API prefix."""
+    from oai_skills_registry.main import app
+    paths = set()
+    for route in app.routes:
+        if hasattr(route, 'path'):
+            p = route.path
+            if p.startswith("/api/v1/skills-registry"):
+                p = p[len("/api/v1/skills-registry"):]
+                if not p:
+                    p = "/"
+            paths.add(p)
+    return paths
+
+def _collect_subrouter_paths(rtr):
+    """Recursively collect paths from a sub-router."""
     paths = set()
     for entry in rtr.routes:
         if hasattr(entry, 'path') and isinstance(entry.path, str):
             paths.add(entry.path)
         if hasattr(entry, 'routes'):
-            paths.update(_collect_paths(entry))
+            paths.update(_collect_subrouter_paths(entry))
     return paths
-
 
 class TestComposedRouter:
     """Tests for oai_skills_registry.routers (composed router)."""
@@ -145,22 +158,20 @@ class TestComposedRouter:
         assert router is not None
 
     def test_composed_router_includes_all_routes(self):
-        from oai_skills_registry.routers import router
         from oai_skills_registry.routers.git import router as git_r
         from oai_skills_registry.routers.lifecycle import router as lc_r
         from oai_skills_registry.routers.skills import router as skills_r
 
-        composed_paths = _collect_paths(router)
+        app_paths = _collect_app_paths()
         for sub_router in (skills_r, git_r, lc_r):
-            sub_paths = _collect_paths(sub_router)
+            sub_paths = _collect_subrouter_paths(sub_router)
             for route_path in sub_paths:
-                assert route_path in composed_paths, (
-                    f"Route {route_path!r} from {sub_router} not found in composed router"
+                assert route_path in app_paths, (
+                    f"Route {route_path!r} from {sub_router} not found in main app"
                 )
 
     def test_all_lifecycle_routes_present(self):
-        from oai_skills_registry.routers import router
-        paths = _collect_paths(router)
+        paths = _collect_app_paths()
         for expected in (
             "/skills/{skill_name}/publish",
             "/skills/{skill_name}/upgrade",
@@ -171,8 +182,7 @@ class TestComposedRouter:
             assert expected in paths, f"Missing lifecycle route: {expected}"
 
     def test_all_git_routes_present(self):
-        from oai_skills_registry.routers import router
-        paths = _collect_paths(router)
+        paths = _collect_app_paths()
         for expected in (
             "/skills/discover",
             "/skills/preview-versions",
@@ -183,8 +193,7 @@ class TestComposedRouter:
             assert expected in paths, f"Missing git route: {expected}"
 
     def test_all_catalog_routes_present(self):
-        from oai_skills_registry.routers import router
-        paths = _collect_paths(router)
+        paths = _collect_app_paths()
         for expected in (
             "/",
             "/health",
