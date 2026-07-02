@@ -129,6 +129,13 @@ class TestLifecycleRouter:
 def _collect_app_paths():
     """Extract all registered paths from the main FastAPI app, stripping the API prefix."""
     from oai_skills_registry.main import app
+    from fastapi.testclient import TestClient
+    
+    # In some FastAPI versions, routes are deferred until startup.
+    # Instantiating TestClient forces the app.setup() process to populate app.routes.
+    with TestClient(app):
+        pass
+
     paths = set()
     for route in app.routes:
         if hasattr(route, 'path'):
