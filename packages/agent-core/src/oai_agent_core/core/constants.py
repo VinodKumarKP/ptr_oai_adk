@@ -36,6 +36,7 @@ class Constants:
     PATTERN_GRAPH = 'graph'
     PATTERN_SEQUENTIAL = 'sequential'
     PATTERN_HIERARCHICAL = 'hierarchical'
+    PATTERN_DEEP = 'deep'
 
     # Agent Message Types
     AGENT_MESSAGE_TYPE_TEXT = "text"

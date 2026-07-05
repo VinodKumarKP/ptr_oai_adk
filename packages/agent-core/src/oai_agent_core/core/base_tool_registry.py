@@ -937,7 +937,7 @@ class BaseToolRegistry(ABC):
             if mcp_client in self.available_mcp_tools:
                 system_prompt = f"{system_prompt}\n{mcp_client}:{', '.join(list(self.available_mcp_tools[mcp_client].keys()))}"
 
-        system_prompt = f"You have access to following tools. Follow workflow instructions to execute the tools{system_prompt}"
+        system_prompt = f"You have access to following tools. Follow workflow instructions to execute the tools: {system_prompt}"
 
         system_prompt = f"""{system_prompt}
         Workflow: Follow this workflow strictly
