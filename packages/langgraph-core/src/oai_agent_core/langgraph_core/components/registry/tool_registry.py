@@ -16,6 +16,13 @@ from oai_agent_core.core.base_tool_registry import BaseToolRegistry
 class LangChainToolRegistry(BaseToolRegistry):
     """LangChain-specific tool registry implementation."""
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Per-server cache of enumerated MCP tools and single-flight locks,
+        # so a server referenced by several agents is only spawned once.
+        self._mcp_tools_cache: Dict[str, list] = {}
+        self._mcp_server_locks: Dict[str, asyncio.Lock] = {}
+
     async def execute_tool(self, tool_name: str, arguments: Any) -> Any:
         """
                 Execute a tool with the given arguments.
@@ -138,6 +145,11 @@ class LangChainToolRegistry(BaseToolRegistry):
     async def load_mcp_tools_from_config(self, mcp_config: Dict[str, Any]) -> list[Any]:
         """Load MCP tools defined in configuration.
 
+        Tool enumeration is cached per server: the first request spawns the
+        server process to list its tools; later requests (e.g. other agents
+        or subagents referencing the same server) reuse the cached result.
+        Distinct servers are enumerated concurrently.
+
         Args:
             mcp_config: Dictionary of MCP tool configurations
 
@@ -147,7 +159,7 @@ class LangChainToolRegistry(BaseToolRegistry):
         try:
             mcp_list = self._get_mcp_name_list_from_mcp_config(mcp_config)
 
-            mcp_configs = {}
+            connections = {}
             for tool_name in mcp_list:
                 mcp = self._get_mcp_config(mcp_config, tool_name)
                 mcp = {k: v for k, v in mcp.items() if
@@ -155,48 +167,75 @@ class LangChainToolRegistry(BaseToolRegistry):
 
                 if 'command' in mcp:
                     mcp['transport'] = 'stdio'
-                    mcp_configs[tool_name] = StdioConnection(**mcp)
-                    self.mcp_configs[tool_name] = mcp_configs[tool_name]
+                    connections[tool_name] = StdioConnection(**mcp)
                     self.logger.info(f"Creating STDIO MCP client for '{tool_name}'")
                 elif 'url' in mcp:
                     url = mcp.get('url', '')
                     mcp['headers'] = self._sanitize_headers(mcp.get('headers', {}))
                     if 'sse' in url:
                         mcp['transport'] = 'sse'
-                        mcp_configs[tool_name] = SSEConnection(**mcp)
-                        self.mcp_configs[tool_name] = mcp_configs[tool_name]
+                        connections[tool_name] = SSEConnection(**mcp)
                         self.logger.info(f"Creating SSE MCP client for '{tool_name}' at {url}")
                     elif 'mcp' in url:
                         mcp['transport'] = 'streamable_http'
-                        mcp_configs[tool_name] = StreamableHttpConnection(**mcp)
-                        self.mcp_configs[tool_name] = mcp_configs[tool_name]
+                        connections[tool_name] = StreamableHttpConnection(**mcp)
                         self.logger.info(f"Creating HTTP MCP client for '{tool_name}' at {url}")
                     else:
                         raise ValueError("Unsupported url. It should either end with mcp and sse")
 
-                if self.enable_lazy_loading:
-                    if tool_name not in self.available_mcp_tools:
-                        self.available_mcp_tools[tool_name] = {}
-                    client = MultiServerMCPClient({tool_name: mcp_configs[tool_name]})
-                    list_of_tools = await client.get_tools()
+                if tool_name in connections:
+                    self.mcp_configs[tool_name] = connections[tool_name]
+
+            # Enumerate distinct servers concurrently; per-server results
+            # are cached so repeated references don't respawn the server.
+            tool_lists = await asyncio.gather(*(
+                self._enumerate_mcp_server(server_name, connection)
+                for server_name, connection in connections.items()
+            ))
+
+            if self.enable_lazy_loading:
+                for (server_name, connection), list_of_tools in zip(connections.items(), tool_lists):
+                    if server_name not in self.available_mcp_tools:
+                        self.available_mcp_tools[server_name] = {}
                     for tool in list_of_tools:
-                        self.available_mcp_tools[tool.name] = tool_name
-                        self.available_mcp_tools[tool_name][tool.name] = {
+                        self.available_mcp_tools[tool.name] = server_name
+                        self.available_mcp_tools[server_name][tool.name] = {
                             'tool': tool,
                             'type': 'mcp',
-                            'mcp_client': mcp_configs[tool_name],
+                            'mcp_client': connection,
                             'input_schema': tool.tool_call_schema['properties']
                         }
-
-            if not self.enable_lazy_loading:
-                client = MultiServerMCPClient(mcp_configs)
-                tools = await client.get_tools()
-                return tools
-            else:
                 return []
+
+            return [tool for tools in tool_lists for tool in tools]
         except Exception as e:
             self.logger.error(f"Failed to initialize MCP client: {e}")
             raise
+
+    async def _enumerate_mcp_server(self, server_name: str, connection: Any) -> list[Any]:
+        """Enumerate a single MCP server's tools, caching the result.
+
+        A per-server lock makes concurrent requests single-flight: the first
+        caller spawns the server and enumerates its tools; concurrent and
+        later callers reuse the cached list.
+
+        Args:
+            server_name: Name of the MCP server.
+            connection: Connection configuration for the server.
+
+        Returns:
+            List of tools exposed by the server.
+        """
+        lock = self._mcp_server_locks.setdefault(server_name, asyncio.Lock())
+        async with lock:
+            if server_name not in self._mcp_tools_cache:
+                client = MultiServerMCPClient({server_name: connection})
+                self._mcp_tools_cache[server_name] = await client.get_tools()
+                self.logger.debug(
+                    f"Enumerated {len(self._mcp_tools_cache[server_name])} "
+                    f"tools from MCP server '{server_name}'"
+                )
+            return self._mcp_tools_cache[server_name]
 
     def _wrap_function_with_defaults(self, func: Callable, default_params: Dict[str, Any]) -> Callable:
         """Wrap a function to include default parameter values from config.

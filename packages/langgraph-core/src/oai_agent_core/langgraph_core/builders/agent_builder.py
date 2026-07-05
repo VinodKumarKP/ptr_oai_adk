@@ -1,5 +1,6 @@
 """Builder for creating and configuring LangChain Agent instances."""
 
+import asyncio
 import logging
 from typing import Dict, Any, List, Optional
 
@@ -209,21 +210,24 @@ class AgentBuilder(BaseAgentBuilder):
         # Ensure the shared model exists before building anything
         self._ensure_model(crew_config)
 
-        # Build subagent definitions from agent_list entries
+        # Build subagent definitions from agent_list entries, and the root
+        # deep agent's own tools (regular + MCP, declared in crew_config),
+        # all concurrently. The registry caches per-server MCP enumeration,
+        # so shared servers are only spawned once.
         config_manager = ConfigManager(config_root=self.config_root)
         agent_definitions = self._normalize_agent_configs(
             agent_configs or [], config_manager
         )
-        subagents = [
-            await self._build_deep_subagent(name, config)
-            for name, config in agent_definitions
-        ]
-
-        # Root deep agent's own tools: regular + MCP, declared in crew_config
         root_name = crew_config.get('name', 'deep_agent')
-        root_tools: List[Any] = []
-        root_tools.extend(await self._get_regular_tools(root_name, crew_config))
-        root_tools.extend(await self._load_mcp_tools(root_name, crew_config))
+
+        *subagents, root_regular_tools, root_mcp_tools = await asyncio.gather(
+            *(self._build_deep_subagent(name, config)
+              for name, config in agent_definitions),
+            self._get_regular_tools(root_name, crew_config),
+            self._load_mcp_tools(root_name, crew_config),
+        )
+
+        root_tools: List[Any] = [*root_regular_tools, *root_mcp_tools]
 
         # Lazy MCP loading: replace custom tools with the registry meta-tools
         # and describe the available tools in the prompt (the deepagents
@@ -272,10 +276,12 @@ class AgentBuilder(BaseAgentBuilder):
         Returns:
             SubAgent-compatible dictionary.
         """
-        tools: List[Any] = []
-        tools.extend(await self._get_regular_tools(agent_name, agent_config))
-        tools.extend(await self._load_mcp_tools(agent_name, agent_config))
-        tools.extend(await self._load_knowledge_base_tools(agent_name, agent_config))
+        regular_tools, mcp_tools, kb_tools = await asyncio.gather(
+            self._get_regular_tools(agent_name, agent_config),
+            self._load_mcp_tools(agent_name, agent_config),
+            self._load_knowledge_base_tools(agent_name, agent_config),
+        )
+        tools: List[Any] = [*regular_tools, *mcp_tools, *kb_tools]
 
         system_prompt = agent_config.get('system_prompt', '')
 

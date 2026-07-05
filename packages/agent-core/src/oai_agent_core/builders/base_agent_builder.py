@@ -85,16 +85,15 @@ class BaseAgentBuilder(ABC):
         # Collect all tools for this agent
         all_tools = list(pre_loaded_tools) if pre_loaded_tools else []
 
-        # Add regular tools
-        regular_tools = await self._get_regular_tools(agent_name, agent_config)
+        # Load regular, MCP, and knowledge base tools concurrently —
+        # they touch independent parts of the registry.
+        regular_tools, mcp_tools, kb_tools = await asyncio.gather(
+            self._get_regular_tools(agent_name, agent_config),
+            self._load_mcp_tools(agent_name, agent_config),
+            self._load_knowledge_base_tools(agent_name, agent_config),
+        )
         all_tools.extend(regular_tools)
-
-        # Load and configure MCP tools
-        mcp_tools = await self._load_mcp_tools(agent_name, agent_config)
         all_tools.extend(mcp_tools)
-
-        # Load Knowledge Base tools
-        kb_tools = await self._load_knowledge_base_tools(agent_name, agent_config)
         all_tools.extend(kb_tools)
 
         # Create specific agent instance
