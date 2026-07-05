@@ -68,7 +68,10 @@ def test_get_mcp_server_configs_returns_copy(registry):
 # ── load_mcp_tools_from_config ────────────────────────────────────────────────
 
 def test_load_mcp_tools_from_config_returns_keys(registry):
-    result = registry.load_mcp_tools_from_config({"a": {"command": "x"}}, agent_name="travel")
+    import asyncio
+    result = asyncio.run(
+        registry.load_mcp_tools_from_config({"a": {"command": "x"}}, agent_name="travel")
+    )
     assert result == ["a"]
     assert "a" in registry.mcp_server_configs
 

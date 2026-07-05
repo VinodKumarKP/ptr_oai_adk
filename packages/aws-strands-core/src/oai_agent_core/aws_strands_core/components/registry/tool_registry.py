@@ -32,6 +32,13 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
         project_root: Project root directory path
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Per-server cache of enumerated MCP tools and single-flight locks,
+        # so a server referenced by several agents is only spawned once.
+        self._mcp_tools_cache: Dict[str, list] = {}
+        self._mcp_server_locks: Dict[str, asyncio.Lock] = {}
+
     def _format_schema(self, schema: Dict[str, Any]) -> str:
         """Format the schema into a concise string."""
         if not schema:
@@ -159,6 +166,7 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
         """
         mcp_list = self._get_mcp_name_list_from_mcp_config(mcp_configs)
         loaded_clients = []
+        lazy_registrations = []
 
         for tool_name in mcp_list:
             mcp = self._get_mcp_config(mcp_configs, tool_name)
@@ -204,18 +212,7 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
                     self.logger.info(f"✅ Loaded MCP client: {tool_name}")
 
                     if self.enable_lazy_loading:
-                        if tool_name not in self.available_mcp_tools:
-                            self.available_mcp_tools[tool_name] = {}
-                        with client:
-                            list_of_tools = client.list_tools_sync()
-                            for tool in list_of_tools:
-                                self.available_mcp_tools[tool.tool_name] = tool_name
-                                self.available_mcp_tools[tool_name][tool.tool_name] = {
-                                    'type': 'mcp',
-                                    'mcp_client': client,
-                                    'input_schema': tool.tool_spec['inputSchema']
-                                }
-
+                        lazy_registrations.append((tool_name, client))
 
                 else:
                     self.logger.warning(f"⚠️  No valid MCP configuration for '{tool_name}'")
@@ -223,7 +220,57 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
             except Exception as e:
                 self.logger.error(f"❌ Failed to load MCP tool '{tool_name}': {e}", exc_info=True)
 
+        # Enumerate servers concurrently for lazy loading; per-server results
+        # are cached so repeated references don't respawn the server.
+        if lazy_registrations:
+            results = await asyncio.gather(
+                *(self._register_lazy_mcp_tools(server_name, client)
+                  for server_name, client in lazy_registrations),
+                return_exceptions=True
+            )
+            for (server_name, _), result in zip(lazy_registrations, results):
+                if isinstance(result, Exception):
+                    self.logger.error(
+                        f"❌ Failed to enumerate MCP server '{server_name}': {result}",
+                        exc_info=result
+                    )
+
         return loaded_clients
+
+    async def _register_lazy_mcp_tools(self, server_name: str, client: Any) -> None:
+        """Enumerate a server's tools once and register them for lazy loading.
+
+        A per-server lock makes concurrent requests single-flight: the first
+        caller spawns the server and enumerates its tools; concurrent and
+        later callers reuse the cached result.
+
+        Args:
+            server_name: Name of the MCP server.
+            client: MCP client for the server.
+        """
+        lock = self._mcp_server_locks.setdefault(server_name, asyncio.Lock())
+        async with lock:
+            if server_name in self._mcp_tools_cache:
+                return
+
+            def _enumerate():
+                with client:
+                    return client.list_tools_sync()
+
+            # list_tools_sync spawns the server and blocks; run it off the
+            # event loop so distinct servers can enumerate concurrently.
+            list_of_tools = await asyncio.to_thread(_enumerate)
+            self._mcp_tools_cache[server_name] = list_of_tools
+
+            if server_name not in self.available_mcp_tools:
+                self.available_mcp_tools[server_name] = {}
+            for tool in list_of_tools:
+                self.available_mcp_tools[tool.tool_name] = server_name
+                self.available_mcp_tools[server_name][tool.tool_name] = {
+                    'type': 'mcp',
+                    'mcp_client': client,
+                    'input_schema': tool.tool_spec['inputSchema']
+                }
 
     def _wrap_function_with_defaults(self, func: Callable, default_params: Dict[str, Any]) -> Callable:
         """Wrap a function to include default parameter values from config.

@@ -33,13 +33,13 @@ async def run_simple_agent():
     # Test 1: General query
     print("\n--- Test 1: General Query ---")
     result = await agent.ainvoke('Hello! What can you do?')
-    pprint(result['content'][0]['text'])
+    pprint(result['content']['text'])
 
     # Test 2: Tool usage (Flight Search)
     print("\n--- Test 2: Tool Usage (Flight Search) ---")
     query = "Find me a flight from BOS to JFK for 2026-01-31 and find hotels in New York"
     result = await agent.ainvoke(query)
-    pprint(result['content'][0]['text'])
+    pprint(result['content']['text'])
 
     # Test 3: Streaming
     print("\n--- Test 3: Streaming Response ---")

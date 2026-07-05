@@ -255,7 +255,7 @@ class AnthropicToolRegistry(BaseToolRegistry):
 
     # ── BaseToolRegistry abstract method implementations ──────────────────────
 
-    def load_mcp_tools_from_config(
+    async def load_mcp_tools_from_config(
         self, mcp_config: Dict[str, Any], agent_name: Optional[str] = None
     ) -> Any:
         """Register MCP server configs from a config dict.
@@ -264,6 +264,10 @@ class AnthropicToolRegistry(BaseToolRegistry):
         ``ClaudeAgentOptions.mcp_servers`` rather than loaded as individual
         tool objects.  This method stores the configs so they can be injected
         into ``ClaudeAgentOptions`` at invocation time.
+
+        Async for interface consistency with the other framework registries
+        (the shared ``BaseAgentBuilder._load_mcp_tools`` awaits this method);
+        no server processes are spawned here.
         """
         self.load_mcp_configs(mcp_config)
         self.logger.debug(

@@ -1,5 +1,6 @@
 """Tool Registry for OpenAI Agents."""
 
+import asyncio
 import functools
 import os
 import shutil
@@ -16,6 +17,13 @@ class OpenAIToolRegistry(BaseToolRegistry):
     Handles registration, loading, and management of both standard tools
     and MCP (Model Context Protocol) tools.
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Per-server cache of enumerated MCP tools and single-flight locks,
+        # so a server referenced by several agents is only spawned once.
+        self._mcp_tools_cache: Dict[str, list] = {}
+        self._mcp_server_locks: Dict[str, asyncio.Lock] = {}
 
     def _get_function_tool_type(self):
         """Get the function tool type class.
@@ -105,6 +113,7 @@ class OpenAIToolRegistry(BaseToolRegistry):
         """
         # Placeholder for MCP implementation
         mcp_list = self._get_mcp_name_list_from_mcp_config(mcp_configs)
+        lazy_registrations = []
 
         for tool_name in mcp_list:
             mcp = self._get_mcp_config(mcp_configs, tool_name)
@@ -177,23 +186,58 @@ class OpenAIToolRegistry(BaseToolRegistry):
                     self.logger.info(f"✅ Loaded MCP client: {tool_name}")
 
                     if self.enable_lazy_loading:
-                        if tool_name not in self.available_mcp_tools:
-                            self.available_mcp_tools[tool_name] = {}
-                        async with client:
-                            list_of_tools = await client.list_tools()
-                            for tool in list_of_tools:
-                                self.available_mcp_tools[tool.name] = tool_name
-                                self.available_mcp_tools[tool_name][tool.name] = {
-                                    'type': 'mcp',
-                                    'mcp_client': client,
-                                    'input_schema': tool.inputSchema
-                                }
+                        lazy_registrations.append((tool_name, client))
 
                 else:
                     self.logger.warning(f"⚠️  No valid MCP configuration for '{tool_name}'")
 
             except Exception as e:
                 self.logger.error(f"❌ Failed to load MCP tool '{tool_name}': {e}", exc_info=True)
+
+        # Enumerate servers concurrently for lazy loading; per-server results
+        # are cached so repeated references don't respawn the server.
+        if lazy_registrations:
+            results = await asyncio.gather(
+                *(self._register_lazy_mcp_tools(server_name, client)
+                  for server_name, client in lazy_registrations),
+                return_exceptions=True
+            )
+            for (server_name, _), result in zip(lazy_registrations, results):
+                if isinstance(result, Exception):
+                    self.logger.error(
+                        f"❌ Failed to enumerate MCP server '{server_name}': {result}",
+                        exc_info=result
+                    )
+
+    async def _register_lazy_mcp_tools(self, server_name: str, client: Any) -> None:
+        """Enumerate a server's tools once and register them for lazy loading.
+
+        A per-server lock makes concurrent requests single-flight: the first
+        caller spawns the server and enumerates its tools; concurrent and
+        later callers reuse the cached result.
+
+        Args:
+            server_name: Name of the MCP server.
+            client: MCP client for the server.
+        """
+        lock = self._mcp_server_locks.setdefault(server_name, asyncio.Lock())
+        async with lock:
+            if server_name in self._mcp_tools_cache:
+                return
+
+            async with client:
+                list_of_tools = await client.list_tools()
+            self._mcp_tools_cache[server_name] = list_of_tools
+
+            if server_name not in self.available_mcp_tools:
+                self.available_mcp_tools[server_name] = {}
+            for tool in list_of_tools:
+                self.available_mcp_tools[tool.name] = server_name
+                self.available_mcp_tools[server_name][tool.name] = {
+                    'type': 'mcp',
+                    'mcp_client': client,
+                    'input_schema': tool.inputSchema
+                }
 
     def _format_schema(self, schema: Dict[str, Any]) -> str:
         """Format the schema into a concise string."""
