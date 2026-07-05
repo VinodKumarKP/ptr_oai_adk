@@ -155,7 +155,17 @@ class LangGraphAgent(BaseAgent):
         agent_list_config = self.agent_config.get('agent_list', [])
         self.crew_config = self.agent_config.get('crew_config', {})
 
-        if not agent_list_config:
+        is_deep_agent = (
+            bool(self.crew_config.get('deep_agent'))
+            or self.crew_config.get('pattern') == Constants.PATTERN_DEEP
+        )
+
+        if is_deep_agent:
+            # Deep agent mode: agent_list entries become subagents of a
+            # single deepagents harness, regardless of how many there are.
+            self.is_multi_agent = bool(agent_list_config)
+            await self._initialize_multi_agent()
+        elif not agent_list_config:
             # No agent_list - create single agent from main config
             self.is_multi_agent = False
             await self._initialize_single_agent()
@@ -231,7 +241,7 @@ class LangGraphAgent(BaseAgent):
 
         Each agent will use tools from the registry based on its 'tools' configuration.
         """
-        agent_list_config = self.agent_config['agent_list']
+        agent_list_config = self.agent_config.get('agent_list', [])
         system_prompt = self.agent_config.get('system_prompt', '')
 
         self.agent, self.base_agent_list = await self.agent_builder.create_multi_agent_system(

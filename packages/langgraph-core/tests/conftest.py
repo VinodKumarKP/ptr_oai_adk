@@ -130,6 +130,7 @@ class MockConstants:
     PATTERN_SUPERVISOR = 'supervisor'
     PATTERN_SWARM = 'swarm'
     PATTERN_AGENT_AS_TOOL = 'agent_as_tool'
+    PATTERN_DEEP = 'deep'
 
 class MockBaseModelConfigurationManager:
     def __init__(self, *args, **kwargs):
@@ -168,10 +169,12 @@ class MockBaseAgentBuilder:
         all_tools.extend(kb_tools)
         return self._create_agent_instance(agent_name, agent_config, all_tools)
         
-    async def create_multi_agent_system(self, agent_configs, system_prompt="", session_id="default", pattern="supervisor"):
+    async def create_multi_agent_system(self, agent_configs, system_prompt="", session_id="default", crew_config=None):
+        crew_config = crew_config or {}
+        pattern = crew_config.get('pattern', 'supervisor')
         agent_definitions = self._normalize_agent_configs(agent_configs, MagicMock())
         base_agent_list, agent_list, sub_agent_tools = await self._create_agents_parallel(agent_definitions, pattern)
-        supervisor = self._create_supervisor_agent(pattern, agent_list, sub_agent_tools, system_prompt)
+        supervisor = self._create_supervisor_agent(crew_config, agent_list, sub_agent_tools, system_prompt)
         return supervisor, base_agent_list
 
     def _ensure_model(self, agent_config):

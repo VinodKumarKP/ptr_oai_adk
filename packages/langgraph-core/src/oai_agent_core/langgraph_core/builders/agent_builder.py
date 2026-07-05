@@ -121,6 +121,245 @@ class AgentBuilder(BaseAgentBuilder):
 
         return agent
 
+    async def create_multi_agent_system(
+            self,
+            agent_configs: List[Dict[str, Any]],
+            system_prompt: str = "",
+            session_id: str = "default",
+            crew_config: Dict[str, Any] = None
+    ) -> Any:
+        """Create a multi-agent system, routing to the deepagents harness
+        when the crew is configured as a deep agent.
+
+        Deep agent mode is enabled in ``crew_config`` with either
+        ``deep_agent: true`` or ``pattern: deep``. In that mode the entries
+        of ``agent_list`` become subagents of a single deep agent, and the
+        root-level attributes (``system_prompt``, plus ``tools``/``mcps``
+        declared under ``crew_config``) configure the deep agent itself.
+
+        Args:
+            agent_configs: List of agent configuration dictionaries.
+            system_prompt: Root system prompt (used for the deep agent).
+            session_id: Session identifier.
+            crew_config: Crew configuration dictionary.
+
+        Returns:
+            Tuple of (agent, list_of_base_agents).
+        """
+        crew_config = crew_config or {}
+
+        if self._is_deep_agent_crew(crew_config):
+            supervisor = await self._create_deep_agent_system(
+                agent_configs, system_prompt, crew_config
+            )
+            # Subagents live inside the deepagents graph; there are no
+            # standalone base agents to track or clean up.
+            return supervisor, []
+
+        return await super().create_multi_agent_system(
+            agent_configs=agent_configs,
+            system_prompt=system_prompt,
+            session_id=session_id,
+            crew_config=crew_config
+        )
+
+    @staticmethod
+    def _is_deep_agent_crew(crew_config: Dict[str, Any]) -> bool:
+        """Check whether the crew configuration requests a deep agent."""
+        if not crew_config:
+            return False
+        return (
+            bool(crew_config.get('deep_agent'))
+            or crew_config.get('pattern') == Constants.PATTERN_DEEP
+        )
+
+    async def _create_deep_agent_system(
+            self,
+            agent_configs: List[Dict[str, Any]],
+            system_prompt: str,
+            crew_config: Dict[str, Any]
+    ) -> Any:
+        """Create a deep agent using the deepagents harness.
+
+        The root deep agent is configured from root-level attributes:
+        ``system_prompt`` plus ``tools``/``mcps``/``backend``/
+        ``structured_output_model`` under ``crew_config``. Each entry of
+        ``agent_list`` becomes a subagent; its ``tools``, ``mcps`` and
+        knowledge-base configuration are resolved the same way as regular
+        agents.
+
+        Args:
+            agent_configs: agent_list entries (become subagents).
+            system_prompt: Root system prompt for the deep agent.
+            crew_config: Crew configuration dictionary.
+
+        Returns:
+            Compiled deep agent graph.
+        """
+        try:
+            from deepagents import create_deep_agent
+        except ImportError as exc:
+            raise ImportError(
+                "The 'deepagents' package is required for deep agent "
+                "configurations. Install it with: pip install deepagents"
+            ) from exc
+
+        from oai_agent_core.components.configuration.model_config import ConfigManager
+
+        # Ensure the shared model exists before building anything
+        self._ensure_model(crew_config)
+
+        # Build subagent definitions from agent_list entries
+        config_manager = ConfigManager(config_root=self.config_root)
+        agent_definitions = self._normalize_agent_configs(
+            agent_configs or [], config_manager
+        )
+        subagents = [
+            await self._build_deep_subagent(name, config)
+            for name, config in agent_definitions
+        ]
+
+        # Root deep agent's own tools: regular + MCP, declared in crew_config
+        root_name = crew_config.get('name', 'deep_agent')
+        root_tools: List[Any] = []
+        root_tools.extend(await self._get_regular_tools(root_name, crew_config))
+        root_tools.extend(await self._load_mcp_tools(root_name, crew_config))
+
+        # Lazy MCP loading: replace custom tools with the registry meta-tools
+        # and describe the available tools in the prompt (the deepagents
+        # harness tools like write_todos/task are added on top regardless).
+        if self.tool_registry.enable_lazy_loading:
+            root_tools = self.tool_registry.lazy_loading_required_tools()
+            system_prompt = f"""{system_prompt}
+{self.tool_registry.generate_lazy_mcp_system_prompt(
+                crew_config.get('tools', []),
+                crew_config.get('mcps', [])
+            )}"""
+
+        backend = self._create_deep_agent_backend(crew_config.get('backend'))
+
+        agent = create_deep_agent(
+            model=self.llm,
+            tools=root_tools,
+            system_prompt=system_prompt if system_prompt else None,
+            subagents=subagents if subagents else None,
+            backend=backend,
+            name=root_name,
+            checkpointer=MemorySaver(),
+            response_format=self.structured_output_model_registry.get_model(crew_config.get('structured_output_model', None))
+        )
+
+        self.logger.info(
+            f"Created deep agent '{root_name}' with "
+            f"{len(subagents)} subagent(s) and {len(root_tools)} root tool(s)"
+        )
+        return agent
+
+    async def _build_deep_subagent(
+            self,
+            agent_name: str,
+            agent_config: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Convert an agent_list entry into a deepagents SubAgent dict.
+
+        Resolves the subagent's regular tools, MCP tools and knowledge-base
+        tools using the same pipeline as regular agents.
+
+        Args:
+            agent_name: Name of the subagent.
+            agent_config: Configuration dictionary for the subagent.
+
+        Returns:
+            SubAgent-compatible dictionary.
+        """
+        tools: List[Any] = []
+        tools.extend(await self._get_regular_tools(agent_name, agent_config))
+        tools.extend(await self._load_mcp_tools(agent_name, agent_config))
+        tools.extend(await self._load_knowledge_base_tools(agent_name, agent_config))
+
+        system_prompt = agent_config.get('system_prompt', '')
+
+        # Lazy MCP loading: same behavior as regular agents — the subagent
+        # gets the registry meta-tools and a prompt listing its tools
+        # (loading MCP tools above registered them with the registry).
+        if self.tool_registry.enable_lazy_loading:
+            tools = self.tool_registry.lazy_loading_required_tools()
+            system_prompt = f"""{system_prompt}
+{self.tool_registry.generate_lazy_mcp_system_prompt(
+                agent_config.get('tools', []),
+                agent_config.get('mcps', [])
+            )}"""
+
+        # Description drives when the root agent delegates to this subagent
+        description = agent_config.get('description')
+        if not description and agent_config.get('system_prompt'):
+            description = (
+                f"Agent with instructions: "
+                f"{agent_config.get('system_prompt')[:100]}..."
+            )
+        if not description:
+            description = f"Agent responsible for {agent_name}"
+
+        subagent: Dict[str, Any] = {
+            'name': agent_name,
+            'description': description,
+            'system_prompt': system_prompt,
+        }
+
+        if tools:
+            subagent['tools'] = tools
+
+        # Optional per-subagent model override: either a provider:model
+        # string or a model config dict handled by the model manager.
+        model_config = agent_config.get('model')
+        if model_config:
+            subagent['model'] = (
+                model_config if isinstance(model_config, str)
+                else self.model_manager.create_model(model_config)
+            )
+
+        return subagent
+
+    def _create_deep_agent_backend(self, backend_config: Any) -> Any:
+        """Create a deepagents filesystem backend from configuration.
+
+        Args:
+            backend_config: ``None`` (default in-state filesystem), a string
+                (``state``, ``filesystem``, ``store``), or a dict with a
+                ``type`` key plus backend-specific options
+                (e.g. ``root_dir`` for ``filesystem``).
+
+        Returns:
+            Backend instance, or None to use the deepagents default.
+        """
+        if not backend_config:
+            return None
+
+        if isinstance(backend_config, str):
+            backend_type = backend_config
+            options: Dict[str, Any] = {}
+        elif isinstance(backend_config, dict):
+            backend_type = backend_config.get('type', 'state')
+            options = {k: v for k, v in backend_config.items() if k != 'type'}
+        else:
+            raise ValueError(
+                f"Invalid deep_agent backend config: {backend_config!r}"
+            )
+
+        if backend_type == 'state':
+            return None
+        if backend_type == 'filesystem':
+            from deepagents.backends import FilesystemBackend
+            return FilesystemBackend(**options)
+        if backend_type == 'store':
+            from deepagents.backends import StoreBackend
+            return StoreBackend(**options)
+
+        raise ValueError(
+            f"Unknown deep_agent backend type: '{backend_type}'. "
+            "Expected one of: state, filesystem, store"
+        )
+
     def _create_agent_as_tool(self, agent: Any, name: str, description: str) -> Any:
         """Wrap an agent as a tool.
 

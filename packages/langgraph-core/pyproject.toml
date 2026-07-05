@@ -27,7 +27,8 @@ dependencies = [
     "langgraph-supervisor>=0.0.30",
     "langchain-mcp-adapters>=0.1.13",
     "langchain-litellm>=0.3.2",
-    "langgraph-prebuilt==1.0.8"
+    "langgraph-prebuilt>=1.0.8",
+    "deepagents>=0.6.12"
 ]
 
 [project.optional-dependencies]
