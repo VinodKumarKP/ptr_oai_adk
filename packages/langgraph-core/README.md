@@ -11,6 +11,7 @@ A powerful, YAML-based configuration system for building multi-agent AI workflow
 - [Key Features](#key-features)
 - [Configuration](#configuration)
 - [Orchestration Patterns](#orchestration-patterns)
+- [Deep Agents](#deep-agents)
 - [Agents Configuration](#agents-configuration)
 - [Tools System](#tools-system)
 - [Agent Skills](#agent-skills)
@@ -52,6 +53,7 @@ The framework operates on a simple principle: your YAML configuration is the sin
 - Complex decision-making systems with multiple specialists
 - Data processing workflows with parallel execution
 - Autonomous agent systems with dynamic collaboration
+- **Deep research agents** with planning, file-based context management, and subagent delegation
 - Enterprise-grade AI applications
 
 ## ✅ Prerequisites
@@ -286,7 +288,7 @@ ptr_agent_servers_my_project/
 Built on the robust LangChain ecosystem, leveraging LangGraph for stateful, multi-agent orchestration.
 
 ### 🔄 Flexible Orchestration
-Support for both single-agent and multi-agent supervisor patterns.
+Support for single-agent, multi-agent supervisor, swarm, agent-as-tool, and **deep agent** patterns with built-in planning, subagent delegation, and context management.
 
 ### 🛠️ Extensible Tools System
 Integrate LangChain community tools, custom tools, and MCP servers seamlessly.
@@ -359,7 +361,7 @@ model:
 
 # 2. Architecture Configuration: Defines the multi-agent pattern.
 crew_config:
-  pattern: supervisor # Options: supervisor, swarm, agent-as-tool
+  pattern: supervisor # Options: supervisor, swarm, agent-as-tool, deep
   structured_output_model: SupervisorOutputModel # Optional: Pydantic model for the supervisor's final output.
 
 # 3. Tools Definition: A global registry of tools available to agents.
@@ -534,6 +536,78 @@ agent_list:
 ```
 User Input → Main Agent → (Calls Tool) → Sub-Agent → (Returns Result) → Main Agent → Final Output
 ```
+
+### 5. Deep Agents (Built on deepagents Harness)
+
+**When to use:** Complex, long-horizon tasks requiring planning, intermediate file storage, subagent delegation, and context management. Examples: multi-step research, report generation, complex data pipelines, iterative problem-solving.
+
+In Deep Agent mode, the agent:
+1. **Plans with todos** — breaks the task into a structured plan before execution
+2. **Uses a virtual filesystem** — saves intermediate results to files instead of blowing out the context window
+3. **Delegates via subagents** — spawns specialized subagents for heavy subtasks with fresh context windows
+4. **Manages context** — automatically summarizes and offloads tool outputs
+
+```yaml
+crew_config:
+  pattern: deep          # or: deep_agent: true
+  # optional root deep-agent attributes:
+  # name: my_deep_agent
+  # tools: [search_tool1, search_tool2]
+  # mcps: [mcp_server1]
+  # backend:
+  #   type: filesystem   # or: state (default), store
+  #   root_dir: ./workspace
+  # enable_lazy_loading: true   # schema lookup instead of eager binding
+
+system_prompt: |
+  You are a deep agent. For complex tasks:
+  1. Write a todo list with write_todos
+  2. Delegate research to subagents via the task tool
+  3. Save findings to files
+  4. Produce a final consolidated result
+
+agent_list:
+  - researcher:
+      description: Searches for and synthesizes information on a topic
+      system_prompt: You research topics deeply.
+      tools:
+        - web_search
+        - document_loader
+      mcps:
+        - environment_lookup
+
+  - analyst:
+      description: Analyzes findings and identifies key insights
+      system_prompt: You analyze and synthesize research.
+      tools:
+        - json_analyzer
+```
+
+**Key Features:**
+- **write_todos**: Built-in tool for task planning and tracking
+- **task**: Built-in tool for spawning subagents with isolated context
+- **Filesystem tools**: `read_file`, `write_file`, `edit_file`, `grep`, `ls` — virtual filesystem for context offloading
+- **Lazy MCP loading**: Each subagent gets lightweight `get_input_parameter_schema` + `execute_multiple_tools` instead of binding all MCP tools (saves startup time and tokens)
+- **Concurrent subagent building**: Subagents are built in parallel; shared MCP servers are enumerated once and cached across subagents
+
+**Performance Optimizations:**
+- **Per-server MCP enumeration cache**: If multiple subagents reference the same MCP server, it is spawned and enumerated only once. Result is cached and reused. Second and later loads drop from ~7-12s to ~0s.
+- **Parallel tool loading**: Subagents' regular tools, MCP tools, and knowledge-base tools load concurrently (not sequentially), improving init time significantly.
+- **Lazy MCP loading support**: Enable `enable_lazy_loading: true` in `crew_config` to replace eager MCP tool binding with lightweight schema-lookup meta-tools; the agent calls `get_input_parameter_schema` and `execute_multiple_tools` on demand.
+
+### Running Deep Agent Examples
+
+The framework includes example deep agents in the `examples/` directory:
+
+```bash
+# Simple travel planning agent with subagents
+python examples/agents/deep_agent_demo.py
+
+# Stock research agent using MCP servers
+python examples/agents/deep_research_agent_demo.py
+```
+
+See [examples/agents_config/deep_agent.yaml](examples/agents_config/deep_agent.yaml) and [examples/agents_config/deep_research_agent.yaml](examples/agents_config/deep_research_agent.yaml) for configuration templates.
 
 ## 🤖 Agents Configuration
 
@@ -1530,6 +1604,26 @@ crew_config:
 
 This workflow is automatically handled by the framework when `enable_lazy_loading` is set to true.
 
+### Deep Agents & Lazy Loading
+
+Deep agents work seamlessly with lazy loading. When enabled, subagents and the root deep agent get lightweight `get_input_parameter_schema` and `execute_multiple_tools` meta-tools instead of eager MCP tool bindings. This dramatically reduces startup time and token usage in complex multi-subagent workflows:
+
+```yaml
+crew_config:
+  pattern: deep
+  enable_lazy_loading: true
+
+agent_list:
+  - subagent1:
+      tools: [tool1, tool2]
+      mcps: [mcp_server]
+  - subagent2:
+      tools: [tool3]
+      mcps: [mcp_server]  # shared server, enumerated once and cached
+```
+
+In this scenario, `mcp_server` is spawned and enumerated only once, despite being referenced by multiple subagents. The enumeration result is cached and reused, cutting init time from ~17s to ~7s in the included travel-planning example.
+
 ## 🛡️ Guardrails Integration
 
 Guardrails are essential for creating safe and reliable AI agents. They allow you to validate, structure, and sanitize the inputs and outputs of your agents, ensuring they behave as expected. This framework integrates with [Guardrails AI](https://www.guardrailsai.com/) to provide powerful and flexible validation capabilities.
@@ -1727,6 +1821,10 @@ agent = LangGraphAgent(
 2. **Tool Scoping**: Assign only necessary tools to each agent to reduce hallucination risks.
 3. **Supervisor Prompts**: For multi-agent systems, ensure the supervisor's prompt clearly defines the workflow and delegation strategy.
 4. **Security**: Use environment variables for API keys and sensitive data.
+5. **Deep Agent Planning**: In deep agent mode, write clear `write_todos` instructions into the system prompt so the agent breaks down complex tasks upfront.
+6. **Lazy Loading for Scale**: When deploying with many MCP servers or tools, enable `enable_lazy_loading: true` to reduce init time and token usage.
+7. **Subagent Descriptions**: In deep agent mode, write detailed `description` fields for each subagent so the root agent knows when to delegate to them.
+8. **Shared MCP Servers**: The framework caches MCP server enumeration results per server, so if multiple subagents reference the same server, it is spawned only once.
 
 ## 🐛 Troubleshooting
 
@@ -1743,6 +1841,38 @@ await agent.initialize()
 tools:
   missing_tool:
     module: tool_module
+```
+
+**Issue: Deep agent initialization takes too long**
+```yaml
+# Solution 1: Enable lazy MCP loading (reduces init time by avoiding eager tool binding)
+crew_config:
+  pattern: deep
+  enable_lazy_loading: true
+
+# Solution 2: Shared MCP servers are automatically cached per server.
+# If multiple subagents reference the same server, it is only spawned once.
+# Verify that your subagents reference the same server names.
+agent_list:
+  - subagent1:
+      mcps:
+        - shared_server    # spawned and enumerated once
+  - subagent2:
+      mcps:
+        - shared_server    # cached result reused, no spawn
+```
+
+**Issue: "No subagents registered with the task tool"**
+```yaml
+# Problem: Subagents not added to agent_list, or pattern is not 'deep'
+# Solution: Make sure pattern is set to 'deep' and agent_list contains subagents
+crew_config:
+  pattern: deep
+
+agent_list:
+  - my_subagent:
+      system_prompt: I am a subagent
+      description: Handles specific tasks
 ```
 
 ## 📖 API Reference
