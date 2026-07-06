@@ -220,3 +220,90 @@ async def test_handle_reinitialization_no_user(chat_service):
         chat_service.agent.initialize = AsyncMock()
         await chat_service._handle_reinitialization(None)
         assert chat_service.agent.user_id == "default_user"
+
+
+@pytest.mark.asyncio
+async def test_process_chat_with_custom_agent_name(chat_service):
+    """Test that custom agent_name is used in logging instead of default."""
+    chat_request = ChatRequest(message="Hello", user_id="user1")
+    http_request = MockRequest(headers={"header": "value"})
+    background_tasks = BackgroundTasks()
+
+    chat_service.agent.ainvoke = AsyncMock(return_value={"content": "Response"})
+
+    await chat_service.process_chat(
+        http_request, chat_request, background_tasks, http_request.headers,
+        agent_name="custom_agent"
+    )
+
+    call_args = chat_service.db_logger.log_interaction.call_args
+    assert call_args.kwargs['agent_name'] == "custom_agent"
+
+
+@pytest.mark.asyncio
+async def test_process_chat_without_agent_name_uses_default(chat_service):
+    """Test that default agent_name is used when not provided."""
+    chat_request = ChatRequest(message="Hello", user_id="user1")
+    http_request = MockRequest(headers={"header": "value"})
+    background_tasks = BackgroundTasks()
+
+    chat_service.agent.ainvoke = AsyncMock(return_value={"content": "Response"})
+
+    await chat_service.process_chat(http_request, chat_request, background_tasks, http_request.headers)
+
+    call_args = chat_service.db_logger.log_interaction.call_args
+    assert call_args.kwargs['agent_name'] == chat_service.agent_name
+
+
+@pytest.mark.asyncio
+async def test_process_stream_chat_with_custom_agent_name(chat_service):
+    """Test that custom agent_name is used in streaming logging."""
+    stream_request = StreamChatRequest(message="Stream me", user_id="user1")
+    http_request = MockRequest()
+    background_tasks = BackgroundTasks()
+
+    async def mock_stream(*args, **kwargs):
+        yield {"content": "Chunk 1"}
+        yield {"content": "Chunk 2"}
+
+    chat_service.agent.astream = mock_stream
+
+    response = await chat_service.process_stream_chat(
+        http_request, stream_request, background_tasks, http_request.headers,
+        agent_name="stream_agent"
+    )
+
+    chunks = []
+    async for chunk in response.body_iterator:
+        if isinstance(chunk, bytes):
+            chunk = chunk.decode('utf-8')
+        chunks.append(chunk)
+
+    call_args = chat_service.db_logger.log_interaction.call_args
+    assert call_args.kwargs['agent_name'] == "stream_agent"
+
+
+@pytest.mark.asyncio
+async def test_process_stream_chat_without_agent_name_uses_default(chat_service):
+    """Test that default agent_name is used in streaming when not provided."""
+    stream_request = StreamChatRequest(message="Stream me", user_id="user1")
+    http_request = MockRequest()
+    background_tasks = BackgroundTasks()
+
+    async def mock_stream(*args, **kwargs):
+        yield {"content": "Chunk 1"}
+
+    chat_service.agent.astream = mock_stream
+
+    response = await chat_service.process_stream_chat(
+        http_request, stream_request, background_tasks, http_request.headers
+    )
+
+    chunks = []
+    async for chunk in response.body_iterator:
+        if isinstance(chunk, bytes):
+            chunk = chunk.decode('utf-8')
+        chunks.append(chunk)
+
+    call_args = chat_service.db_logger.log_interaction.call_args
+    assert call_args.kwargs['agent_name'] == chat_service.agent_name

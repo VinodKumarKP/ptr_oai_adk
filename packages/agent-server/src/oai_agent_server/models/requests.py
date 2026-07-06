@@ -3,7 +3,7 @@ import os
 import re
 from typing import Optional, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def _get_max_message_size() -> int:
@@ -64,8 +64,18 @@ def _validate_identifier(v: Optional[str], name: str) -> Optional[str]:
 
 
 class ChatRequest(BaseModel):
-    """Request model for chat endpoint."""
-    message: Union[str, dict]
+    """Request model for chat endpoint supporting both old and new formats.
+
+    Old format: { "message": "hi", "session_id": "...", "user_id": "..." }
+    New format: { "assistant_id": "xyz", "input": { "message": "hi", ... } }
+
+    Both formats are normalized to the same internal structure.
+    If assistant_id is not provided, defaults to the server's configured agent.
+    """
+    message: Optional[Union[str, dict]] = Field(
+        None,
+        description="The chat message (old format or extracted from input)"
+    )
     session_id: Optional[str] = Field(
         None,
         description="Optional session ID for grouping conversations"
@@ -76,6 +86,36 @@ class ChatRequest(BaseModel):
         max_length=100,
         description="User identifier, defaults to 'user'"
     )
+    assistant_id: Optional[str] = Field(
+        None,
+        description="Optional agent/assistant name (new format). If not provided, server default is used"
+    )
+    input: Optional[dict] = Field(
+        None,
+        description="New format: wraps message, session_id, user_id fields"
+    )
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_request_format(cls, values):
+        """Normalize both request formats to a common structure.
+
+        If 'input' field exists (new format), extract its fields to top-level.
+        After this validator, message, session_id, user_id are always at top-level
+        regardless of which format the client used.
+        """
+        # If new format: extract from 'input' and move to top-level
+        if values.get('input') and isinstance(values['input'], dict):
+            input_data = values.pop('input')
+            # Only override top-level if not already explicitly set
+            if 'message' not in values or values['message'] is None:
+                values['message'] = input_data.get('message')
+            if 'session_id' not in values or values['session_id'] is None:
+                values['session_id'] = input_data.get('session_id')
+            if 'user_id' not in values or values['user_id'] is None:
+                values['user_id'] = input_data.get('user_id')
+
+        return values
 
     @field_validator("message", mode="before")
     @classmethod
@@ -127,8 +167,18 @@ class ChatRequest(BaseModel):
 
 
 class StreamChatRequest(BaseModel):
-    """Request model for streaming chat endpoint."""
-    message: Union[str, dict]
+    """Request model for streaming chat endpoint supporting both old and new formats.
+
+    Old format: { "message": "hi", "session_id": "...", "user_id": "..." }
+    New format: { "assistant_id": "xyz", "input": { "message": "hi", ... } }
+
+    Both formats are normalized to the same internal structure.
+    If assistant_id is not provided, defaults to the server's configured agent.
+    """
+    message: Optional[Union[str, dict]] = Field(
+        None,
+        description="The chat message (old format or extracted from input)"
+    )
     session_id: Optional[str] = Field(
         None,
         description="Optional session ID for grouping conversations"
@@ -143,6 +193,36 @@ class StreamChatRequest(BaseModel):
         False,
         description="Include verbose debugging information in response"
     )
+    assistant_id: Optional[str] = Field(
+        None,
+        description="Optional agent/assistant name (new format). If not provided, server default is used"
+    )
+    input: Optional[dict] = Field(
+        None,
+        description="New format: wraps message, session_id, user_id fields"
+    )
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_request_format(cls, values):
+        """Normalize both request formats to a common structure.
+
+        If 'input' field exists (new format), extract its fields to top-level.
+        After this validator, message, session_id, user_id are always at top-level
+        regardless of which format the client used.
+        """
+        # If new format: extract from 'input' and move to top-level
+        if values.get('input') and isinstance(values['input'], dict):
+            input_data = values.pop('input')
+            # Only override top-level if not already explicitly set
+            if 'message' not in values or values['message'] is None:
+                values['message'] = input_data.get('message')
+            if 'session_id' not in values or values['session_id'] is None:
+                values['session_id'] = input_data.get('session_id')
+            if 'user_id' not in values or values['user_id'] is None:
+                values['user_id'] = input_data.get('user_id')
+
+        return values
 
     @field_validator("message", mode="before")
     @classmethod

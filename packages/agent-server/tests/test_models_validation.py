@@ -255,28 +255,137 @@ class TestEdgeCases:
 
 class TestValidationErrorMessages:
     """Test that validation error messages are clear and helpful."""
-    
+
     def test_empty_message_error_is_clear(self):
         """Empty message error should be clear."""
         with pytest.raises(ValidationError) as exc_info:
             ChatRequest(message="")
         assert "empty or whitespace" in str(exc_info.value)
-    
+
     def test_invalid_session_id_error_is_clear(self):
         """Invalid session ID error should be clear."""
         with pytest.raises(ValidationError) as exc_info:
             ChatRequest(message="Hello", session_id="invalid@#$")
         assert "UUID or alphanumeric" in str(exc_info.value)
-    
+
     def test_invalid_user_id_error_is_clear(self):
         """Invalid user ID error should be clear."""
         with pytest.raises(ValidationError) as exc_info:
             ChatRequest(message="Hello", user_id="user@#$%")
         assert "only letters, numbers" in str(exc_info.value)
-    
+
     def test_oversized_message_error_is_clear(self):
         """Oversized message error should be clear."""
         long_msg = "x" * 33000
         with pytest.raises(ValidationError) as exc_info:
             ChatRequest(message=long_msg)
         assert "exceeds maximum allowed size" in str(exc_info.value)
+
+
+class TestDualFormatSupport:
+    """Test dual-format support for old and new request formats."""
+
+    def test_old_format_chat_request(self):
+        """Old format should work: { "message": "...", "session_id": "...", "user_id": "..." }."""
+        req = ChatRequest(
+            message="Hello",
+            session_id="session123",
+            user_id="alice"
+        )
+        assert req.message == "Hello"
+        assert req.session_id == "session123"
+        assert req.user_id == "alice"
+        assert req.assistant_id is None
+        assert req.input is None
+
+    def test_new_format_chat_request_with_input_field(self):
+        """New format should work: { "assistant_id": "xyz", "input": { "message": "...", ... } }."""
+        req = ChatRequest(
+            assistant_id="my_agent",
+            input={
+                "message": "Hello from new format",
+                "session_id": "session456",
+                "user_id": "bob"
+            }
+        )
+        # After normalization, fields should be at top-level
+        assert req.message == "Hello from new format"
+        assert req.session_id == "session456"
+        assert req.user_id == "bob"
+        assert req.assistant_id == "my_agent"
+
+    def test_new_format_without_all_input_fields(self):
+        """New format with partial input fields should be normalized."""
+        req = ChatRequest(
+            assistant_id="agent1",
+            input={
+                "message": "Hello"
+                # session_id and user_id not provided in input
+            }
+        )
+        assert req.message == "Hello"
+        assert req.session_id is None
+        # user_id will be None since it's not in input and top-level
+        assert req.user_id is None
+        assert req.assistant_id == "agent1"
+
+    def test_new_format_with_top_level_overrides(self):
+        """Top-level fields should override input fields."""
+        req = ChatRequest(
+            message="Top level message",
+            session_id="top_level_session",
+            assistant_id="agent1",
+            input={
+                "message": "Input message",  # Should be ignored
+                "session_id": "input_session"  # Should be ignored
+            }
+        )
+        assert req.message == "Top level message"
+        assert req.session_id == "top_level_session"
+        assert req.assistant_id == "agent1"
+
+    def test_assistant_id_optional(self):
+        """assistant_id should be optional."""
+        req = ChatRequest(message="Hello")
+        assert req.assistant_id is None
+
+    def test_stream_request_new_format(self):
+        """StreamChatRequest should also support new format."""
+        req = StreamChatRequest(
+            assistant_id="stream_agent",
+            verbose=True,
+            input={
+                "message": "Stream hello",
+                "session_id": "stream_session",
+                "user_id": "stream_user"
+            }
+        )
+        assert req.message == "Stream hello"
+        assert req.session_id == "stream_session"
+        assert req.user_id == "stream_user"
+        assert req.assistant_id == "stream_agent"
+        assert req.verbose is True
+
+    def test_input_dict_extraction_with_none_message(self):
+        """Input dict should be extracted when top-level message is None."""
+        req = ChatRequest(
+            message=None,
+            input={"message": "From input"}
+        )
+        assert req.message == "From input"
+
+    def test_input_dict_not_extracted_when_message_provided(self):
+        """Top-level message should take precedence over input message."""
+        req = ChatRequest(
+            message="Top level",
+            input={"message": "From input"}
+        )
+        assert req.message == "Top level"
+
+    def test_empty_input_dict_ignored(self):
+        """Empty input dict should be safely ignored."""
+        req = ChatRequest(
+            message="Hello",
+            input={}
+        )
+        assert req.message == "Hello"

@@ -49,10 +49,19 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
         async def chat(request: Request, chat_request: ChatRequest, background_tasks: BackgroundTasks):
             """Process a synchronous chat request.
 
+            Supports both old and new request formats:
+            - Old: { "message": "...", "session_id": "...", "user_id": "..." }
+            - New: { "assistant_id": "xyz", "input": { "message": "...", ... } }
+
+            If assistant_id is not provided, defaults to the server's configured agent.
+
             Returns a free-form dict ``{"content": ..., "session_id": str, "interaction_id": str}``.
             ``content`` is provider-dependent (string or dict with model/token_usage), so the
             response shape isn't constrained by a Pydantic model.
             """
+            # Extract agent name: use assistant_id if provided, otherwise use configured agent
+            agent_name = chat_request.assistant_id or chat_service.agent_name
+
             original_message = chat_request.message
             chat_request.message = FileUploadManager.append_files_to_message(
                 chat_request.message, [], chat_request.session_id
@@ -61,7 +70,8 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                                                    chat_request=chat_request,
                                                    background_tasks=background_tasks,
                                                    headers=request.headers,
-                                                   original_message=original_message)
+                                                   original_message=original_message,
+                                                   agent_name=agent_name)
 
         _with_files_openapi = {
             "requestBody": {
@@ -92,9 +102,14 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                 message: str = Form(...),
                 session_id: Optional[str] = Form(None),
                 user_id: Optional[str] = Form("user"),
+                assistant_id: Optional[str] = Form(None),
                 files: List[UploadFile] = File(default=[])
         ):
-            """Process a synchronous chat request with file uploads."""
+            """Process a synchronous chat request with file uploads.
+
+            Optionally accepts assistant_id to route to a specific agent.
+            If assistant_id is not provided, defaults to the server's configured agent.
+            """
             file_paths, temp_dir = await FileUploadManager.save_files(files)
 
             if temp_dir:
@@ -103,8 +118,12 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
             chat_request = ChatRequest(
                 message=message,
                 session_id=session_id,
-                user_id=user_id
+                user_id=user_id,
+                assistant_id=assistant_id
             )
+
+            # Extract agent name: use assistant_id if provided, otherwise use configured agent
+            agent_name = assistant_id or chat_service.agent_name
 
             original_message = chat_request.message
             chat_request.message = FileUploadManager.append_files_to_message(
@@ -115,13 +134,24 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                                                    background_tasks=background_tasks,
                                                    headers=dict(http_request.headers),
                                                    files=file_paths,
-                                                   original_message=original_message)
+                                                   original_message=original_message,
+                                                   agent_name=agent_name)
 
         @router.post("/stream")
         @_maybe_limit(_chat_rate_limit)
         async def chat_stream(request: Request, stream_request: StreamChatRequest,
                               background_tasks: BackgroundTasks):
-            """Process a streaming chat request."""
+            """Process a streaming chat request.
+
+            Supports both old and new request formats:
+            - Old: { "message": "...", "session_id": "...", "user_id": "..." }
+            - New: { "assistant_id": "xyz", "input": { "message": "...", ... } }
+
+            If assistant_id is not provided, defaults to the server's configured agent.
+            """
+            # Extract agent name: use assistant_id if provided, otherwise use configured agent
+            agent_name = stream_request.assistant_id or chat_service.agent_name
+
             original_message = stream_request.message
             stream_request.message = FileUploadManager.append_files_to_message(
                 stream_request.message, [], stream_request.session_id
@@ -130,7 +160,8 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                                                           stream_request=stream_request,
                                                           background_tasks=background_tasks,
                                                           headers=request.headers,
-                                                          original_message=original_message)
+                                                          original_message=original_message,
+                                                          agent_name=agent_name)
 
         _stream_with_files_openapi = {
             "requestBody": {
@@ -163,9 +194,14 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                 session_id: Optional[str] = Form(None),
                 user_id: Optional[str] = Form("user"),
                 verbose: bool = Form(False),
+                assistant_id: Optional[str] = Form(None),
                 files: List[UploadFile] = File(default=[])
         ):
-            """Process a streaming chat request with file uploads."""
+            """Process a streaming chat request with file uploads.
+
+            Optionally accepts assistant_id to route to a specific agent.
+            If assistant_id is not provided, defaults to the server's configured agent.
+            """
             file_paths, temp_dir = await FileUploadManager.save_files(files)
 
             if temp_dir:
@@ -175,8 +211,12 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                 message=message,
                 session_id=session_id,
                 user_id=user_id,
-                verbose=verbose
+                verbose=verbose,
+                assistant_id=assistant_id
             )
+
+            # Extract agent name: use assistant_id if provided, otherwise use configured agent
+            agent_name = assistant_id or chat_service.agent_name
 
             original_message = stream_request.message
             stream_request.message = FileUploadManager.append_files_to_message(
@@ -187,6 +227,7 @@ def create_chat_router(chat_service: Any, allowed_modes: Optional[List[str]] = N
                                                           background_tasks=background_tasks,
                                                           headers=dict(http_request.headers),
                                                           files=file_paths,
-                                                          original_message=original_message)
+                                                          original_message=original_message,
+                                                          agent_name=agent_name)
 
     return router
