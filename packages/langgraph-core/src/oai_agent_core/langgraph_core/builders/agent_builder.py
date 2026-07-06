@@ -9,6 +9,8 @@ from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph_supervisor import create_supervisor
+from pydantic import ValidationError
+
 from oai_agent_core.builders.base_agent_builder import BaseAgentBuilder
 from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
@@ -17,6 +19,7 @@ from oai_agent_core.core.constants import Constants
 from oai_agent_core.langgraph_core.components.configuration.model_config import \
     LangChainModelConfigurationManager as ModelConfigurationManager
 from oai_agent_core.langgraph_core.components.registry.tool_registry import LangChainToolRegistry
+from oai_agent_core.langgraph_core.config import BackendConfig
 
 
 class AgentBuilder(BaseAgentBuilder):
@@ -327,44 +330,51 @@ class AgentBuilder(BaseAgentBuilder):
         return subagent
 
     def _create_deep_agent_backend(self, backend_config: Any) -> Any:
-        """Create a deepagents filesystem backend from configuration.
+        """Create a deepagents backend from configuration.
 
         Args:
-            backend_config: ``None`` (default in-state filesystem), a string
+            backend_config: ``None`` (default in-memory state), a string
                 (``state``, ``filesystem``, ``store``), or a dict with a
                 ``type`` key plus backend-specific options
                 (e.g. ``root_dir`` for ``filesystem``).
 
         Returns:
-            Backend instance, or None to use the deepagents default.
+            Backend instance, or None for state (in-memory) backend.
+
+        Raises:
+            ValueError: If configuration is invalid.
         """
         if not backend_config:
             return None
 
-        if isinstance(backend_config, str):
-            backend_type = backend_config
-            options: Dict[str, Any] = {}
-        elif isinstance(backend_config, dict):
-            backend_type = backend_config.get('type', 'state')
-            options = {k: v for k, v in backend_config.items() if k != 'type'}
-        else:
+        try:
+            if isinstance(backend_config, str):
+                config = BackendConfig(type=backend_config)
+            elif isinstance(backend_config, dict):
+                config = BackendConfig(**backend_config)
+            else:
+                raise ValueError(
+                    f"Invalid backend config type: {type(backend_config).__name__}. "
+                    "Expected None, string, or dict."
+                )
+        except ValidationError as e:
             raise ValueError(
-                f"Invalid deep_agent backend config: {backend_config!r}"
+                f"Invalid backend configuration: {e}"
             )
 
-        if backend_type == 'state':
+        backend_dict = config.to_deepagents_format()
+        if backend_dict is None:
             return None
+
+        backend_type = config.type
         if backend_type == 'filesystem':
             from deepagents.backends import FilesystemBackend
-            return FilesystemBackend(**options)
+            return FilesystemBackend(**backend_dict)
         if backend_type == 'store':
             from deepagents.backends import StoreBackend
-            return StoreBackend(**options)
+            return StoreBackend(**backend_dict)
 
-        raise ValueError(
-            f"Unknown deep_agent backend type: '{backend_type}'. "
-            "Expected one of: state, filesystem, store"
-        )
+        return None
 
     def _create_agent_as_tool(self, agent: Any, name: str, description: str) -> Any:
         """Wrap an agent as a tool.
