@@ -104,7 +104,7 @@ def book_flight(
 
 # Hotel tools
 @tool
-def search_hotels(location: str) -> list[dict]:
+def search_hotels(location: str, date: Optional[str] = None) -> list[dict]:
     """Search hotels.
 
     Args:
@@ -127,7 +127,7 @@ def book_hotel(
         hotel_id: The hotel ID
         user_id: The user ID
     """
-    matches = [hotel for hotel in HOTELS if hotel["id"] == hotel_id]
+    matches = [hotel for hotel in HOTELS if hotel["id"] == str(hotel_id)]
     if not matches:
         return f"Error: Hotel ID {hotel_id} not found."
         

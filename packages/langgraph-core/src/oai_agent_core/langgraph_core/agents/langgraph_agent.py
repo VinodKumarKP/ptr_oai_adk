@@ -313,44 +313,83 @@ class LangGraphAgent(BaseAgent):
 
         yielded_message_count = 0
         final_response_content = ""
+        stream_mode = config.get('stream_mode', 'values') if config else 'values'
+        subgraphs = config.get('subgraphs', False) if config else False
 
         try:
             async for chunk in traced_stream(
                     "agent.llm.invoke",
                     self.agent.astream(
                         {"messages": [{"role": "user", "content": formatted_message}]},
-                        stream_mode="values",
+                        stream_mode=stream_mode,
+                        subgraphs=subgraphs,
                         config=self._generate_runnable_config(config)
                     ),
                     agent_name=self.agent_name,
             ):
                 verbose = config.get('verbose', False) if config else False
                 if verbose:
-                    if hasattr(chunk, 'get') and 'messages' in chunk:
-                        messages = chunk['messages']
-                        # Yield only new messages that haven't been yielded yet
-                        for i in range(yielded_message_count, len(messages)):
-                            message_chunk = {'messages': [messages[i]]}
-                            formatted_chunk = self.result_extractor.format_stream_chunk(
-                                message_chunk,
-                                session_id=self.session_id,
-                                model_id=getattr(self.llm, 'model', 'unknown'),
-                                model_provider=self.agent_config.get('cloud_provider', 'langchain'),
-                                is_final=False,
-                                include_raw=config.get('include_raw', False) if config else False,
-                                input_message=formatted_message if config and config.get('include_input_message', False) else None,
-                                original_message=actual_original_message if config and config.get('include_original_message', False) else None
-                            )
-                            yield formatted_chunk
+                    # Use result_extractor to handle all format types (dict, tuple, etc.)
+                    messages = self.result_extractor.extract_messages(
+                        chunk,
+                        stream_mode=stream_mode,
+                        subgraphs=subgraphs
+                    )
 
-                            # Track last message content for memory
-                            if hasattr(messages[i], 'content'):
-                                final_response_content = messages[i].content
-                            elif isinstance(messages[i], dict) and 'content' in messages[i]:
-                                final_response_content = messages[i]['content']
+                    if messages:
+                        # Deduplication logic differs by stream_mode:
+                        # - stream_mode="values": Cumulative - deduplicate by tracking yielded count
+                        # - stream_mode="messages": Delta/Incremental - already new, yield directly
+                        if stream_mode == "values":
+                            # Yield only new messages that haven't been yielded yet
+                            for i in range(yielded_message_count, len(messages)):
+                                message_chunk = {'messages': [messages[i]]}
+                                formatted_chunk = self.result_extractor.format_stream_chunk(
+                                    message_chunk,
+                                    session_id=self.session_id,
+                                    model_id=getattr(self.llm, 'model', 'unknown'),
+                                    model_provider=self.agent_config.get('cloud_provider', 'langchain'),
+                                    is_final=False,
+                                    include_raw=config.get('include_raw', False) if config else False,
+                                    input_message=formatted_message if config and config.get('include_input_message', False) else None,
+                                    original_message=actual_original_message if config and config.get('include_original_message', False) else None,
+                                    stream_mode=stream_mode,
+                                    subgraphs=subgraphs
+                                )
+                                yield formatted_chunk
 
-                        yielded_message_count = len(messages)
+                                # Track last message content for memory
+                                if hasattr(messages[i], 'content'):
+                                    final_response_content = messages[i].content
+                                elif isinstance(messages[i], dict) and 'content' in messages[i]:
+                                    final_response_content = messages[i]['content']
+
+                            yielded_message_count = len(messages)
+                        else:
+                            # stream_mode="messages": Messages are already new/delta, yield all
+                            for msg in messages:
+                                message_chunk = {'messages': [msg]}
+                                formatted_chunk = self.result_extractor.format_stream_chunk(
+                                    message_chunk,
+                                    session_id=self.session_id,
+                                    model_id=getattr(self.llm, 'model', 'unknown'),
+                                    model_provider=self.agent_config.get('cloud_provider', 'langchain'),
+                                    is_final=False,
+                                    include_raw=config.get('include_raw', False) if config else False,
+                                    input_message=formatted_message if config and config.get('include_input_message', False) else None,
+                                    original_message=actual_original_message if config and config.get('include_original_message', False) else None,
+                                    stream_mode=stream_mode,
+                                    subgraphs=subgraphs
+                                )
+                                yield formatted_chunk
+
+                                # Track last message content for memory
+                                if hasattr(msg, 'content'):
+                                    final_response_content = msg.content
+                                elif isinstance(msg, dict) and 'content' in msg:
+                                    final_response_content = msg['content']
                     else:
+                        # Fallback if no messages extracted
                         formatted_chunk = self.result_extractor.format_stream_chunk(
                             chunk,
                             session_id=self.session_id,
@@ -361,7 +400,9 @@ class LangGraphAgent(BaseAgent):
                             input_message=formatted_message if config and config.get('include_input_message',
                                                                                      False) else None,
                             original_message=actual_original_message if config and config.get('include_original_message',
-                                                                                   False) else None
+                                                                                   False) else None,
+                            stream_mode=stream_mode,
+                            subgraphs=subgraphs
                         )
                         yield formatted_chunk
                 else:
@@ -375,15 +416,22 @@ class LangGraphAgent(BaseAgent):
                         input_message=formatted_message if config and config.get('include_input_message',
                                                                                  False) else None,
                         original_message=actual_original_message if config and config.get('include_original_message',
-                                                                               False) else None
+                                                                               False) else None,
+                        stream_mode=stream_mode,
+                        subgraphs=subgraphs
                     )
                     formatted_chunk['content']['text'] = self._guardrail_output_message(formatted_chunk['content']['text'])
                     yield formatted_chunk
 
                     # Track content for memory if available in chunk
-                    # Note: In non-verbose mode, chunk structure depends on stream_mode="values"
-                    if isinstance(chunk, dict) and 'messages' in chunk and chunk['messages']:
-                        last_msg = chunk['messages'][-1]
+                    # Use result_extractor to handle all format types
+                    messages = self.result_extractor.extract_messages(
+                        chunk,
+                        stream_mode=stream_mode,
+                        subgraphs=subgraphs
+                    )
+                    if messages:
+                        last_msg = messages[-1]
                         if hasattr(last_msg, 'content'):
                             final_response_content = last_msg.content
                         elif isinstance(last_msg, dict) and 'content' in last_msg:
