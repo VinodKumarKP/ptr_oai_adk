@@ -31,8 +31,19 @@ class ChatService:
                            background_tasks: BackgroundTasks,
                            headers,
                            files: Optional[List[str]] = None,
-                           original_message: Optional[str] = None):
-        """Process a synchronous chat request."""
+                           original_message: Optional[str] = None,
+                           agent_name: Optional[str] = None):
+        """Process a synchronous chat request.
+
+        Args:
+            http_request: The HTTP request object
+            chat_request: The chat request model
+            background_tasks: FastAPI background tasks
+            headers: Request headers
+            files: Optional list of file paths
+            original_message: Original user message (before processing)
+            agent_name: Optional agent name to use. If not provided, uses the configured agent.
+        """
         start_time = time.time()
         interaction_id = str(uuid.uuid4())
         session_id = chat_request.session_id or str(uuid.uuid4())
@@ -41,6 +52,8 @@ class ChatService:
                    chat_request.user_id or
                    "user")
         status = "success"
+        # Use provided agent_name, otherwise fall back to configured agent
+        resolved_agent_name = agent_name or self.agent_name
 
         config = {
             "session_id": session_id,
@@ -61,7 +74,7 @@ class ChatService:
 
             await self.db_logger.log_interaction(
                 interaction_id=interaction_id,
-                agent_name=self.agent_name,
+                agent_name=resolved_agent_name,
                 session_id=session_id,
                 user_id=user_id,
                 endpoint="/chat",
@@ -78,7 +91,7 @@ class ChatService:
                 background_tasks.add_task(
                     self.llm_judge_service.judge_interaction,
                     interaction_id=interaction_id,
-                    agent_name=self.agent_name,
+                    agent_name=resolved_agent_name,
                     user_message=chat_request.message,
                     agent_response=output_response,
                     session_id=session_id,
@@ -96,8 +109,19 @@ class ChatService:
                                   background_tasks: BackgroundTasks,
                                   headers,
                                   files: Optional[List[str]] = None,
-                                  original_message: Optional[str] = None):
-        """Process a streaming chat request."""
+                                  original_message: Optional[str] = None,
+                                  agent_name: Optional[str] = None):
+        """Process a streaming chat request.
+
+        Args:
+            http_request: The HTTP request object
+            stream_request: The streaming chat request model
+            background_tasks: FastAPI background tasks
+            headers: Request headers
+            files: Optional list of file paths
+            original_message: Original user message (before processing)
+            agent_name: Optional agent name to use. If not provided, uses the configured agent.
+        """
         start_time = time.time()
         interaction_id = str(uuid.uuid4())
         session_id = stream_request.session_id or str(uuid.uuid4())
@@ -105,6 +129,8 @@ class ChatService:
                    getattr(http_request.state, 'user_id', None) or
                    stream_request.user_id or
                    "user")
+        # Use provided agent_name, otherwise fall back to configured agent
+        resolved_agent_name = agent_name or self.agent_name
 
         config = {
             "session_id": session_id,
@@ -149,7 +175,7 @@ class ChatService:
                     background_tasks.add_task(
                         self.llm_judge_service.judge_interaction,
                         interaction_id=interaction_id,
-                        agent_name=self.agent_name,
+                        agent_name=resolved_agent_name,
                         user_message=stream_request.message,
                         agent_response=output_response,
                         session_id=session_id,
@@ -159,13 +185,13 @@ class ChatService:
                 if activity_chunks:
                     await self.db_logger.log_stream_chunks_batch(
                         interaction_id=interaction_id,
-                        agent_name=self.agent_name, session_id=session_id, user_id=user_id,
+                        agent_name=resolved_agent_name, session_id=session_id, user_id=user_id,
                         endpoint="/chat/stream", chunks=activity_chunks, request_headers=headers
                     )
 
                 await self.db_logger.log_interaction(
                     interaction_id=interaction_id,
-                    agent_name=self.agent_name, session_id=session_id, user_id=user_id,
+                    agent_name=resolved_agent_name, session_id=session_id, user_id=user_id,
                     endpoint="/chat/stream", input_message=stream_request.message,
                     output_response=output_response, request_headers=headers,
                     model_info=last_response.get('model') if isinstance(last_response, dict) else None,
