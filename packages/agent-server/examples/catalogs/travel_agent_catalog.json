@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mycompany.com:hotel-catalog",
+  "title": "Hotel Booking Catalog",
+  "description": "Example custom A2UI catalog. The client must register implementations for every component listed here under the same catalog id.",
+  "components": {
+    "Column": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "const": "Column"
+        },
+        "children": {
+          "description": "Child component ids or a template."
+        }
+      },
+      "required": [
+        "component",
+        "children"
+      ]
+    },
+    "Text": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "const": "Text"
+        },
+        "text": {
+          "description": "The text content."
+        },
+        "variant": {
+          "enum": [
+            "h1",
+            "h2",
+            "body",
+            "caption"
+          ]
+        }
+      },
+      "required": [
+        "component",
+        "text"
+      ]
+    },
+    "HotelCard": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "const": "HotelCard"
+        },
+        "name": {
+          "description": "Hotel name."
+        },
+        "neighborhood": {
+          "description": "Neighborhood label."
+        },
+        "pricePerNight": {
+          "description": "Nightly price, number."
+        },
+        "totalPrice": {
+          "description": "Total price for the stay, number."
+        },
+        "imageUrl": {
+          "description": "Optional hotel photo URL."
+        },
+        "action": {
+          "description": "Fired when the card's book button is pressed."
+        }
+      },
+      "required": [
+        "component",
+        "name",
+        "totalPrice",
+        "action"
+      ]
+    },
+    "HotelList": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "const": "HotelList"
+        },
+        "children": {
+          "description": "Template repeating a HotelCard over a data-model array."
+        }
+      },
+      "required": [
+        "component",
+        "children"
+      ]
+    },
+    "HotelBookingForm": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "const": "HotelBookingForm"
+        },
+        "hotelName": {
+          "description": "Name of the hotel to book."
+        },
+        "checkInDate": {
+          "description": "Check-in date."
+        },
+        "checkOutDate": {
+          "description": "Check-out date."
+        },
+        "guests": {
+          "description": "Number of guests."
+        },
+        "totalPrice": {
+          "description": "Total price for the booking, number."
+        },
+        "action": {
+          "description": "Fired when the confirm booking button is pressed."
+        }
+      },
+      "required": [
+        "component",
+        "hotelName",
+        "checkInDate",
+        "checkOutDate",
+        "totalPrice",
+        "action"
+      ]
+    },
+    "FlightCard": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "const": "FlightCard"
+        },
+        "airline": {
+          "description": "Airline name."
+        },
+        "flightNumber": {
+          "description": "Flight number."
+        },
+        "departureAirport": {
+          "description": "Departure airport code or name."
+        },
+        "arrivalAirport": {
+          "description": "Arrival airport code or name."
+        },
+        "departureTime": {
+          "description": "Departure time."
+        },
+        "arrivalTime": {
+          "description": "Arrival time."
+        },
+        "price": {
+          "description": "Flight price, number."
+        },
+        "action": {
+          "description": "Fired when the flight's book button is pressed."
+        }
+      },
+      "required": [
+        "component",
+        "airline",
+        "departureAirport",
+        "arrivalAirport",
+        "price",
+        "action"
+      ]
+    },
+    "FlightList": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "const": "FlightList"
+        },
+        "children": {
+          "description": "Template repeating a FlightCard over a data-model array."
+        }
+      },
+      "required": [
+        "component",
+        "children"
+      ]
+    },
+    "FlightBookingForm": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "const": "FlightBookingForm"
+        },
+        "airline": {
+          "description": "Airline name."
+        },
+        "flightNumber": {
+          "description": "Flight number."
+        },
+        "departure": {
+          "description": "Departure details (airport/time)."
+        },
+        "arrival": {
+          "description": "Arrival details (airport/time)."
+        },
+        "passengers": {
+          "description": "Number of passengers."
+        },
+        "totalPrice": {
+          "description": "Total price for the booking, number."
+        },
+        "action": {
+          "description": "Fired when the confirm booking button is pressed."
+        }
+      },
+      "required": [
+        "component",
+        "airline",
+        "flightNumber",
+        "totalPrice",
+        "action"
+      ]
+    }
+  }
+}

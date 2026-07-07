@@ -785,7 +785,7 @@ class BaseAgent(ABC):
         # instruct the model to emit A2UI v0.9 JSON blocks that the A2A server
         # layer converts into renderable UI parts. The component reference is
         # generated from agui_config.catalog_path when a custom catalog is used.
-        agui_instructions = build_agui_instructions(self.agent_config)
+        agui_instructions = build_agui_instructions(self.agent_config, self.config_root)
         if agui_instructions:
             augmented_message = f"{augmented_message}\n\n{agui_instructions}"
 

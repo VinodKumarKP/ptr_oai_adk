@@ -29,6 +29,7 @@ import json
 import logging
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -85,8 +86,12 @@ def _load_catalog(resolved_path: str) -> Dict[str, Any]:
         return json.load(fh)
 
 
-def load_catalog(path: str) -> Dict[str, Any]:
+def load_catalog(path: str,
+                 config_root: Optional[str] = None) -> Dict[str, Any]:
     """Loads (and caches) an A2UI catalog schema from a JSON file."""
+    path1 = Path(path)
+    if config_root and not path1.is_absolute():
+        path = os.path.join(config_root, path1)
     return _load_catalog(os.path.abspath(path))
 
 
@@ -139,7 +144,8 @@ def generate_components_section(catalog: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def resolve_catalog(agent_config: Optional[Dict[str, Any]]) -> Dict[str, str]:
+def resolve_catalog(agent_config: Optional[Dict[str, Any]],
+                    config_root: Optional[str] = None) -> Dict[str, str]:
     """
     Resolves the catalog id and components section for an agent config.
     Falls back to the A2UI basic catalog when no custom catalog is set or
@@ -151,7 +157,7 @@ def resolve_catalog(agent_config: Optional[Dict[str, Any]]) -> Dict[str, str]:
 
     if catalog_path:
         try:
-            catalog = load_catalog(str(catalog_path))
+            catalog = load_catalog(str(catalog_path), config_root)
             return {
                 "catalog_id": str(catalog_id or catalog.get("$id") or catalog_path),
                 "components_section": generate_components_section(catalog),
@@ -279,7 +285,8 @@ type-specific properties (`?` marks optional):
     return instructions
 
 
-def build_agui_instructions(agent_config: Optional[Dict[str, Any]]) -> Optional[str]:
+def build_agui_instructions(agent_config: Optional[Dict[str, Any]],
+                            config_root: Optional[str] = None) -> Optional[str]:
     """
     Single entry point: returns the instruction block for an agent config,
     or None when A2UI is disabled. Used by BaseAgent._augment_message to
@@ -287,7 +294,7 @@ def build_agui_instructions(agent_config: Optional[Dict[str, Any]]) -> Optional[
     """
     if not is_agui_enabled(agent_config):
         return None
-    resolved = resolve_catalog(agent_config)
+    resolved = resolve_catalog(agent_config, config_root)
     return get_a2ui_system_instructions(
         catalog_id=resolved["catalog_id"],
         components_section=resolved["components_section"],

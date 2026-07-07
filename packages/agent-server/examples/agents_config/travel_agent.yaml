@@ -24,3 +24,9 @@ agent_list:
 
 crew_config:
   pattern: supervisor
+  agui_config:
+    enabled: true
+    # Optional custom catalog (Case B): generate the component reference for
+    # the LLM from your own catalog schema instead of the A2UI basic catalog.
+    catalog_path: ./catalogs/travel_agent_catalog.json
+    # catalog_id: mycompany.com:hotel-catalog   # overrides the file's $id
