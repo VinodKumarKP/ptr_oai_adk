@@ -46,7 +46,12 @@ class ChatService:
         """
         start_time = time.time()
         interaction_id = str(uuid.uuid4())
-        session_id = chat_request.session_id or str(uuid.uuid4())
+        # request.state.session_id (bound from the AgentCore runtime session
+        # header in platform auth mode) is authoritative over the body field:
+        # on AgentCore the platform routes each session id to its own microVM.
+        session_id = (getattr(http_request.state, 'session_id', None) or
+                      chat_request.session_id or
+                      str(uuid.uuid4()))
         user_id = (getattr(http_request.state, 'user_email', None) or
                    getattr(http_request.state, 'user_id', None) or
                    chat_request.user_id or
@@ -124,7 +129,10 @@ class ChatService:
         """
         start_time = time.time()
         interaction_id = str(uuid.uuid4())
-        session_id = stream_request.session_id or str(uuid.uuid4())
+        # Same precedence as process_chat: platform-bound session id wins.
+        session_id = (getattr(http_request.state, 'session_id', None) or
+                      stream_request.session_id or
+                      str(uuid.uuid4()))
         user_id = (getattr(http_request.state, 'user_email', None) or
                    getattr(http_request.state, 'user_id', None) or
                    stream_request.user_id or

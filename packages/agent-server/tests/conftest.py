@@ -81,6 +81,25 @@ if 'oai_agent_core' not in sys.modules:
     dotenv_loader_mod.load_dotenv = MagicMock(return_value=0)
     sys.modules['oai_agent_core.utils.dotenv_loader'] = dotenv_loader_mod
 
+    # Deployment helper: mirror the real (tiny, env-driven) implementation so
+    # tests can exercise AgentCore behavior by setting DEPLOYMENT_TARGET.
+    deployment_mod = types.ModuleType('oai_agent_core.utils.deployment')
+
+    def _mock_get_deployment_target():
+        return os.environ.get("DEPLOYMENT_TARGET", "").strip().lower()
+
+    def _mock_is_agentcore_runtime():
+        return _mock_get_deployment_target() == "agentcore"
+
+    def _mock_is_runtime_package_install_disabled():
+        flag = os.environ.get("DISABLE_RUNTIME_PACKAGE_INSTALL", "").strip().lower()
+        return _mock_is_agentcore_runtime() or flag in {"1", "true", "yes", "on"}
+
+    deployment_mod.get_deployment_target = _mock_get_deployment_target
+    deployment_mod.is_agentcore_runtime = _mock_is_agentcore_runtime
+    deployment_mod.is_runtime_package_install_disabled = _mock_is_runtime_package_install_disabled
+    sys.modules['oai_agent_core.utils.deployment'] = deployment_mod
+
 # Mock redis
 if 'redis' not in sys.modules:
     redis = MagicMock()

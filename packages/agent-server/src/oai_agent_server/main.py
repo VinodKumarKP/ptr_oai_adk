@@ -28,6 +28,7 @@ except ImportError:
 
 from oai_agent_core.components.configuration.model_config import ConfigManager
 from oai_agent_core.core.base_agent import BaseAgent
+from oai_agent_core.utils.deployment import is_agentcore_runtime
 from oai_agent_core.utils.dotenv_loader import load_dotenv
 from oai_agent_core.utils.logger import get_logger
 
@@ -40,6 +41,7 @@ from oai_agent_server.middleware.observability import (
     ObservabilityMiddleware, StreamingMetricsMiddleware
 )
 from oai_agent_server.routers.agent import create_agent_router
+from oai_agent_server.routers.agentcore import create_agentcore_router
 from oai_agent_server.routers.chat import create_chat_router
 from oai_agent_server.routers.health import create_health_router
 from oai_agent_server.routers.logs import create_logs_router
@@ -168,6 +170,22 @@ class AgentHTTPServer:
 
     ALWAYS_ACTIVE_MODES = {"health", "agent", "chat", "logs", "a2a", "monitoring", "token", "readme"}
 
+    @classmethod
+    def _resolve_always_active_modes(cls) -> set:
+        """Modes that are always enabled regardless of ``allowed_modes``.
+
+        Overridable via the ``ALWAYS_ACTIVE_MODES`` env var (comma-separated)
+        so slim deployments — e.g. AWS Bedrock AgentCore, where the container
+        serves a single session and the platform provides auth and
+        observability — can run a minimal surface such as
+        ``ALWAYS_ACTIVE_MODES=health,chat``. Defaults to the full historical
+        set so existing deployments are unaffected.
+        """
+        env_value = os.environ.get("ALWAYS_ACTIVE_MODES")
+        if env_value is not None:
+            return {m.strip() for m in env_value.split(",") if m.strip()}
+        return set(cls.ALWAYS_ACTIVE_MODES)
+
     def __init__(
         self,
         agent: BaseAgent,
@@ -196,11 +214,16 @@ class AgentHTTPServer:
         self.server_state = ServerState()
         self.a2a_agent_card = None
 
+        always_active = self._resolve_always_active_modes()
         self.allowed_modes = (
-            list(self.ALWAYS_ACTIVE_MODES)
+            list(always_active)
             if allowed_modes is None
-            else list(set(allowed_modes).union(self.ALWAYS_ACTIVE_MODES))
+            else list(set(allowed_modes).union(always_active))
         )
+        # Running under AWS Bedrock AgentCore (DEPLOYMENT_TARGET=agentcore)
+        # implies the AgentCore HTTP contract endpoints must be served.
+        if is_agentcore_runtime() and "agentcore" not in self.allowed_modes:
+            self.allowed_modes.append("agentcore")
 
         self.a2a_base_url = a2a_base_url
         self.a2a_streaming = a2a_streaming
@@ -277,10 +300,11 @@ class AgentHTTPServer:
     # ------------------------------------------------------------------
 
     def set_allowed_modes(self, allowed_modes: List[str]=None):
+        always_active = self._resolve_always_active_modes()
         self.allowed_modes = (
-            list(self.ALWAYS_ACTIVE_MODES)
+            list(always_active)
             if allowed_modes is None
-            else list(set(allowed_modes).union(self.ALWAYS_ACTIVE_MODES))
+            else list(set(allowed_modes).union(always_active))
         )
         self._setup_routes()
 
@@ -396,6 +420,24 @@ class AgentHTTPServer:
         if a2a_router:
             self.app.include_router(a2a_router, prefix="/a2a")
             self.a2a_agent_card = agent_card
+            # Dual-mount at the root when serving the AgentCore A2A protocol
+            # contract (the data plane forwards A2A JSON-RPC to "/" on port
+            # 9000 and discovery to /.well-known/agent-card.json). The /a2a
+            # prefix mount stays for self-hosted callers, so one image serves
+            # both deployment targets.
+            if os.environ.get("A2A_MOUNT_ROOT", "false").lower() == "true":
+                self.app.include_router(a2a_router)
+                self.logger.info(
+                    "A2A routes additionally mounted at root (A2A_MOUNT_ROOT=true)"
+                )
+
+        # AgentCore HTTP protocol contract (/invocations, /ping) — enabled via
+        # the "agentcore" mode (automatic when DEPLOYMENT_TARGET=agentcore).
+        agentcore_router = create_agentcore_router(
+            self.chat_service, self.server_state, self.allowed_modes,
+        )
+        if agentcore_router:
+            self.app.include_router(agentcore_router)
 
         if os.environ.get("ENABLE_SCHEDULER", "true").lower() != "false":
             try:
@@ -505,12 +547,24 @@ class AgentHTTPServer:
                 create_database_health_check(self.db_logger)
             )
             
+            # On AgentCore the container boots per session, so startup work is
+            # per-user cold-start latency: skip warm-up steps that only pay off
+            # on long-lived servers (judge pre-init makes a model call; the
+            # judge still lazily initializes on first use if monitoring is on).
+            slim_startup = is_agentcore_runtime()
+            if slim_startup:
+                self.logger.info(
+                    "AgentCore deployment detected: using slim startup "
+                    "(skipping judge pre-init, circuit breakers and registry "
+                    "self-registration)"
+                )
+
             # Pre-initialize LLM judge service to eliminate first-request latency
-            if "monitoring" in self.allowed_modes:
+            if "monitoring" in self.allowed_modes and not slim_startup:
                 try:
                     await self.llm_judge_service.initialize_judge_agent()
                     self.logger.info("LLM Judge service pre-initialized")
-                    
+
                     # Register LLM judge health check
                     self.health_check_collector.register_component_check(
                         "llm_judge",
@@ -518,33 +572,36 @@ class AgentHTTPServer:
                     )
                 except Exception as e:
                     self.logger.warning(f"Failed to pre-initialize judge service: {e}; will initialize on first request")
-            
-            # Initialize Phase 4 robustness features (circuit breakers and retry policies)
-            # Register circuit breakers for common services
-            await self.circuit_breaker_registry.register(
-                "llm_service",
-                failure_threshold=5,
-                success_threshold=2,
-                timeout=60,
-            )
-            await self.circuit_breaker_registry.register(
-                "external_api",
-                failure_threshold=5,
-                success_threshold=2,
-                timeout=60,
-            )
-            
-            # Register retry policies for common services
-            self.retry_registry.register_policy(
-                "llm_service",
-                create_http_retry_config("llm_service", self.logger)
-            )
-            self.retry_registry.register_policy(
-                "external_api",
-                create_http_retry_config("external_api", self.logger)
-            )
-            
-            self.logger.info("Phase 4 robustness features initialized (circuit breakers, retry policies, caching, versioning)")
+
+            if not slim_startup:
+                # Initialize Phase 4 robustness features (circuit breakers and retry policies)
+                # These protect a shared long-lived process; in a single-session
+                # microVM they only add boot time.
+                # Register circuit breakers for common services
+                await self.circuit_breaker_registry.register(
+                    "llm_service",
+                    failure_threshold=5,
+                    success_threshold=2,
+                    timeout=60,
+                )
+                await self.circuit_breaker_registry.register(
+                    "external_api",
+                    failure_threshold=5,
+                    success_threshold=2,
+                    timeout=60,
+                )
+
+                # Register retry policies for common services
+                self.retry_registry.register_policy(
+                    "llm_service",
+                    create_http_retry_config("llm_service", self.logger)
+                )
+                self.retry_registry.register_policy(
+                    "external_api",
+                    create_http_retry_config("external_api", self.logger)
+                )
+
+                self.logger.info("Phase 4 robustness features initialized (circuit breakers, retry policies, caching, versioning)")
             
             # Build the persistent A2A task store now that the DB backend is up.
             if (
@@ -600,7 +657,11 @@ class AgentHTTPServer:
                     "Scheduler disabled via ENABLE_SCHEDULER=false"
                 )
                 self.app.state.scheduler = None
-            await self._register_with_registry()
+            # Startup self-registration targets a localhost registry and runs
+            # per-session on AgentCore — registration happens at deploy time
+            # there instead (CI posts the data-plane endpoint to the registry).
+            if not slim_startup:
+                await self._register_with_registry()
         except Exception:
             self.logger.error(
                 "Failed to initialize agent during startup", exc_info=True
@@ -609,7 +670,11 @@ class AgentHTTPServer:
 
     async def shutdown(self):
         self.logger.info("Shutting down agent server.")
-        await self._deregister_from_registry()
+        # Skip on AgentCore: registration is managed at deploy time there, and
+        # AGENT_BASE_URL (set for the agent card URL) would otherwise trigger a
+        # bogus localhost deregister on every session teardown.
+        if not is_agentcore_runtime():
+            await self._deregister_from_registry()
         # Stop the A2A task-store cleanup loop before closing DB connections.
         try:
             if self._a2a_task_store is not None and hasattr(
@@ -632,6 +697,16 @@ class AgentHTTPServer:
             self.logger.error("Failed to close database logger", exc_info=True)
 
     def run(self, host: str = "0.0.0.0", port: int = 8000):
+        # PORT env wins: the AgentCore service contract fixes the listen port
+        # per protocol (HTTP contract: 8080, A2A contract: 9000), and the
+        # deployment image sets it without touching launch args.
+        env_port = os.environ.get("PORT")
+        if env_port:
+            try:
+                port = int(env_port)
+            except ValueError:
+                self.logger.warning(f"Ignoring invalid PORT env value: {env_port!r}")
+
         if self.a2a_agent_card and 'placeholder' in self.a2a_agent_card.supported_interfaces[0].url:
             # URL was not set by env var or config, so build it dynamically
             display_host = "localhost" if host == "0.0.0.0" else host

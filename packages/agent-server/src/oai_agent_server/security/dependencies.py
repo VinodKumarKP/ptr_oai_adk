@@ -103,7 +103,9 @@ async def verify_api_key(
     """
     # Bypass authentication for /health, /ready, /status and /metrics endpoints
     # /metrics must be unauthenticated so Prometheus can scrape it without credentials
-    if request.url.path in ["/health", "/ready", "/status", "/metrics"]:
+    # /ping is the AgentCore Runtime health probe: the platform calls it
+    # directly (no caller credentials), so it must behave like /health.
+    if request.url.path in ["/health", "/ready", "/status", "/metrics", "/ping"]:
         return True
 
     # 1. Check if Auth is globally enabled
@@ -111,6 +113,24 @@ async def verify_api_key(
     auth_enabled = original_environ.get('AGENT_AUTH_ENABLED', 'true').lower() == 'true'
 
     if not auth_enabled:
+        return True
+
+    # 1b. Platform mode (AWS Bedrock AgentCore): the data plane has already
+    # authenticated the caller (SigV4 or OAuth) before forwarding the request —
+    # the container is unreachable except through it. The runtime session
+    # header identifies the conversation and is bound to request.state for
+    # session continuity. It is NOT a credential: this branch is only honored
+    # when the operator explicitly deploys with AGENT_AUTH_MODE=platform, so a
+    # spoofed header against a token-mode deployment still requires a token.
+    if original_environ.get('AGENT_AUTH_MODE', 'token').lower() == 'platform':
+        runtime_session_id = request.headers.get(
+            'x-amzn-bedrock-agentcore-runtime-session-id'
+        )
+        if not runtime_session_id:
+            raise AuthenticationException(
+                reason="AgentCore runtime session header required"
+            )
+        request.state.session_id = runtime_session_id
         return True
 
     # 2. Optional dev-mode trusted-network bypass.
@@ -287,10 +307,12 @@ async def verify_api_key_strict(
     """Strict API-key validator for destructive endpoints (e.g. /restart, /kill).
 
     Always validates the token for non-local peers: it does NOT honor the
-    FORCE_AUTH / TRUSTED_CIDRS bypass. Loopback callers (localhost,
-    127.0.0.1, ::1) are allowed for local-only operations.
-    AGENT_AUTH_ENABLED=false still disables auth globally (intentional,
-    matches the rest of the system).
+    FORCE_AUTH / TRUSTED_CIDRS bypass, nor AGENT_AUTH_MODE=platform
+    (admin/destructive endpoints must present a real token even on AgentCore
+    deployments where the data plane authenticates ordinary callers).
+    Loopback callers (localhost, 127.0.0.1, ::1) are allowed for local-only
+    operations. AGENT_AUTH_ENABLED=false still disables auth globally
+    (intentional, matches the rest of the system).
     """
     original_environ = get_original_environ()
     auth_enabled = original_environ.get('AGENT_AUTH_ENABLED', 'true').lower() == 'true'
