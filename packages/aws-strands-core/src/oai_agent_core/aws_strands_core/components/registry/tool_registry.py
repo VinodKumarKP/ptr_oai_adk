@@ -7,10 +7,11 @@ import yaml
 from typing import Dict, Any, Callable, List
 
 import httpx
-from mcp.client.sse import sse_client
-from mcp.client.stdio import stdio_client, StdioServerParameters
-from mcp.client.streamable_http import streamable_http_client
-from strands.tools.mcp.mcp_client import MCPClient
+
+# NOTE: `mcp.client.*` and strands' `MCPClient` are imported lazily inside
+# load_mcp_tools_from_config (below). Importing them at module scope pulls ~1.2s
+# of `mcp` startup cost that every strands agent paid even when it declared no
+# MCP tools.
 
 from oai_agent_core.core.base_tool_registry import BaseToolRegistry
 from oai_agent_core.utils.dynamic_class_loader import DynamicClassLoader
@@ -164,6 +165,13 @@ class AWSStrandsToolRegistry(BaseToolRegistry):
               search:
                 url: https://example.com/mcp-sse
         """
+        # Lazy import: only pay the mcp/strands-MCP startup cost when an agent
+        # actually declares MCP tools.
+        from mcp.client.sse import sse_client
+        from mcp.client.stdio import stdio_client, StdioServerParameters
+        from mcp.client.streamable_http import streamable_http_client
+        from strands.tools.mcp.mcp_client import MCPClient
+
         mcp_list = self._get_mcp_name_list_from_mcp_config(mcp_configs)
         loaded_clients = []
         lazy_registrations = []

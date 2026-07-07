@@ -7,8 +7,12 @@ import yaml
 from typing import Dict, Any, Callable
 
 from langchain_core.tools import StructuredTool
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_mcp_adapters.sessions import StdioConnection, SSEConnection, StreamableHttpConnection
+
+# NOTE: langchain_mcp_adapters (and its transitive `mcp` dependency) is imported
+# lazily inside the methods that build MCP connections/clients. Importing it at
+# module scope pulls in ~0.9s of `mcp`/jsonschema startup cost that every agent
+# paid even when it declared no MCP tools. See load_mcp_tools_from_config /
+# _enumerate_mcp_server below.
 
 from oai_agent_core.core.base_tool_registry import BaseToolRegistry
 
@@ -157,6 +161,12 @@ class LangChainToolRegistry(BaseToolRegistry):
             List of MCP tools
         """
         try:
+            # Lazy import: only pay the mcp/langchain_mcp_adapters startup cost
+            # when an agent actually declares MCP tools.
+            from langchain_mcp_adapters.sessions import (
+                StdioConnection, SSEConnection, StreamableHttpConnection,
+            )
+
             mcp_list = self._get_mcp_name_list_from_mcp_config(mcp_config)
 
             connections = {}
@@ -229,6 +239,10 @@ class LangChainToolRegistry(BaseToolRegistry):
         lock = self._mcp_server_locks.setdefault(server_name, asyncio.Lock())
         async with lock:
             if server_name not in self._mcp_tools_cache:
+                # Lazy import (see module-level note): keeps mcp out of the
+                # import path for agents without MCP tools.
+                from langchain_mcp_adapters.client import MultiServerMCPClient
+
                 client = MultiServerMCPClient({server_name: connection})
                 self._mcp_tools_cache[server_name] = await client.get_tools()
                 self.logger.debug(
