@@ -96,6 +96,43 @@ def test_install_validator_install_failure(mock_check_call):
         res = mgr._install_validator("toxic", "ToxicLanguage")
         assert res is False
 
+
+@patch("subprocess.check_call")
+def test_install_validator_blocked_on_agentcore(mock_check_call, monkeypatch):
+    """Under AgentCore, a missing validator must NOT trigger a runtime hub
+    install subprocess (ephemeral per-session microVM); it fails cleanly so the
+    caller skips the validator."""
+    monkeypatch.setenv("DEPLOYMENT_TARGET", "agentcore")
+    mgr = GuardrailManager("/root", None)
+    with patch.object(mgr, "_is_validator_importable", return_value=False):
+        res = mgr._install_validator("guardrails/detect_pii", "DetectPII")
+    assert res is False
+    mock_check_call.assert_not_called()
+
+
+@patch("subprocess.check_call")
+def test_install_validator_blocked_via_flag(mock_check_call, monkeypatch):
+    """DISABLE_RUNTIME_PACKAGE_INSTALL=true disables runtime installs anywhere."""
+    monkeypatch.delenv("DEPLOYMENT_TARGET", raising=False)
+    monkeypatch.setenv("DISABLE_RUNTIME_PACKAGE_INSTALL", "true")
+    mgr = GuardrailManager("/root", None)
+    with patch.object(mgr, "_is_validator_importable", return_value=False):
+        res = mgr._install_validator("guardrails/detect_pii", "DetectPII")
+    assert res is False
+    mock_check_call.assert_not_called()
+
+
+@patch("subprocess.check_call")
+def test_install_validator_already_installed_on_agentcore(mock_check_call, monkeypatch):
+    """A validator already baked into the image is used normally under AgentCore
+    (the guard only blocks the *install*, not usage)."""
+    monkeypatch.setenv("DEPLOYMENT_TARGET", "agentcore")
+    mgr = GuardrailManager("/root", None)
+    with patch.object(mgr, "_is_validator_importable", return_value=True):
+        res = mgr._install_validator("guardrails/detect_pii", "DetectPII")
+    assert res is True
+    mock_check_call.assert_not_called()
+
 def test_init_guard_reusable_validators():
     config = {
         "validators": [

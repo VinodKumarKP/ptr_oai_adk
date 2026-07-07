@@ -16,6 +16,7 @@ except ImportError:
     Guard = None
 
 from oai_agent_core.utils.dynamic_class_loader import DynamicClassLoader
+from oai_agent_core.utils.deployment import is_runtime_package_install_disabled
 
 
 class GuardrailError(Exception):
@@ -157,6 +158,21 @@ class GuardrailManager:
         if self._is_validator_importable(class_name):
             self.logger.info(f"{class_name} is already installed. Skipping hub install.")
             return True
+
+        # ── 1b. Never install at request time on ephemeral runtimes ────────────
+        # Under AWS Bedrock AgentCore (and any serverless per-session microVM),
+        # each session runs on a throwaway filesystem. A ``guardrails hub
+        # install`` subprocess here would pip-download the validator (potentially
+        # spacy/torch) on every session and then discard it — slow and pointless.
+        # Validators must be baked into the deployment image ahead of time.
+        if is_runtime_package_install_disabled():
+            self.logger.error(
+                f"Validator '{class_name}' ({full_name}) is not installed and "
+                f"runtime hub installs are disabled for this deployment "
+                f"(AgentCore/serverless). Bake it into the image at build time, "
+                f"e.g. `guardrails hub install hub://{full_name}`."
+            )
+            return False
 
         # ── 2. Normalise the hub URI ───────────────────────────────────────────
         install_name = full_name
