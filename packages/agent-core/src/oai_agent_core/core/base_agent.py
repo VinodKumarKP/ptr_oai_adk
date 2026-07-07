@@ -11,6 +11,7 @@ from oai_agent_core.components.configuration.model_config import config_manager
 from oai_agent_core.components.observability.langfuse_observability_manager import LangfuseObservabilityManager
 from oai_agent_core.components.observability.tracing import trace_span, traced, configure_tracing
 from oai_agent_core.components.observability.metrics import configure_metrics
+from oai_agent_core.utils.a2ui_prompt import build_agui_instructions
 from oai_agent_core.utils.dotenv_loader import load_dotenv
 from oai_agent_core.components.output_parser.output_model_registry import OutputModelRegistry
 from oai_agent_core.components.skills.skill_registry import SkillRegistry
@@ -780,6 +781,13 @@ class BaseAgent(ABC):
         if structured_output_model:
             augmented_message=f"{augmented_message}{self.output_model_registry.get_system_prompt(structured_output_model)}"
 
+        # A2UI (agent-driven UI): when crew_config.agui_config.enabled is set,
+        # instruct the model to emit A2UI v0.9 JSON blocks that the A2A server
+        # layer converts into renderable UI parts. The component reference is
+        # generated from agui_config.catalog_path when a custom catalog is used.
+        agui_instructions = build_agui_instructions(self.agent_config)
+        if agui_instructions:
+            augmented_message = f"{augmented_message}\n\n{agui_instructions}"
 
         return augmented_message
 

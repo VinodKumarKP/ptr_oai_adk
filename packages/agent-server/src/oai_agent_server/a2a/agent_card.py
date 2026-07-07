@@ -13,6 +13,13 @@ from a2a.types import (
     AgentSkill, AgentInterface,
 )
 
+from oai_agent_core.utils.a2ui_prompt import is_agui_enabled, resolve_catalog
+from oai_agent_server.a2a.a2ui_support import (
+    A2UI_DEFAULT_VERSION,
+    a2ui_mime_type,
+    get_a2ui_agent_extension,
+)
+
 
 def build_agent_card(
     agent_name: str,
@@ -21,6 +28,8 @@ def build_agent_card(
     streaming: bool = True,
     push_notifications: bool = True,
     agent_config: Optional[Dict[str, Any]] = None,
+    a2ui_enabled: Optional[bool] = None,
+    a2ui_version: str = A2UI_DEFAULT_VERSION,
 ) -> AgentCard:
     """
     Build an AgentCard using a2a-sdk types.
@@ -105,6 +114,23 @@ def build_agent_card(
             )
         ]
 
+    # A2UI is advertised when the agent opts in via crew_config.agui_config
+    # (a2ui_enabled arg overrides when explicitly passed). The extension
+    # advertises the agent's configured catalog (custom or basic).
+    if a2ui_enabled is None:
+        a2ui_enabled = is_agui_enabled(agent_config)
+
+    output_modes = ["text"]
+    a2ui_extensions = []
+    if a2ui_enabled:
+        catalog_id = resolve_catalog(agent_config)["catalog_id"]
+        a2ui_extensions.append(
+            get_a2ui_agent_extension(
+                version=a2ui_version, supported_catalog_ids=[catalog_id]
+            )
+        )
+        output_modes.append(a2ui_mime_type(a2ui_version))
+
     return AgentCard(
         name=agent_name,
         description=description,
@@ -112,9 +138,10 @@ def build_agent_card(
         capabilities=AgentCapabilities(
             streaming=streaming,
             push_notifications=push_notifications,
+            extensions=a2ui_extensions,
         ),
-        default_input_modes=["text"],
-        default_output_modes=["text"],
+        default_input_modes=["text", a2ui_mime_type(a2ui_version)] if a2ui_enabled else ["text"],
+        default_output_modes=output_modes,
         skills=resolved_skills,
         supported_interfaces=[
             # JSON-RPC

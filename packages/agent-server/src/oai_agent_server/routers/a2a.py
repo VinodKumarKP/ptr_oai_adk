@@ -88,6 +88,7 @@ def create_a2a_router(
         llm_judge_service=llm_judge_service,
         allowed_modes=allowed_modes,
         use_streaming=a2a_streaming,
+        agent_card=agent_card,
     )
 
     # Use injected task store (DatabaseTaskStore or InMemoryTaskStore).
