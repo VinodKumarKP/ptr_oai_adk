@@ -263,6 +263,7 @@ class BaseToolRegistry(ABC):
                 for func_name, func_obj in tool.items():
                     # All items from strategy dict should be registered as tools
                     # They may be StructuredTool, plain functions, or other callable objects
+                    func_obj = self._ensure_framework_tool(func_obj)
                     self.tools[func_name] = func_obj
                     func_list.append(func_obj)
                     
@@ -285,11 +286,7 @@ class BaseToolRegistry(ABC):
 
             elif tool and callable(tool) and not isinstance(tool, type):
                 # Single function or callable
-                # Check if it's a function that needs framework decoration
-                if not (hasattr(tool, '__wrapped__') and tool.__wrapped__ is not None) and \
-                   not self._is_framework_tool_type(tool):
-                    # Wrap with framework decorator
-                    tool = self._get_framework_tool_decorator()(tool)
+                tool = self._ensure_framework_tool(tool)
 
                 self.tools[tool_name] = tool
                 doc = inspect.getdoc(tool) or "No description"
@@ -304,6 +301,25 @@ class BaseToolRegistry(ABC):
             self.logger.error(f"Failed to load tool '{tool_name}': {e}")
         except Exception as e:
             self.logger.error(f"Failed to load tool '{tool_name}': {e}", exc_info=True)
+
+    def _ensure_framework_tool(self, tool: Any) -> Any:
+        """Wrap a plain callable with the framework tool decorator if needed.
+
+        Framework tool instances (e.g. Strands DecoratedFunctionTool) and
+        already-wrapped functions are returned unchanged; classes and
+        non-callables are also passed through as-is.
+
+        Args:
+            tool: Candidate tool object
+
+        Returns:
+            A framework-recognized tool, decorating plain functions on the fly
+        """
+        if callable(tool) and not isinstance(tool, type) and \
+                not self._is_framework_tool_type(tool) and \
+                not (hasattr(tool, '__wrapped__') and tool.__wrapped__ is not None):
+            return self._get_framework_tool_decorator()(tool)
+        return tool
 
     def _load_module_tool(self, tool_name: str, tool_config: Dict[str, Any]) -> None:
         """Load a tool from a Python module.
