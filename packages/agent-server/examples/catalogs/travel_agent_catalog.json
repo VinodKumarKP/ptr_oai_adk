@@ -213,6 +213,106 @@
         "totalPrice",
         "action"
       ]
+    },
+    "WeatherCard": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "const": "WeatherCard"
+        },
+        "location": {
+          "description": "City name."
+        },
+        "temperature": {
+          "description": "Temperature with unit."
+        },
+        "condition": {
+          "description": "Weather condition (e.g. Sunny, Cloudy)."
+        }
+      },
+      "required": [
+        "component",
+        "location",
+        "temperature",
+        "condition"
+      ]
+    },
+    "AttractionCard": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "const": "AttractionCard"
+        },
+        "name": {
+          "description": "Attraction name."
+        },
+        "description": {
+          "description": "Short description."
+        },
+        "imageUrl": {
+          "description": "Photo URL."
+        }
+      },
+      "required": [
+        "component",
+        "name",
+        "description"
+      ]
+    },
+    "AttractionList": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "const": "AttractionList"
+        },
+        "children": {
+          "description": "List of AttractionCards."
+        }
+      },
+      "required": [
+        "component",
+        "children"
+      ]
+    },
+    "RestaurantCard": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "const": "RestaurantCard"
+        },
+        "name": {
+          "description": "Restaurant name."
+        },
+        "cuisine": {
+          "description": "Cuisine type."
+        },
+        "priceRange": {
+          "description": "Price range string."
+        },
+        "imageUrl": {
+          "description": "Photo URL."
+        }
+      },
+      "required": [
+        "component",
+        "name",
+        "cuisine"
+      ]
+    },
+    "RestaurantList": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "const": "RestaurantList"
+        },
+        "children": {
+          "description": "List of RestaurantCards."
+        }
+      },
+      "required": [
+        "component",
+        "children"
+      ]
     }
   }
 }

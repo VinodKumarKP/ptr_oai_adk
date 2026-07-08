@@ -32,25 +32,25 @@ FLIGHTS = [
 
 HOTELS = [
     # New York
-    {"location": "New York", "name": "McKittrick Hotel", "neighborhood": "Chelsea", "id": "1", "price_per_night": 250},
-    {"location": "New York", "name": "The Plaza", "neighborhood": "Midtown", "id": "2", "price_per_night": 800},
-    {"location": "New York", "name": "Empire Hotel", "neighborhood": "Upper West Side", "id": "3", "price_per_night": 300},
-    {"location": "New York", "name": "Ace Hotel", "neighborhood": "NoMad", "id": "4", "price_per_night": 280},
-    {"location": "New York", "name": "The Standard", "neighborhood": "High Line", "id": "5", "price_per_night": 350},
+    {"location": "New York", "name": "McKittrick Hotel", "neighborhood": "Chelsea", "id": "1", "price_per_night": 250, "image_url": "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=500"},
+    {"location": "New York", "name": "The Plaza", "neighborhood": "Midtown", "id": "2", "price_per_night": 800, "image_url": "https://images.unsplash.com/photo-1551882547-ff40eb0d1e73?w=500"},
+    {"location": "New York", "name": "Empire Hotel", "neighborhood": "Upper West Side", "id": "3", "price_per_night": 300, "image_url": "https://images.unsplash.com/photo-1542314831-c6a4d45c30c2?w=500"},
+    {"location": "New York", "name": "Ace Hotel", "neighborhood": "NoMad", "id": "4", "price_per_night": 280, "image_url": "https://images.unsplash.com/photo-1496417263034-38ec4f0b665a?w=500"},
+    {"location": "New York", "name": "The Standard", "neighborhood": "High Line", "id": "5", "price_per_night": 350, "image_url": "https://images.unsplash.com/photo-1522798514-97ceb8c4f1c8?w=500"},
 
     # Chicago
-    {"location": "Chicago", "name": "The Palmer House", "neighborhood": "Loop", "id": "6", "price_per_night": 180},
-    {"location": "Chicago", "name": "The Drake", "neighborhood": "Gold Coast", "id": "7", "price_per_night": 220},
-    {"location": "Chicago", "name": "The Langham", "neighborhood": "River North", "id": "8", "price_per_night": 400},
-    {"location": "Chicago", "name": "LondonHouse", "neighborhood": "Loop", "id": "9", "price_per_night": 350},
-    {"location": "Chicago", "name": "Viceroy", "neighborhood": "Gold Coast", "id": "10", "price_per_night": 450},
+    {"location": "Chicago", "name": "The Palmer House", "neighborhood": "Loop", "id": "6", "price_per_night": 180, "image_url": "https://images.unsplash.com/photo-1611892440504-42a792e24d32?w=500"},
+    {"location": "Chicago", "name": "The Drake", "neighborhood": "Gold Coast", "id": "7", "price_per_night": 220, "image_url": "https://images.unsplash.com/photo-1518733057094-95b53143d2a7?w=500"},
+    {"location": "Chicago", "name": "The Langham", "neighborhood": "River North", "id": "8", "price_per_night": 400, "image_url": "https://images.unsplash.com/photo-1535827841776-24afc1e255ac?w=500"},
+    {"location": "Chicago", "name": "LondonHouse", "neighborhood": "Loop", "id": "9", "price_per_night": 350, "image_url": "https://images.unsplash.com/photo-1582719508461-905c673771fd?w=500"},
+    {"location": "Chicago", "name": "Viceroy", "neighborhood": "Gold Coast", "id": "10", "price_per_night": 450, "image_url": "https://images.unsplash.com/photo-1596386461350-326ccb383e9f?w=500"},
 
     # Paris
-    {"location": "Paris", "name": "Hotel Ritz", "neighborhood": "Place Vendome", "id": "11", "price_per_night": 1200},
-    {"location": "Paris", "name": "Le Meurice", "neighborhood": "Tuileries", "id": "12", "price_per_night": 1100},
-    {"location": "Paris", "name": "Shangri-La", "neighborhood": "Iena", "id": "13", "price_per_night": 1000},
-    {"location": "Paris", "name": "The Peninsula", "neighborhood": "Kleber", "id": "14", "price_per_night": 950},
-    {"location": "Paris", "name": "Mandarin Oriental", "neighborhood": "Opera", "id": "15", "price_per_night": 1050},
+    {"location": "Paris", "name": "Hotel Ritz", "neighborhood": "Place Vendome", "id": "11", "price_per_night": 1200, "image_url": "https://images.unsplash.com/photo-1505691938895-1758d7def51a?w=500"},
+    {"location": "Paris", "name": "Le Meurice", "neighborhood": "Tuileries", "id": "12", "price_per_night": 1100, "image_url": "https://images.unsplash.com/photo-1554647286-f365d7defc2d?w=500"},
+    {"location": "Paris", "name": "Shangri-La", "neighborhood": "Iena", "id": "13", "price_per_night": 1000, "image_url": "https://images.unsplash.com/photo-1590490359683-658d3d23f972?w=500"},
+    {"location": "Paris", "name": "The Peninsula", "neighborhood": "Kleber", "id": "14", "price_per_night": 950, "image_url": "https://images.unsplash.com/photo-1578683010236-d716f9a3f461?w=500"},
+    {"location": "Paris", "name": "Mandarin Oriental", "neighborhood": "Opera", "id": "15", "price_per_night": 1050, "image_url": "https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?w=500"},
 ]
 
 # Flight tools
@@ -144,3 +144,63 @@ def read_file(file_path):
     """
     with open(file_path, 'r') as f:
         return f.read()
+
+# Itinerary Tools
+
+@tool
+def get_weather(location: str) -> dict:
+    """Get the weather for a given city.
+    
+    Args:
+        location: City name
+    """
+    # Mock data for weather
+    return {
+        "location": location,
+        "temperature": "72°F",
+        "condition": "Sunny"
+    }
+
+@tool
+def search_attractions(location: str) -> list[dict]:
+    """Search local attractions for a given city.
+    
+    Args:
+        location: City name
+    """
+    # Mock data for attractions
+    return [
+        {
+            "name": f"Famous Park in {location}",
+            "description": "A beautiful and iconic green space perfect for a relaxing afternoon.",
+            "image_url": "https://images.unsplash.com/photo-1542314831-c6a4d45c30c2?w=500"
+        },
+        {
+            "name": f"Historic Museum of {location}",
+            "description": "Explore the rich history and culture of the region with stunning exhibits.",
+            "image_url": "https://images.unsplash.com/photo-1518733057094-95b53143d2a7?w=500"
+        }
+    ]
+
+@tool
+def search_restaurants(location: str) -> list[dict]:
+    """Search local restaurants for a given city.
+    
+    Args:
+        location: City name
+    """
+    # Mock data for restaurants
+    return [
+        {
+            "name": f"The Local Grill ({location})",
+            "cuisine": "American / Local",
+            "price_range": "$$",
+            "image_url": "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=500"
+        },
+        {
+            "name": f"Cafe {location}",
+            "cuisine": "Cafe / Bakery",
+            "price_range": "$",
+            "image_url": "https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=500"
+        }
+    ]

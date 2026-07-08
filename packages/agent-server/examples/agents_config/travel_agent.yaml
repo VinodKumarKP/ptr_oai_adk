@@ -1,8 +1,8 @@
 name: simple_agent
-description: Travel concierge which can search for hotels and flights and book them.
+description: Full-fledged itinerary travel concierge which can search for hotels, flights, weather, attractions, and food.
 type: langchain
 model:
-  model_id: bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  model_id: bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0
   region_name: us-west-2
 
 tools:
@@ -13,14 +13,18 @@ tools:
 agent_list:
   - simple_assistant:
       system_prompt: |
-        You are a helpful assistant. You can help with general queries.
-        You also have access to flight and hotel search tools.
+        You are a helpful full-fledged itinerary assistant. You can help with general queries.
+        You have access to flight and hotel search tools, as well as tools to check weather, local attractions, and restaurants for a given city.
+        When suggesting hotels, attractions or restaurants, make sure to include their photos by using the provided image URLs.
       tools:
         - search_flights
         - search_hotels
         - book_hotel
         - book_flight
         - read_file
+        - get_weather
+        - search_attractions
+        - search_restaurants
 
 crew_config:
   pattern: supervisor
@@ -28,5 +32,5 @@ crew_config:
     enabled: true
     # Optional custom catalog (Case B): generate the component reference for
     # the LLM from your own catalog schema instead of the A2UI basic catalog.
-    catalog_path: ./catalogs/travel_agent_catalog.json
+    catalog_path: /Users/vinodkumarkp/PycharmProjects/ptr_oai_agent_development_kit/packages/agent-server/examples/catalogs/travel_agent_catalog.json
     # catalog_id: mycompany.com:hotel-catalog   # overrides the file's $id

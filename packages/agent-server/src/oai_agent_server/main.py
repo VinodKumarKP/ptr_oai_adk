@@ -47,6 +47,7 @@ from oai_agent_server.routers.health import create_health_router
 from oai_agent_server.routers.logs import create_logs_router
 from oai_agent_server.routers.tokens import create_token_router
 from oai_agent_server.routers.a2a import create_a2a_router
+from oai_agent_server.routers.agui import create_agui_router
 from oai_agent_server.routers.scheduler import create_schedule_router
 from oai_agent_server.routers.admin import create_admin_router
 from oai_agent_server.security.dependencies import verify_api_key, api_key_header
@@ -431,6 +432,13 @@ class AgentHTTPServer:
                     "A2A routes additionally mounted at root (A2A_MOUNT_ROOT=true)"
                 )
 
+            # AG-UI gateway — exposes the A2A endpoint above to AG-UI clients
+            # (CopilotKit, @ag-ui/client) as POST /agui with an SSE event
+            # stream. A2UI parts pass through as CUSTOM "a2ui.message" events.
+            agui_router = create_agui_router(self.allowed_modes)
+            if agui_router:
+                self.app.include_router(agui_router, prefix="/agui")
+
         # AgentCore HTTP protocol contract (/invocations, /ping) — enabled via
         # the "agentcore" mode (automatic when DEPLOYMENT_TARGET=agentcore).
         agentcore_router = create_agentcore_router(
@@ -763,4 +771,8 @@ def main(server: AgentHTTPServer):
 
 
 if __name__ == "__main__":
-    main()
+    # main() above requires a pre-built AgentHTTPServer (it is the entry used
+    # by per-agent example scripts). The generic runnable entry point that
+    # loads an agent by name from config lives in oai_agent_server.cli.
+    from oai_agent_server.cli import main as cli_main
+    cli_main()
