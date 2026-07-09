@@ -124,11 +124,31 @@ def test_execute_tool_mcp(registry):
 
 def test_load_mcp_http(registry):
     config = {"tool1": {"url": "http://test/mcp"}}
-    with patch("oai_agent_core.aws_strands_core.components.registry.tool_registry.MCPClient") as MockClient, \
+
+    # Mock the lazy MCP imports used inside load_mcp_tools_from_config
+    mock_mcp_client = MagicMock()
+    mock_mcp_client_cls = MagicMock(return_value=mock_mcp_client)
+
+    mock_mcp = MagicMock()
+    mock_mcp.client.stdio.StdioServerParameters = MagicMock()
+    mock_mcp.client.stdio.stdio_client = MagicMock()
+    mock_mcp.client.sse.sse_client = MagicMock()
+    mock_mcp.client.streamable_http.streamable_http_client = MagicMock()
+
+    mock_strands = MagicMock()
+    mock_strands.tools.mcp.mcp_client.MCPClient = mock_mcp_client_cls
+
+    with patch.dict('sys.modules', {'mcp': mock_mcp, 'mcp.client': mock_mcp.client,
+                                    'mcp.client.stdio': mock_mcp.client.stdio,
+                                    'mcp.client.sse': mock_mcp.client.sse,
+                                    'mcp.client.streamable_http': mock_mcp.client.streamable_http,
+                                    'strands': mock_strands, 'strands.tools': mock_strands.tools,
+                                    'strands.tools.mcp': mock_strands.tools.mcp,
+                                    'strands.tools.mcp.mcp_client': mock_strands.tools.mcp.mcp_client}), \
          patch("oai_agent_core.aws_strands_core.components.registry.tool_registry.httpx.AsyncClient"):
         loaded = run(registry.load_mcp_tools_from_config(config))
         assert len(loaded) == 1
-        MockClient.assert_called()
+        mock_mcp_client_cls.assert_called()
 
 
 def test_load_mcp_no_valid_config(registry):
@@ -150,9 +170,22 @@ def test_load_mcp_lazy_loading(registry):
     client_instance.__exit__.return_value = False
     client_instance.list_tools_sync.return_value = [fake_tool]
 
-    with patch("oai_agent_core.aws_strands_core.components.registry.tool_registry.MCPClient",
-               return_value=client_instance), \
-         patch("oai_agent_core.aws_strands_core.components.registry.tool_registry.StdioServerParameters"):
+    mock_mcp = MagicMock()
+    mock_mcp.client.stdio.StdioServerParameters = MagicMock()
+    mock_mcp.client.stdio.stdio_client = MagicMock()
+    mock_mcp.client.sse.sse_client = MagicMock()
+    mock_mcp.client.streamable_http.streamable_http_client = MagicMock()
+
+    mock_strands = MagicMock()
+    mock_strands.tools.mcp.mcp_client.MCPClient = MagicMock(return_value=client_instance)
+
+    with patch.dict('sys.modules', {'mcp': mock_mcp, 'mcp.client': mock_mcp.client,
+                                    'mcp.client.stdio': mock_mcp.client.stdio,
+                                    'mcp.client.sse': mock_mcp.client.sse,
+                                    'mcp.client.streamable_http': mock_mcp.client.streamable_http,
+                                    'strands': mock_strands, 'strands.tools': mock_strands.tools,
+                                    'strands.tools.mcp': mock_strands.tools.mcp,
+                                    'strands.tools.mcp.mcp_client': mock_strands.tools.mcp.mcp_client}):
         loaded = run(registry.load_mcp_tools_from_config(config))
         assert len(loaded) == 1
         assert "subtool" in registry.available_mcp_tools
@@ -160,8 +193,24 @@ def test_load_mcp_lazy_loading(registry):
 
 def test_load_mcp_exception(registry):
     config = {"tool1": {"command": "cmd"}}
-    with patch("oai_agent_core.aws_strands_core.components.registry.tool_registry.StdioServerParameters",
-               side_effect=RuntimeError("boom")):
+
+    # Mock the lazy MCP imports, but make StdioServerParameters raise
+    mock_mcp = MagicMock()
+    mock_mcp.client.stdio.StdioServerParameters = MagicMock(side_effect=RuntimeError("boom"))
+    mock_mcp.client.stdio.stdio_client = MagicMock()
+    mock_mcp.client.sse.sse_client = MagicMock()
+    mock_mcp.client.streamable_http.streamable_http_client = MagicMock()
+
+    mock_strands = MagicMock()
+    mock_strands.tools.mcp.mcp_client.MCPClient = MagicMock()
+
+    with patch.dict('sys.modules', {'mcp': mock_mcp, 'mcp.client': mock_mcp.client,
+                                    'mcp.client.stdio': mock_mcp.client.stdio,
+                                    'mcp.client.sse': mock_mcp.client.sse,
+                                    'mcp.client.streamable_http': mock_mcp.client.streamable_http,
+                                    'strands': mock_strands, 'strands.tools': mock_strands.tools,
+                                    'strands.tools.mcp': mock_strands.tools.mcp,
+                                    'strands.tools.mcp.mcp_client': mock_strands.tools.mcp.mcp_client}):
         loaded = run(registry.load_mcp_tools_from_config(config))
         assert loaded == []
 

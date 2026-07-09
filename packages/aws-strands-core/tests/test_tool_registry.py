@@ -18,19 +18,37 @@ def test_load_mcp_tools_stdio(registry):
             'args': ['arg']
         }
     }
-    
+
     async def run():
-        # We need to patch where it's imported in the module under test
-        with patch('oai_agent_core.aws_strands_core.components.registry.tool_registry.MCPClient') as MockClient:
-            # Also patch StdioServerParameters to avoid validation issues or import issues if not present
-            with patch('oai_agent_core.aws_strands_core.components.registry.tool_registry.StdioServerParameters') as MockParams:
-                loaded = await registry.load_mcp_tools_from_config(config)
-                
-                assert len(loaded) == 1
-                assert len(registry.mcp_clients) == 1
-                assert 'tool1' in registry.tools
-                MockClient.assert_called()
-                
+        # With lazy imports inside load_mcp_tools_from_config, we need to patch
+        # the modules that are imported within the function. Use sys.modules mocking.
+        mock_stdio_params = MagicMock()
+        mock_mcp_client = MagicMock()
+        mock_mcp_client_class = MagicMock(return_value=mock_mcp_client)
+
+        mock_mcp = MagicMock()
+        mock_mcp.client.stdio.StdioServerParameters = mock_stdio_params
+        mock_mcp.client.stdio.stdio_client = MagicMock()
+        mock_mcp.client.sse.sse_client = MagicMock()
+        mock_mcp.client.streamable_http.streamable_http_client = MagicMock()
+
+        mock_strands = MagicMock()
+        mock_strands.tools.mcp.mcp_client.MCPClient = mock_mcp_client_class
+
+        with patch.dict('sys.modules', {'mcp': mock_mcp, 'mcp.client': mock_mcp.client,
+                                        'mcp.client.stdio': mock_mcp.client.stdio,
+                                        'mcp.client.sse': mock_mcp.client.sse,
+                                        'mcp.client.streamable_http': mock_mcp.client.streamable_http,
+                                        'strands': mock_strands, 'strands.tools': mock_strands.tools,
+                                        'strands.tools.mcp': mock_strands.tools.mcp,
+                                        'strands.tools.mcp.mcp_client': mock_strands.tools.mcp.mcp_client}):
+            loaded = await registry.load_mcp_tools_from_config(config)
+
+            assert len(loaded) == 1
+            assert len(registry.mcp_clients) == 1
+            assert 'tool1' in registry.tools
+            mock_mcp_client_class.assert_called()
+
     asyncio.run(run())
 
 def test_load_mcp_tools_sse(registry):
@@ -39,15 +57,34 @@ def test_load_mcp_tools_sse(registry):
             'url': 'http://test/sse'
         }
     }
-    
+
     async def run():
-        with patch('oai_agent_core.aws_strands_core.components.registry.tool_registry.MCPClient') as MockClient:
+        # Same lazy-import mocking pattern as test_load_mcp_tools_stdio
+        mock_mcp_client = MagicMock()
+        mock_mcp_client_class = MagicMock(return_value=mock_mcp_client)
+
+        mock_mcp = MagicMock()
+        mock_mcp.client.stdio.StdioServerParameters = MagicMock()
+        mock_mcp.client.stdio.stdio_client = MagicMock()
+        mock_mcp.client.sse.sse_client = MagicMock()
+        mock_mcp.client.streamable_http.streamable_http_client = MagicMock()
+
+        mock_strands = MagicMock()
+        mock_strands.tools.mcp.mcp_client.MCPClient = mock_mcp_client_class
+
+        with patch.dict('sys.modules', {'mcp': mock_mcp, 'mcp.client': mock_mcp.client,
+                                        'mcp.client.stdio': mock_mcp.client.stdio,
+                                        'mcp.client.sse': mock_mcp.client.sse,
+                                        'mcp.client.streamable_http': mock_mcp.client.streamable_http,
+                                        'strands': mock_strands, 'strands.tools': mock_strands.tools,
+                                        'strands.tools.mcp': mock_strands.tools.mcp,
+                                        'strands.tools.mcp.mcp_client': mock_strands.tools.mcp.mcp_client}):
             loaded = await registry.load_mcp_tools_from_config(config)
 
             assert len(loaded) == 1
             assert len(registry.mcp_clients) == 1
-            MockClient.assert_called()
-            
+            mock_mcp_client_class.assert_called()
+
     asyncio.run(run())
 
 def test_wrap_function_with_defaults(registry):

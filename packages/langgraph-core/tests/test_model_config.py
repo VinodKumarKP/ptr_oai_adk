@@ -57,8 +57,12 @@ def test_create_model_with_custom_config(manager):
         assert call_kwargs['top_p'] == 0.9
 
 def test_create_model_import_error(manager):
-    with patch.dict('sys.modules', {'langchain_litellm': None}):
-        with pytest.raises(ImportError, match="Please install langchain-litellm"):
+    # The _import_chat_litellm function now gracefully handles imports with lazy stubs.
+    # To test ImportError, we verify that when the actual package is unavailable,
+    # the create_model call fails appropriately with a helpful message.
+    with patch('oai_agent_core.langgraph_core.components.configuration.model_config._import_chat_litellm') as mock_import:
+        mock_import.side_effect = ImportError("No module named 'langchain_litellm'")
+        with pytest.raises(ImportError, match="pip install langchain-litellm"):
             manager.create_model()
 
 def test_create_model_generic_error(manager):

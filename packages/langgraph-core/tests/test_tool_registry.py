@@ -70,17 +70,31 @@ async def test_load_mcp_tools_from_config_stdio(registry):
             }
         }
     }
-    
-    with patch('oai_agent_core.langgraph_core.components.registry.tool_registry.MultiServerMCPClient') as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.get_tools.return_value = ['tool1', 'tool2']
-        mock_client_cls.return_value = mock_client
-        
-        # Ensure lazy loading is disabled for this test to return tools immediately
+
+    # Mock both the module imports: langchain_mcp_adapters.sessions (for connections)
+    # and langchain_mcp_adapters.client (for MultiServerMCPClient)
+    mock_client = AsyncMock()
+    mock_client.get_tools.return_value = ['tool1', 'tool2']
+    mock_client_cls = MagicMock(return_value=mock_client)
+
+    mock_sessions = MagicMock()
+    mock_sessions.StdioConnection = MagicMock()
+    mock_sessions.SSEConnection = MagicMock()
+    mock_sessions.StreamableHttpConnection = MagicMock()
+
+    mock_client_module = MagicMock()
+    mock_client_module.MultiServerMCPClient = mock_client_cls
+
+    mock_langchain_mcp = MagicMock()
+    mock_langchain_mcp.sessions = mock_sessions
+    mock_langchain_mcp.client = mock_client_module
+
+    with patch.dict('sys.modules', {'langchain_mcp_adapters': mock_langchain_mcp,
+                                    'langchain_mcp_adapters.sessions': mock_sessions,
+                                    'langchain_mcp_adapters.client': mock_client_module}):
         registry.enable_lazy_loading = False
-        
         tools = await registry.load_mcp_tools_from_config(mcp_config)
-        
+
         assert len(tools) == 2
         assert 'test_tool' in registry.mcp_configs
 
@@ -93,16 +107,29 @@ async def test_load_mcp_tools_from_config_sse(registry):
             }
         }
     }
-    
-    with patch('oai_agent_core.langgraph_core.components.registry.tool_registry.MultiServerMCPClient') as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.get_tools.return_value = ['tool1']
-        mock_client_cls.return_value = mock_client
-        
+
+    mock_client = AsyncMock()
+    mock_client.get_tools.return_value = ['tool1']
+    mock_client_cls = MagicMock(return_value=mock_client)
+
+    mock_sessions = MagicMock()
+    mock_sessions.StdioConnection = MagicMock()
+    mock_sessions.SSEConnection = MagicMock()
+    mock_sessions.StreamableHttpConnection = MagicMock()
+
+    mock_client_module = MagicMock()
+    mock_client_module.MultiServerMCPClient = mock_client_cls
+
+    mock_langchain_mcp = MagicMock()
+    mock_langchain_mcp.sessions = mock_sessions
+    mock_langchain_mcp.client = mock_client_module
+
+    with patch.dict('sys.modules', {'langchain_mcp_adapters': mock_langchain_mcp,
+                                    'langchain_mcp_adapters.sessions': mock_sessions,
+                                    'langchain_mcp_adapters.client': mock_client_module}):
         registry.enable_lazy_loading = False
-        
         tools = await registry.load_mcp_tools_from_config(mcp_config)
-        
+
         assert len(tools) == 1
         assert 'sse_tool' in registry.mcp_configs
 
@@ -115,16 +142,29 @@ async def test_load_mcp_tools_from_config_http(registry):
             }
         }
     }
-    
-    with patch('oai_agent_core.langgraph_core.components.registry.tool_registry.MultiServerMCPClient') as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.get_tools.return_value = ['tool1']
-        mock_client_cls.return_value = mock_client
-        
+
+    mock_client = AsyncMock()
+    mock_client.get_tools.return_value = ['tool1']
+    mock_client_cls = MagicMock(return_value=mock_client)
+
+    mock_sessions = MagicMock()
+    mock_sessions.StdioConnection = MagicMock()
+    mock_sessions.SSEConnection = MagicMock()
+    mock_sessions.StreamableHttpConnection = MagicMock()
+
+    mock_client_module = MagicMock()
+    mock_client_module.MultiServerMCPClient = mock_client_cls
+
+    mock_langchain_mcp = MagicMock()
+    mock_langchain_mcp.sessions = mock_sessions
+    mock_langchain_mcp.client = mock_client_module
+
+    with patch.dict('sys.modules', {'langchain_mcp_adapters': mock_langchain_mcp,
+                                    'langchain_mcp_adapters.sessions': mock_sessions,
+                                    'langchain_mcp_adapters.client': mock_client_module}):
         registry.enable_lazy_loading = False
-        
         tools = await registry.load_mcp_tools_from_config(mcp_config)
-        
+
         assert len(tools) == 1
         assert 'http_tool' in registry.mcp_configs
 
