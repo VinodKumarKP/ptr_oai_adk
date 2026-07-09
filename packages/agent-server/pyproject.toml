@@ -36,10 +36,15 @@ dependencies = [
     "python-multipart==0.0.22"
 ]
 
+[project.scripts]
+oai-agent-server = "oai_agent_server.cli:main"
+
 [project.optional-dependencies]
 sqlite = ["aiosqlite"]
 postgres = ["asyncpg"]
 a2a = ["a2a-sdk[http-server]==1.0.2"]
+# AG-UI gateway (/agui): serves the AG-UI protocol in front of the A2A endpoint.
+agui = ["ag-ui-protocol>=0.1.19"]
 scheduler = ["apscheduler"]
 # OpenTelemetry tracing + Prometheus metrics for the server's ObservabilityManager:
 # OTLP span export to Jaeger/collector, FastAPI/requests auto-instrumentation, and

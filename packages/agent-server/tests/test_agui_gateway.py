@@ -66,6 +66,28 @@ class TestBuildA2ARequest:
         assert data_parts[0]["mediaType"] == "application/json+a2ui"
         assert data_parts[0]["metadata"] == {"mimeType": "application/json+a2ui"}
 
+    def test_ui_action_text_convention_becomes_data_part(self):
+        # Clients without forwardedProps access (CopilotKit chat) send the
+        # action as "[UI action] {json}" — gateway converts it to a data part.
+        import json as _json
+        action = {"action": {"name": "book_hotel", "payload": {"id": "h1"}}}
+        run_input = make_run_input(messages=[
+            {"id": "m1", "role": "user", "content": f"[UI action] {_json.dumps(action)}"},
+        ])
+        parts = build_a2a_request(run_input)["params"]["message"]["parts"]
+        assert parts == [{
+            "data": action,
+            "mediaType": "application/json+a2ui",
+            "metadata": {"mimeType": "application/json+a2ui"},
+        }]
+
+    def test_malformed_ui_action_text_stays_text(self):
+        run_input = make_run_input(messages=[
+            {"id": "m1", "role": "user", "content": "[UI action] not-json"},
+        ])
+        parts = build_a2a_request(run_input)["params"]["message"]["parts"]
+        assert parts == [{"text": "[UI action] not-json"}]
+
     def test_action_only_run_omits_stale_prompt(self):
         # After a normal run the client history ends with the assistant reply;
         # a Book-button run must not re-send the previous user prompt.
@@ -133,7 +155,7 @@ class TestTranslator:
         assert chunk1[1].delta == "Hello"
         assert chunk2[0].delta == " world"
 
-    def test_a2ui_part_passes_through_as_custom_event(self):
+    def test_a2ui_part_passes_through_as_custom_event_and_state(self):
         a2ui_message = {"createSurface": {"surfaceId": "s1"}}
         translator = A2AStreamTranslator()
         events = translator.translate({"artifactUpdate": {
@@ -144,9 +166,22 @@ class TestTranslator:
             }]},
         }})
 
-        assert [e.type for e in events] == [EventType.CUSTOM]
+        assert [e.type for e in events] == [EventType.CUSTOM, EventType.STATE_SNAPSHOT]
         assert events[0].name == CUSTOM_EVENT_A2UI
         assert events[0].value == a2ui_message
+        assert events[1].snapshot == {"a2uiMessages": [a2ui_message]}
+
+    def test_state_snapshot_accumulates_across_updates(self):
+        translator = A2AStreamTranslator()
+        first = {"createSurface": {"surfaceId": "s1"}}
+        second = {"updateComponents": {"surfaceId": "s1"}}
+        for msg in (first, second):
+            events = translator.translate({"artifactUpdate": {
+                "artifact": {"artifactId": "a", "parts": [{
+                    "data": msg, "mediaType": "application/json+a2ui",
+                }]},
+            }})
+        assert events[-1].snapshot == {"a2uiMessages": [first, second]}
 
     def test_a2ui_mime_in_metadata_only_is_recognized(self):
         translator = A2AStreamTranslator()
@@ -218,6 +253,61 @@ class TestTranslator:
         first = translator.close()
         assert [e.type for e in first] == [EventType.TEXT_MESSAGE_END]
         assert translator.close() == []
+
+
+class TestTidyFilters:
+    def test_user_echo_is_dropped(self):
+        translator = A2AStreamTranslator(user_text="What's the weather in Rome?")
+        events = translator.translate({"artifactUpdate": {
+            "artifact": {"artifactId": "a1", "parts": [{"text": "What's the weather in Rome?\n\n"}]},
+        }})
+        assert events == []
+
+    def test_tool_json_dump_is_dropped(self):
+        translator = A2AStreamTranslator()
+        events = translator.translate({"artifactUpdate": {
+            "artifact": {"artifactId": "a1", "parts": [
+                {"text": '{"location": "Rome", "temperature": "72F"}'},
+            ]},
+        }})
+        assert events == []
+
+    def test_duplicate_summary_artifact_is_dropped(self):
+        translator = A2AStreamTranslator()
+        translator.translate({"artifactUpdate": {
+            "artifact": {"artifactId": "a1", "parts": [{"text": "Great news! Sunny all weekend."}]},
+        }})
+        translator.translate({"artifactUpdate": {
+            "lastChunk": True, "append": True,
+            "artifact": {"artifactId": "a1", "parts": [{"text": " Pack light."}]},
+        }})
+        # Agent closes the run with a consolidated artifact repeating the text.
+        dup = translator.translate({"artifactUpdate": {
+            "lastChunk": True,
+            "artifact": {"artifactId": "summary", "parts": [
+                {"text": "Great news! Sunny all weekend. Pack light."},
+            ]},
+        }})
+        assert dup == []
+
+    def test_fresh_single_shot_text_is_kept(self):
+        translator = A2AStreamTranslator()
+        events = translator.translate({"artifactUpdate": {
+            "lastChunk": True,
+            "artifact": {"artifactId": "a1", "parts": [{"text": "Booked!"}]},
+        }})
+        assert [e.type for e in events] == [
+            EventType.TEXT_MESSAGE_START, EventType.TEXT_MESSAGE_CONTENT, EventType.TEXT_MESSAGE_END,
+        ]
+
+    def test_tidy_false_passes_everything(self):
+        translator = A2AStreamTranslator(user_text="echo me", tidy=False)
+        events = translator.translate({"artifactUpdate": {
+            "artifact": {"artifactId": "a1", "parts": [{"text": "echo me"}]},
+        }})
+        assert [e.type for e in events] == [
+            EventType.TEXT_MESSAGE_START, EventType.TEXT_MESSAGE_CONTENT,
+        ]
 
 
 # ---------------------------------------------------------------------------

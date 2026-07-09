@@ -53,10 +53,12 @@ def create_agui_router(
     router = APIRouter()
 
     # AG-UI threadId -> A2A contextId, so follow-up runs on a thread continue
-    # the same A2A conversation. In-memory and per-process by design: the
-    # A2A task store owns durable state; losing this map only starts a fresh
+    # the same A2A conversation; threadId -> A2UI messages so state snapshots
+    # cover the whole thread. In-memory and per-process by design: the A2A
+    # task store owns durable state; losing these maps only starts a fresh
     # context, mirroring what a reconnecting A2UI client does today.
     thread_contexts: Dict[str, str] = {}
+    thread_a2ui: Dict[str, list] = {}
 
     @router.post("/", tags=["agui"])
     async def run_agent(run_input: RunAgentInput, request: Request) -> StreamingResponse:
@@ -64,7 +66,7 @@ def create_agui_router(
             str(request.base_url).rstrip("/") + a2a_path
         )
         return StreamingResponse(
-            stream_agui_events(a2a_url, run_input, thread_contexts),
+            stream_agui_events(a2a_url, run_input, thread_contexts, thread_a2ui),
             media_type="text/event-stream",
         )
 

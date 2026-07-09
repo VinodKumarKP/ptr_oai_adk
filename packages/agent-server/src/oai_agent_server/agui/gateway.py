@@ -39,6 +39,7 @@ from ag_ui.core import (
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
+    StateSnapshotEvent,
     StepFinishedEvent,
     StepStartedEvent,
     TextMessageContentEvent,
@@ -58,6 +59,11 @@ A2UI_EXTENSION_URI = "https://a2ui.org/a2a-extension/a2ui/v0.9"
 # renderer produces when e.g. a Book button is pressed). Sent to the agent as
 # an A2UI data part, exactly like a native A2UI client would.
 A2UI_ACTION_PROP = "a2uiAction"
+
+# Clients that can't set forwardedProps (e.g. CopilotKit's chat) may instead
+# send the action as a user message with this prefix followed by the action
+# JSON; the gateway converts it to the same A2UI data part.
+A2UI_ACTION_TEXT_PREFIX = "[UI action] "
 
 CUSTOM_EVENT_A2UI = "a2ui.message"
 CUSTOM_EVENT_DATA = "a2a.data"
@@ -91,12 +97,20 @@ def build_a2a_request(run_input, context_id: Optional[str] = None) -> Dict[str, 
     if messages and getattr(messages[-1], "role", None) == "user":
         text = getattr(messages[-1], "content", None)
 
+    forwarded = run_input.forwarded_props or {}
+    action = forwarded.get(A2UI_ACTION_PROP) if isinstance(forwarded, dict) else None
+
+    # "[UI action] {...}" text convention → same data part as forwardedProps.
+    if action is None and isinstance(text, str) and text.startswith(A2UI_ACTION_TEXT_PREFIX):
+        try:
+            action = json.loads(text[len(A2UI_ACTION_TEXT_PREFIX):])
+            text = None
+        except json.JSONDecodeError:
+            pass  # malformed — leave it as plain text for the agent to read
+
     parts: List[Dict[str, Any]] = []
     if text:
         parts.append({"text": text})
-
-    forwarded = run_input.forwarded_props or {}
-    action = forwarded.get(A2UI_ACTION_PROP) if isinstance(forwarded, dict) else None
     if action is not None:
         mime = "application/json+a2ui"
         parts.append({
@@ -121,6 +135,25 @@ def build_a2a_request(run_input, context_id: Optional[str] = None) -> Dict[str, 
     }
 
 
+def _norm(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _looks_like_data_dump(text: str) -> bool:
+    """True for text parts that are really machine payloads (tool-result
+    JSON, Python message reprs) leaked into the conversation."""
+    t = text.strip()
+    if t.startswith("The user triggered the UI action"):
+        return True
+    if not t[:1] in "{[":
+        return False
+    try:
+        json.loads(t)
+        return True
+    except json.JSONDecodeError:
+        return "'type':" in t or "'content':" in t
+
+
 class A2AStreamTranslator:
     """Stateful per-run translator from A2A StreamResponse dicts to AG-UI events.
 
@@ -129,13 +162,34 @@ class A2AStreamTranslator:
     text messages / steps left open (e.g. when the stream is cut short).
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        initial_a2ui_messages: Optional[List[Any]] = None,
+        user_text: Optional[str] = None,
+        tidy: bool = True,
+    ):
         self.context_id: Optional[str] = None
         self.task_id: Optional[str] = None
         self.finished = False
         self.error_message: Optional[str] = None
         self._open_messages: List[str] = []
         self._working = False
+        # Chat hygiene (disable with tidy=False / AGUI_RAW=true): agents echo
+        # the user's prompt, leak raw tool-result JSON, and re-send a final
+        # summary artifact duplicating what was already streamed. Filtering
+        # here fixes every AG-UI client at once — off-the-shelf UIs like
+        # CopilotKit render the stream verbatim.
+        self._tidy = tidy
+        self._user_text_norm = _norm(user_text) if user_text else None
+        self._message_text: Dict[str, str] = {}   # open message -> text so far
+        self._completed_norm: List[str] = []      # normalized finished messages
+        # All A2UI messages seen on this thread, mirrored into AG-UI shared
+        # state (STATE_SNAPSHOT.a2uiMessages) so state-centric clients — e.g.
+        # CopilotKit's useCoAgent — receive them without handling CUSTOM
+        # events. Seeded with earlier runs' messages so the client state
+        # keeps the whole conversation's surfaces, not just the last run's.
+        # Event-centric clients keep using the CUSTOM channel.
+        self.a2ui_messages: List[Any] = list(initial_a2ui_messages or [])
 
     def translate(self, result: Dict[str, Any]) -> List[BaseEvent]:
         events: List[BaseEvent] = []
@@ -153,6 +207,7 @@ class A2AStreamTranslator:
         """Ends any text message / step still open. Safe to call twice."""
         events: List[BaseEvent] = []
         for message_id in self._open_messages:
+            self._completed_norm.append(_norm(self._message_text.pop(message_id, "")))
             events.append(TextMessageEndEvent(
                 type=EventType.TEXT_MESSAGE_END, message_id=message_id,
             ))
@@ -225,18 +280,41 @@ class A2AStreamTranslator:
         texts = [p["text"] for p in parts if p.get("text")]
         return " ".join(texts) or None
 
+    def _skip_text(self, text: str, message_id: str, last_chunk: bool) -> bool:
+        if not self._tidy:
+            return False
+        norm = _norm(text)
+        # Echo of the user's own prompt / leaked machine payload.
+        if norm == self._user_text_norm or _looks_like_data_dump(text):
+            return True
+        # Single-shot artifact repeating an already-streamed message (agents
+        # often close a run with a consolidated summary of the same text).
+        if last_chunk and message_id not in self._open_messages:
+            return any(norm in done or done in norm for done in self._completed_norm if done)
+        return False
+
     def _emit_parts(self, parts: List[Dict[str, Any]], message_id: Optional[str],
                     last_chunk: bool, events: List[BaseEvent]) -> None:
         message_id = message_id or str(uuid.uuid4())
         for part in parts:
             text = part.get("text")
             if text:
+                if self._skip_text(text, message_id, last_chunk):
+                    continue
                 if message_id not in self._open_messages:
                     self._open_messages.append(message_id)
                     events.append(TextMessageStartEvent(
                         type=EventType.TEXT_MESSAGE_START,
                         message_id=message_id, role="assistant",
                     ))
+                # Dropped segments (echo/tool dumps) can butt two paragraphs
+                # together — restore a break at a clear sentence boundary.
+                # Whitespace-carrying deltas are untouched, so token-level
+                # streams are unaffected.
+                so_far = self._message_text.get(message_id, "")
+                if self._tidy and so_far and so_far[-1] in ".!?…" and text[:1].isupper():
+                    text = "\n\n" + text
+                self._message_text[message_id] = so_far + text
                 events.append(TextMessageContentEvent(
                     type=EventType.TEXT_MESSAGE_CONTENT,
                     message_id=message_id, delta=text,
@@ -245,10 +323,18 @@ class A2AStreamTranslator:
             data = part.get("data")
             if data is not None:
                 mime = part.get("mediaType") or (part.get("metadata") or {}).get("mimeType")
-                name = CUSTOM_EVENT_A2UI if mime in A2UI_MIME_TYPES else CUSTOM_EVENT_DATA
-                events.append(CustomEvent(type=EventType.CUSTOM, name=name, value=data))
+                if mime in A2UI_MIME_TYPES:
+                    events.append(CustomEvent(type=EventType.CUSTOM, name=CUSTOM_EVENT_A2UI, value=data))
+                    self.a2ui_messages.append(data)
+                    events.append(StateSnapshotEvent(
+                        type=EventType.STATE_SNAPSHOT,
+                        snapshot={"a2uiMessages": list(self.a2ui_messages)},
+                    ))
+                else:
+                    events.append(CustomEvent(type=EventType.CUSTOM, name=CUSTOM_EVENT_DATA, value=data))
         if last_chunk and message_id in self._open_messages:
             self._open_messages.remove(message_id)
+            self._completed_norm.append(_norm(self._message_text.pop(message_id, "")))
             events.append(TextMessageEndEvent(
                 type=EventType.TEXT_MESSAGE_END, message_id=message_id,
             ))
@@ -278,17 +364,31 @@ async def stream_agui_events(
     a2a_url: str,
     run_input,
     thread_contexts: Dict[str, str],
+    thread_a2ui: Optional[Dict[str, List[Any]]] = None,
     timeout_seconds: float = 300.0,
 ) -> AsyncIterator[str]:
     """Runs one AG-UI run against an A2A agent, yielding encoded SSE events.
 
     ``thread_contexts`` maps AG-UI threadIds to A2A contextIds so follow-up
     runs on the same thread continue the same A2A conversation.
+    ``thread_a2ui`` accumulates each thread's A2UI messages across runs so
+    state snapshots always describe the whole conversation's surfaces.
     """
     logger = get_logger()
     encoder = EventEncoder()
-    translator = A2AStreamTranslator()
     thread_id = run_input.thread_id or str(uuid.uuid4())
+    thread_a2ui = thread_a2ui if thread_a2ui is not None else {}
+    messages = run_input.messages or []
+    user_text = (
+        messages[-1].content
+        if messages and getattr(messages[-1], "role", None) == "user"
+        else None
+    )
+    translator = A2AStreamTranslator(
+        initial_a2ui_messages=thread_a2ui.get(thread_id),
+        user_text=user_text if isinstance(user_text, str) else None,
+        tidy=os.environ.get("AGUI_RAW", "false").lower() != "true",
+    )
 
     yield encoder.encode(RunStartedEvent(
         type=EventType.RUN_STARTED, thread_id=thread_id, run_id=run_input.run_id,
@@ -335,6 +435,8 @@ async def stream_agui_events(
 
     if translator.context_id:
         thread_contexts[thread_id] = translator.context_id
+    if translator.a2ui_messages:
+        thread_a2ui[thread_id] = translator.a2ui_messages
 
     if error_message or translator.error_message:
         yield encoder.encode(RunErrorEvent(
