@@ -1,0 +1,69 @@
+model:
+  model_id: bedrock/global.amazon.nova-2-lite-v1:0
+  region_name: us-west-2
+
+tools:
+  utils:
+    module: demo_tools
+    base_path: "./utils"
+
+#mcps:
+#  environment_lookup:
+#    command: env_lookup_server
+#    args: []
+
+# Each agent_list entry becomes a subagent of the deep agent. The root deep
+# agent delegates to them via the built-in task tool, using 'description'
+# to decide which subagent fits a job.
+agent_list:
+#  - env_lookup_assistant:
+#      system_prompt: |
+#        You are a environment lookup assistant
+#      mcps:
+#        - environment_lookup
+  - flight_assistant:
+      description: >
+        Searches for flights and books them. Give it origin, destination,
+        dates, and (for bookings) the exact flight id.
+      system_prompt: |
+        You are a flight booking assistant.
+        You can search for flights and book them.
+      tools:
+        - search_flights
+        - book_flight
+
+  - hotel_assistant:
+      description: >
+        Searches for hotels and books them. Give it the location, dates,
+        and (for bookings) the exact hotel name.
+      system_prompt: |
+        You are a hotel booking assistant.
+        You can search for hotels and book them.
+      tools:
+        - search_hotels
+        - book_hotel
+
+# Root-level system_prompt configures the deep agent itself.
+system_prompt: |
+  You are a deep travel planning agent. For complex trips, first write a
+  todo list for the request, then delegate flight work to flight_assistant
+  and hotel work to hotel_assistant. Save intermediate findings to files
+  and produce a final consolidated itinerary.You also have access env lookup assistant to lookup environment variables.
+
+crew_config:
+  pattern: supervisor          # or: deep_agent: true
+  # Lazy MCP loading: subagents (and the root agent) get lightweight
+  # schema-lookup/execute meta-tools instead of binding every MCP tool.
+  enable_lazy_loading: false
+  # Optional root deep-agent attributes:
+  # name: deep_travel_planner
+  # tools:               # root agent's own tools (registry names)
+  #   - search_flights
+  # mcps:                # root agent's own MCP servers
+  #   - environment_lookup
+  # Filesystem backend for persistent file storage (writes to actual disk)
+  backend:
+    type: filesystem
+    filesystem:
+      root_dir: /tmp/workspace
+      virtual_mode: false  # Write to actual filesystem (not in-memory)

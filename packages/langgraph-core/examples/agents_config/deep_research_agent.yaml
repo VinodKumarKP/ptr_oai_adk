@@ -1,0 +1,61 @@
+model:
+  model_id: bedrock/global.amazon.nova-2-lite-v1:0
+  region_name: us-west-2
+
+tools:
+  research:
+    module: research_tools
+    base_path: "./utils"
+
+mcps:
+  stock_market_lookup:
+    command: stock_market_server
+    args: []
+
+# Each agent_list entry becomes a subagent of the deep research agent.
+# The root agent delegates via the built-in task tool, using 'description'
+# to decide which subagent fits a job.
+agent_list:
+  - market_data_analyst:
+      description: >
+        Fetches live quotes, historical prices, and company fundamentals for
+        a stock symbol and summarizes the numbers. Give it the exact ticker
+        symbol and what data you need.
+      system_prompt: |
+        You are a market data analyst. Use your stock market tools to fetch
+        the requested quotes, historical data, or company information, and
+        return a concise numeric summary with the key figures.
+      mcps:
+        - stock_market_lookup
+
+  - news_researcher:
+      description: >
+        Finds recent news headlines for a stock symbol and assesses overall
+        sentiment. Give it the ticker symbol.
+      system_prompt: |
+        You are a news researcher. Search recent headlines for the requested
+        stock symbol and summarize the overall sentiment with the main
+        positive and negative points.
+      tools:
+        - search_news
+
+# Root-level system_prompt configures the deep agent itself.
+system_prompt: |
+  You are a deep stock research agent. For each research request:
+  1. Write a todo list covering the data, news, and analysis you need.
+  2. Delegate market data work to market_data_analyst and news work to
+     news_researcher.
+  3. Save each subagent's findings to a file in your workspace.
+  4. Produce a final research summary combining valuation figures and news
+     sentiment, with a clear outlook section.
+
+crew_config:
+  pattern: deep              # or: deep_agent: true
+  name: deep_research_agent
+  tools:                     # root deep-agent's own tools
+    - get_current_date
+  # mcps:                    # the root agent can also use MCP servers
+  #   - stock_market_lookup
+  # backend:                 # virtual filesystem backend (default: state)
+  #   type: filesystem
+  #   root_dir: ./workspace
