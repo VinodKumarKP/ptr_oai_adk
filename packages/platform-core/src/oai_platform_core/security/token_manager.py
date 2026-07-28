@@ -19,10 +19,19 @@ Connection priority
 The fallback path keeps all token data in a local SQLite file so that any
 service works out-of-the-box for development / demo without a Redis server.
 
+Note that probing an *absent* Redis costs the full connect timeout at startup
+(several seconds on hosts that neither accept nor reject quickly). Services
+that know they have no Redis should set ``TOKEN_CACHE_BACKEND=diskcache`` to
+skip the probe entirely.
+
 Environment variables
 ---------------------
+TOKEN_CACHE_BACKEND   ``auto`` (default, probe Redis then fall back),
+                      ``redis`` (require Redis; raise if unreachable),
+                      ``diskcache`` (skip the Redis probe entirely)
 REDIS_HOST            Valkey/Redis host            (default: localhost)
 REDIS_PORT            Valkey/Redis port             (default: 6379)
+REDIS_CONNECT_TIMEOUT Seconds to wait when probing Redis (default: 2)
 CACHE_DB_PATH         Full path to the cache DB (overrides db_path_name)
 
 Token format
@@ -294,32 +303,45 @@ class TokenManager:
         """Return ``(client, backend_name)`` for the best available store.
 
         Tries Redis/Valkey first; on any failure falls back to DiskCache.
+        ``TOKEN_CACHE_BACKEND`` overrides that: ``diskcache`` skips the Redis
+        probe (and the connect-timeout wait it costs), ``redis`` makes Redis
+        mandatory instead of best-effort.
         """
-        # ── 1. Try Redis / Valkey ──────────────────────────────────────
-        try:
-            import redis as _redis_lib
+        backend_pref = os.environ.get("TOKEN_CACHE_BACKEND", "auto").strip().lower()
 
-            client = _redis_lib.Redis(
-                host=host,
-                port=port,
-                db=db,
-                decode_responses=True,
-                socket_connect_timeout=2,
-                socket_timeout=2,
-            )
-            client.ping()
-            logger.info(
-                "TokenManager: connected to Redis/Valkey at %s:%s", host, port
-            )
-            return client, "redis"
-        except Exception as exc:
-            logger.warning(
-                "TokenManager: Redis/Valkey not available at %s:%s (%s) "
-                "— falling back to DiskCache",
-                host,
-                port,
-                exc,
-            )
+        # ── 1. Try Redis / Valkey ──────────────────────────────────────
+        if backend_pref != "diskcache":
+            try:
+                import redis as _redis_lib
+
+                timeout = float(os.environ.get("REDIS_CONNECT_TIMEOUT", "2"))
+                client = _redis_lib.Redis(
+                    host=host,
+                    port=port,
+                    db=db,
+                    decode_responses=True,
+                    socket_connect_timeout=timeout,
+                    socket_timeout=timeout,
+                )
+                client.ping()
+                logger.info(
+                    "TokenManager: connected to Redis/Valkey at %s:%s", host, port
+                )
+                return client, "redis"
+            except Exception as exc:
+                if backend_pref == "redis":
+                    raise RuntimeError(
+                        f"TOKEN_CACHE_BACKEND=redis but Redis/Valkey at "
+                        f"{host}:{port} is unreachable: {exc}"
+                    ) from exc
+                logger.warning(
+                    "TokenManager: Redis/Valkey not available at %s:%s (%s) "
+                    "— falling back to DiskCache "
+                    "(set TOKEN_CACHE_BACKEND=diskcache to skip this probe)",
+                    host,
+                    port,
+                    exc,
+                )
 
         # ── 2. Fall back to DiskCache ──────────────────────────────────
         try:
