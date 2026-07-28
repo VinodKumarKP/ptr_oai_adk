@@ -13,7 +13,6 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from sympy import false
 
 try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -99,6 +98,36 @@ class ServerState:
         self.is_agent_ready = True
 
 
+class _DisabledLLMJudgeService:
+    """Stand-in used when quality evaluation is turned off.
+
+    Mirrors the async surface call sites use so they don't need to branch on
+    whether judging is enabled; every method is a no-op.
+    """
+
+    judge_agent = None
+
+    async def judge_interaction(self, *args, **kwargs) -> None:
+        return None
+
+    async def initialize_judge_agent(self, *args, **kwargs) -> None:
+        return None
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    """Reads a boolean environment variable.
+
+    Accepts true/1/yes/on (and their negations) case-insensitively. Needed
+    because ``os.environ.get(name, False)`` returns the *string* "false" when
+    the variable is set to that, which is truthy — the opposite of what the
+    operator asked for.
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _configure_structured_logging() -> None:
     """Configure root logger format based on LOG_FORMAT env (text|json).
 
@@ -172,6 +201,13 @@ class AgentHTTPServer:
 
     ALWAYS_ACTIVE_MODES = {"health", "agent", "chat", "logs", "a2a", "monitoring", "token", "readme"}
 
+    # AGENT_SERVER_PROFILE=lite — one switch any agent can set to run a plain
+    # agent server: the protocol surfaces plus health, and none of the
+    # operational extras (quality evaluation, log/evaluation query routes,
+    # startup warm-up). ALWAYS_ACTIVE_MODES still overrides the profile if a
+    # deployment wants a different surface.
+    LITE_MODES = {"health", "agent", "chat", "a2a", "token"}
+
     @classmethod
     def _resolve_always_active_modes(cls) -> set:
         """Modes that are always enabled regardless of ``allowed_modes``.
@@ -180,13 +216,20 @@ class AgentHTTPServer:
         so slim deployments — e.g. AWS Bedrock AgentCore, where the container
         serves a single session and the platform provides auth and
         observability — can run a minimal surface such as
-        ``ALWAYS_ACTIVE_MODES=health,chat``. Defaults to the full historical
-        set so existing deployments are unaffected.
+        ``ALWAYS_ACTIVE_MODES=health,chat``. ``AGENT_SERVER_PROFILE=lite``
+        selects a ready-made minimal set. Defaults to the full historical set
+        so existing deployments are unaffected.
         """
         env_value = os.environ.get("ALWAYS_ACTIVE_MODES")
         if env_value is not None:
             return {m.strip() for m in env_value.split(",") if m.strip()}
+        if os.environ.get("AGENT_SERVER_PROFILE", "").strip().lower() == "lite":
+            return set(cls.LITE_MODES)
         return set(cls.ALWAYS_ACTIVE_MODES)
+
+    @staticmethod
+    def _is_lite_profile() -> bool:
+        return os.environ.get("AGENT_SERVER_PROFILE", "").strip().lower() == "lite"
 
     def __init__(
         self,
@@ -360,15 +403,30 @@ class AgentHTTPServer:
     # ------------------------------------------------------------------
 
     def _setup_services(self):
-        self.llm_judge_service = LLMJudgeService(
-            agent_class=type(self.agent),
-            config_root=self.config_root,
-            logger=self.logger,
-            db_logger=self.db_logger,
-            judge_model_id=os.environ.get(
-                "LLM_JUDGE_MODEL_ID", "bedrock/us.amazon.nova-micro-v1:0"
-            ),
+        # Quality evaluation spends an extra LLM call per interaction, so any
+        # agent can opt out: LLM_JUDGE_ENABLED=false, dropping the "monitoring"
+        # mode, or AGENT_SERVER_PROFILE=lite. A no-op stand-in keeps every
+        # call site working without knowing whether judging is on.
+        # Note this flag can only disable: the call sites additionally require
+        # the "monitoring" mode, so judging needs both.
+        self.llm_judge_enabled = env_flag(
+            "LLM_JUDGE_ENABLED", default="monitoring" in self.allowed_modes
         )
+        if self.llm_judge_enabled:
+            self.llm_judge_service = LLMJudgeService(
+                agent_class=type(self.agent),
+                config_root=self.config_root,
+                logger=self.logger,
+                db_logger=self.db_logger,
+                judge_model_id=os.environ.get(
+                    "LLM_JUDGE_MODEL_ID", "bedrock/us.amazon.nova-micro-v1:0"
+                ),
+            )
+        else:
+            self.llm_judge_service = _DisabledLLMJudgeService()
+            self.logger.info(
+                "LLM judge disabled — no quality-evaluation model calls will be made"
+            )
         self.chat_service = ChatService(
             self.agent, self.db_logger, self.logger,
             self.llm_judge_service, self.allowed_modes,
@@ -560,16 +618,22 @@ class AgentHTTPServer:
             # per-user cold-start latency: skip warm-up steps that only pay off
             # on long-lived servers (judge pre-init makes a model call; the
             # judge still lazily initializes on first use if monitoring is on).
-            slim_startup = is_agentcore_runtime() or os.environ.get('SLIM_STARTUP', false)
+            # Any agent can request the same via SLIM_STARTUP=true or
+            # AGENT_SERVER_PROFILE=lite.
+            slim_startup = (
+                is_agentcore_runtime()
+                or env_flag("SLIM_STARTUP")
+                or self._is_lite_profile()
+            )
             if slim_startup:
                 self.logger.info(
-                    "AgentCore deployment detected: using slim startup "
+                    "Slim startup enabled "
                     "(skipping judge pre-init, circuit breakers and registry "
                     "self-registration)"
                 )
 
             # Pre-initialize LLM judge service to eliminate first-request latency
-            if "monitoring" in self.allowed_modes and not slim_startup:
+            if self.llm_judge_enabled and not slim_startup:
                 try:
                     await self.llm_judge_service.initialize_judge_agent()
                     self.logger.info("LLM Judge service pre-initialized")

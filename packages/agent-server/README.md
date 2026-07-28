@@ -15,6 +15,8 @@ A robust, FastAPI-based server for hosting and managing OAI Agents. This server 
 *   **Comprehensive Logging**: Integrated database logging for all interactions, including token usage, latency metrics, and scheduled job runs. Supports both PostgreSQL and SQLite.
 *   **Graceful Shutdown**: Handles server restarts and shutdowns gracefully, ensuring active requests complete.
 *   **Health Checks**: Standardized `/health` and `/status` endpoints for monitoring.
+*   **AG-UI Gateway**: Optional `/agui` endpoint that serves the AG-UI protocol (streamed SSE events) in front of the A2A endpoint, so browser frontends can drive the agent without speaking A2A.
+*   **Configurable Footprint**: Every operational extra (quality evaluation, database logging, tracing, metrics, scheduler) is opt-out via environment variables — see [Environment Variables](docs/ENVIRONMENT_VARIABLES.md) and [Performance Tuning](docs/PERFORMANCE_TUNING.md).
 
 ## �️ Robustness & Resilience (Phase 4)
 
@@ -129,15 +131,34 @@ Notes:
 - See the agent-core README → *Configuration & Validation → Environment Variables*
   for the full parsing rules.
 
-The most commonly tuned settings:
+> 📘 **[Full environment variable reference →](docs/ENVIRONMENT_VARIABLES.md)**
+> Every variable the server reads, with verified defaults, grouped by area.
+> The table below covers only the most commonly tuned ones.
+
+**Feature profile — running a lean server.** Everything below is opt-out, and
+all defaults are unchanged from previous releases:
 
 | Var | Default | Purpose |
 |---|---|---|
+| `AGENT_SERVER_PROFILE` | (unset) | `lite` runs a plain agent server: modes `health,agent,chat,a2a,token`, no LLM judge, slim startup. One switch for "just serve my agent". |
+| `ALWAYS_ACTIVE_MODES` | `health,agent,chat,logs,a2a,monitoring,token,readme` | Comma-separated surfaces to enable; overrides the profile. Dropping `monitoring` also disables quality evaluation. |
+| `LLM_JUDGE_ENABLED` | on when `monitoring` is active | `false` skips quality evaluation — **removes one extra LLM call per interaction**. |
+| `SLIM_STARTUP` | `false` | Skip warm-up that only pays off on long-lived servers (judge pre-init, circuit breakers, registry self-registration). |
+| `TOKEN_CACHE_BACKEND` | `auto` | `diskcache` skips the Redis probe (**saves several seconds of startup** with no Redis running); `redis` requires Redis and fails loudly. |
+
+See **[docs/PERFORMANCE_TUNING.md](docs/PERFORMANCE_TUNING.md)** for measured
+startup numbers (≈12s → ≈2.7s on the bundled example).
+
+**Core settings:**
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PORT` | `8000` (CLI `--port`) | Listen port; the env var wins over the CLI argument. |
 | `AGENT_AUTH_ENABLED` | `true` | Master switch — set `false` to disable authentication entirely. |
-| `FORCE_AUTH` | `true` | When `false`, requests from IPs in `TRUSTED_CIDRS` may bypass auth. |
+| `FORCE_AUTH` | `false` | When `false`, requests from IPs in `TRUSTED_CIDRS` may bypass auth. Set `true` to require auth everywhere. |
 | `TRUSTED_CIDRS` | `127.0.0.0/8,::1/128` | Comma-separated CIDRs allowed to bypass auth when `FORCE_AUTH=false`. |
 | `ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated CORS allowlist. Setting it to `*` forces `allow_credentials=False`. |
-| `DEBUG_MODE` | `false` | Set `true` to expose `/check-env` and `/debug/env` (still auth-gated). |
+| `DEBUG_MODE` | (unset) | Set `true` to expose `/check-env` and `/debug/env` (still auth-gated). |
 | `INFO_EXTRA_FIELDS` | (empty) | Comma-separated `agent_config` fields exposed by `/info` beyond the safe whitelist. |
 | `MAX_MESSAGE_SIZE_BYTES` | `32768` | Maximum size of inbound chat messages. |
 | `RATE_LIMIT_CHAT` | `60/minute` | slowapi rate-limit string applied to `/chat` and `/chat/stream`. |
@@ -147,8 +168,9 @@ The most commonly tuned settings:
 | `A2A_TASK_STORE` | `database` | `database` (persistent) or `memory` (ephemeral; disables admin endpoints). |
 | `A2A_TASK_TTL_SECONDS` | `86400` | TTL for persisted A2A tasks. A cleanup loop runs every 60s. |
 | `ENABLE_SCHEDULER` | `true` | Set `false` to skip scheduler init. Also requires the `apscheduler` extra. |
-| `AGENT_REINITIALIZE` | — | If `true` in a request header, triggers agent re-initialization. |
-| `AGENT_BASE_URL` | — | Public base URL for the agent, used to construct the Agent Card URL. |
+| `ENABLE_AGUI_GATEWAY` | `true` | Set `false` to remove the `/agui` AG-UI gateway route. |
+| `AGENT_REINITIALIZE` | `false` | If `true` in a request header, triggers agent re-initialization. |
+| `AGENT_BASE_URL` | `localhost` | Public base URL for the agent, used to construct the Agent Card URL. |
 
 **Robustness & Resilience (Phase 4):**
 *   `CIRCUIT_BREAKER_FAILURE_THRESHOLD` (default `5`): Number of consecutive failures before opening circuit breaker.
@@ -163,15 +185,25 @@ The most commonly tuned settings:
 *   `AGENT_CACHE_LOGS_TTL` (default `60`): Time-to-live (seconds) for cached agent interaction logs.
 
 **Database logging:**
-*   `DB_LOGGING_ENABLED`: Set to `true` to enable database logging (default: `false`). Required to persist scheduled jobs, their results, and (when `A2A_TASK_STORE=database`) A2A tasks.
-*   `DB_TYPE`: The type of database to use (`postgres` or `sqlite`).
-*   `LOGGING_DB_HOST` / `LOGGING_DB_PORT` / `LOGGING_DB_NAME` / `LOGGING_DB_USER` / `LOGGING_DB_PASSWORD`: PostgreSQL connection parameters. For SQLite, `LOGGING_DB_NAME` is the file path.
-*   `DB_POOL_MIN_SIZE` (default `2`) / `DB_POOL_MAX_SIZE` (default `4`): asyncpg pool sizing.
+*   `DB_LOGGING_ENABLED` (default `false`): Set to `true` to enable database logging. Required to persist scheduled jobs, their results, and (when `A2A_TASK_STORE=database`) A2A tasks.
+*   `LOGGING_DB_HOST` (default `localhost`) / `LOGGING_DB_PORT` (default `5432`) / `LOGGING_DB_NAME` (default `agent_logs`) / `LOGGING_DB_USER` (default `postgres`) / `LOGGING_DB_PASSWORD` (default `postgres`): PostgreSQL connection parameters. The server falls back to SQLite automatically when Postgres is unreachable.
+*   `SQLITE_DB_PATH` / `SQLITE_DB_DIR`: explicit location for the SQLite fallback file.
+*   `DB_POOL_MIN_SIZE` (default `5`) / `DB_POOL_MAX_SIZE` (default `20`): asyncpg pool sizing.
 
-**Redis (token management):**
-*   `REDIS_HOST` (default `localhost`), `REDIS_PORT` (default `6379`).
+**Token store (Redis / DiskCache):**
+*   `TOKEN_CACHE_BACKEND` (default `auto`): `auto` probes Redis then falls back to DiskCache; `diskcache` skips the probe; `redis` requires Redis.
+*   `REDIS_HOST` (default `localhost`), `REDIS_PORT` (default `6379`), `REDIS_CONNECT_TIMEOUT` (default `2`).
+
+**AG-UI gateway:**
+*   `AGUI_A2A_URL` (default: this server's own `/a2a`): front a different, possibly remote, A2A agent.
+*   `AGUI_RAW` (default `false`): `true` disables stream tidying (prompt-echo, tool-JSON and duplicate-summary filtering).
 
 > Note: `/info` returns only a whitelisted subset of `agent_config` to avoid leaking secrets. Add safe field names via `INFO_EXTRA_FIELDS` when you need more.
+
+> ⚠️ **Writing a launcher or example script?** Use
+> `os.environ.setdefault("VAR", "value")` rather than `os.environ["VAR"] = ...`.
+> Direct assignment overrides whatever the operator exported, silently making
+> every variable above unusable without editing the file.
 
 ## 📋 API Endpoints
 
@@ -271,6 +303,8 @@ oai_agent_server/
 ├── cli.py               # Command-line interface
 ├── config.py            # Configuration
 ├── exceptions.py        # Custom exceptions
+├── a2a/                 # A2A protocol: executor, agent card, task store, A2UI
+├── agui/                # AG-UI gateway (A2A ⇄ AG-UI event translation)
 ├── middleware/          # Request processing middleware
 ├── models/              # Pydantic data models
 ├── routers/             # API route definitions
@@ -278,6 +312,15 @@ oai_agent_server/
 ├── security/            # Authentication & Security
 └── utils/               # Helper utilities
 ```
+
+### 📚 Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/ENVIRONMENT_VARIABLES.md](docs/ENVIRONMENT_VARIABLES.md) | Complete environment variable reference with defaults |
+| [docs/PERFORMANCE_TUNING.md](docs/PERFORMANCE_TUNING.md) | Running a lean server; measured startup improvements |
+| [OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md) | Tracing and metrics setup |
+| [GETTING_STARTED_DOCKER.md](GETTING_STARTED_DOCKER.md) | Docker-based quickstart |
 
 ## 👨‍💻 Development
 
