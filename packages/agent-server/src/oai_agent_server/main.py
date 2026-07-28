@@ -32,6 +32,7 @@ from oai_agent_core.utils.deployment import is_agentcore_runtime
 from oai_agent_core.utils.dotenv_loader import load_dotenv
 from oai_agent_core.utils.logger import get_logger
 
+from oai_agent_server.config import ServerSettings, env_flag, settings  # noqa: F401 (env_flag re-exported)
 from oai_agent_server.middleware.logging import LoggingMiddleware
 from oai_agent_server.middleware.request_context import (
     setup_request_isolation, HeaderCaptureMiddleware,
@@ -114,20 +115,6 @@ class _DisabledLLMJudgeService:
         return None
 
 
-def env_flag(name: str, default: bool = False) -> bool:
-    """Reads a boolean environment variable.
-
-    Accepts true/1/yes/on (and their negations) case-insensitively. Needed
-    because ``os.environ.get(name, False)`` returns the *string* "false" when
-    the variable is set to that, which is truthy — the opposite of what the
-    operator asked for.
-    """
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
-        return default
-    return raw.strip().lower() in ("1", "true", "yes", "on")
-
-
 def _configure_structured_logging() -> None:
     """Configure root logger format based on LOG_FORMAT env (text|json).
 
@@ -137,7 +124,7 @@ def _configure_structured_logging() -> None:
     from oai_agent_server.utils.logging_filter import RequestIdFilter
 
     request_id_filter = RequestIdFilter()
-    log_format = os.environ.get("LOG_FORMAT", "text").lower()
+    log_format = settings.log_format
     root = logging.getLogger()
 
     if log_format == "json":
@@ -152,7 +139,7 @@ def _configure_structured_logging() -> None:
             handler.setFormatter(formatter)
             handler.addFilter(request_id_filter)
             root.handlers = [handler]
-            root.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
+            root.setLevel(settings.log_level)
         except ImportError:
             # Fall through to text-style configuration below.
             log_format = "text"
@@ -199,14 +186,10 @@ class AgentHTTPServer:
       /a2a                                     — A2A protocol (via a2a-sdk)
     """
 
-    ALWAYS_ACTIVE_MODES = {"health", "agent", "chat", "logs", "a2a", "monitoring", "token", "readme"}
-
-    # AGENT_SERVER_PROFILE=lite — one switch any agent can set to run a plain
-    # agent server: the protocol surfaces plus health, and none of the
-    # operational extras (quality evaluation, log/evaluation query routes,
-    # startup warm-up). ALWAYS_ACTIVE_MODES still overrides the profile if a
-    # deployment wants a different surface.
-    LITE_MODES = {"health", "agent", "chat", "a2a", "token"}
+    # Mode sets live on ServerSettings; these aliases keep the historical
+    # class attributes working for callers that reference them.
+    ALWAYS_ACTIVE_MODES = ServerSettings.DEFAULT_MODES
+    LITE_MODES = ServerSettings.LITE_MODES
 
     @classmethod
     def _resolve_always_active_modes(cls) -> set:
@@ -220,16 +203,11 @@ class AgentHTTPServer:
         selects a ready-made minimal set. Defaults to the full historical set
         so existing deployments are unaffected.
         """
-        env_value = os.environ.get("ALWAYS_ACTIVE_MODES")
-        if env_value is not None:
-            return {m.strip() for m in env_value.split(",") if m.strip()}
-        if os.environ.get("AGENT_SERVER_PROFILE", "").strip().lower() == "lite":
-            return set(cls.LITE_MODES)
-        return set(cls.ALWAYS_ACTIVE_MODES)
+        return ServerSettings().resolve_modes()
 
     @staticmethod
     def _is_lite_profile() -> bool:
-        return os.environ.get("AGENT_SERVER_PROFILE", "").strip().lower() == "lite"
+        return ServerSettings().is_lite
 
     def __init__(
         self,
@@ -254,6 +232,17 @@ class AgentHTTPServer:
         load_dotenv(config_root)
 
         self.logger = get_logger()
+        self.settings = ServerSettings()
+
+        # The agent object is the single source of truth for the name, so that
+        # routes, logs, telemetry and registry registration can never disagree.
+        # The parameter is kept for API compatibility; warn when it differs
+        # rather than silently filing traces under a different service name.
+        if agent_name and agent_name != self.agent_name:
+            self.logger.warning(
+                "agent_name=%r differs from agent.agent_name=%r; using %r everywhere",
+                agent_name, self.agent_name, self.agent_name,
+            )
         self.base_config_manager = ConfigManager(config_root=config_root)
         self.enable_request_isolation = enable_request_isolation
         self.server_state = ServerState()
@@ -286,7 +275,7 @@ class AgentHTTPServer:
         
         # Initialize observability (OpenTelemetry + Prometheus)
         observability_config = ObservabilityConfig()
-        observability_config.SERVICE_NAME = agent_name
+        observability_config.SERVICE_NAME = self.agent_name
         self.observability_manager = ObservabilityManager(
             config=observability_config,
             logger=self.logger
@@ -319,8 +308,8 @@ class AgentHTTPServer:
             await self.shutdown()
 
         self.app = FastAPI(
-            title=f"Agent HTTP Server - {agent_name}",
-            description=f"HTTP API for {agent_name} agent",
+            title=f"Agent HTTP Server - {self.agent_name}",
+            description=f"HTTP API for {self.agent_name} agent",
             version="1.0.0",
             lifespan=lifespan,
             dependencies=[Depends(verify_api_key)],
@@ -336,6 +325,11 @@ class AgentHTTPServer:
             self.app.state.limiter = self.limiter
             self.app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+        # Number of routes FastAPI created for itself (docs, openapi, ...)
+        # before any of ours were added; _setup_routes() rewinds to it so a
+        # re-registration replaces our routes instead of duplicating them.
+        self._baseline_route_count: Optional[int] = None
+
         self._setup_middleware()
         self._setup_services()
         self._setup_routes()
@@ -344,7 +338,12 @@ class AgentHTTPServer:
     # Middleware (unchanged)
     # ------------------------------------------------------------------
 
-    def set_allowed_modes(self, allowed_modes: List[str]=None):
+    def set_allowed_modes(self, allowed_modes: List[str] = None):
+        """Change the enabled surfaces and rebuild the routes accordingly.
+
+        Safe to call more than once: ``_setup_routes`` discards the previously
+        registered routes first, so the app never ends up with duplicates.
+        """
         always_active = self._resolve_always_active_modes()
         self.allowed_modes = (
             list(always_active)
@@ -355,17 +354,10 @@ class AgentHTTPServer:
 
 
     def _setup_middleware(self):
-        _origins_env = os.environ.get("ALLOWED_ORIGINS", "")
-        if _origins_env.strip() == "*":
-            # Explicit opt-in for development only.
-            allowed_origins = ["*"]
-            allow_credentials = False  # Browsers reject credentials with wildcard
-        else:
-            allowed_origins = [o.strip() for o in _origins_env.split(",") if o.strip()]
-            allow_credentials = True
-
-        if not allowed_origins:
-            allowed_origins = ["http://localhost:3000"]
+        # "*" is an explicit development opt-in; browsers reject credentials
+        # alongside a wildcard origin, so they are mutually exclusive.
+        allow_credentials = not self.settings.cors_allow_any_origin
+        allowed_origins = self.settings.cors_origins()
 
         self.logger.info(
             f"[CORS] Allowed origins: {allowed_origins} (allow_credentials={allow_credentials})"
@@ -418,9 +410,7 @@ class AgentHTTPServer:
                 config_root=self.config_root,
                 logger=self.logger,
                 db_logger=self.db_logger,
-                judge_model_id=os.environ.get(
-                    "LLM_JUDGE_MODEL_ID", "bedrock/us.amazon.nova-micro-v1:0"
-                ),
+                judge_model_id=self.settings.llm_judge_model_id,
             )
         else:
             self.llm_judge_service = _DisabledLLMJudgeService()
@@ -442,6 +432,17 @@ class AgentHTTPServer:
     # ------------------------------------------------------------------
 
     def _setup_routes(self):
+        # Registering the same routers twice would append duplicates (FastAPI
+        # does not deduplicate), so rewind to the pre-registration baseline and
+        # rebuild. First call records the baseline instead.
+        if self._baseline_route_count is None:
+            self._baseline_route_count = len(self.app.router.routes)
+        else:
+            del self.app.router.routes[self._baseline_route_count:]
+            # The OpenAPI document is cached after first generation; drop it so
+            # the schema reflects the rebuilt route table.
+            self.app.openapi_schema = None
+
         self.app.include_router(
             create_chat_router(self.chat_service, self.allowed_modes)
         )
@@ -485,7 +486,7 @@ class AgentHTTPServer:
             # 9000 and discovery to /.well-known/agent-card.json). The /a2a
             # prefix mount stays for self-hosted callers, so one image serves
             # both deployment targets.
-            if os.environ.get("A2A_MOUNT_ROOT", "false").lower() == "true":
+            if self.settings.a2a_mount_root:
                 self.app.include_router(a2a_router)
                 self.logger.info(
                     "A2A routes additionally mounted at root (A2A_MOUNT_ROOT=true)"
@@ -506,7 +507,7 @@ class AgentHTTPServer:
         if agentcore_router:
             self.app.include_router(agentcore_router)
 
-        if os.environ.get("ENABLE_SCHEDULER", "true").lower() != "false":
+        if self.settings.scheduler_enabled:
             try:
                 schedule_router = create_schedule_router(
                     self.agent, self.db_logger, self.allowed_modes
@@ -539,7 +540,7 @@ class AgentHTTPServer:
         Get the local registry URL by parsing AGENT_BASE_URL and forcing localhost.
         Returns the local URL or None if the environment variable is not set.
         """
-        agent_base_url = os.environ.get('AGENT_REGISTRY_URL') or os.environ.get("AGENT_BASE_URL")
+        agent_base_url = self.settings.registry_url
         if not agent_base_url:
             return None
 
@@ -550,7 +551,7 @@ class AgentHTTPServer:
                 self.logger.warning(f"Could not extract port from AGENT_REGISTRY_URL '{agent_base_url}'. Using original URL.")
                 return agent_base_url.rstrip('/')
             
-            local_url = os.environ.get('AGENT_REGISTRY_URL') or f"http://localhost:{port}"
+            local_url = self.settings.agent_registry_url or f"http://localhost:{port}"
             self.logger.info(f"AGENT_REGISTRY_URL is set. Forcing registry connection to {local_url}")
             return local_url
         except Exception as e:
@@ -601,145 +602,194 @@ class AgentHTTPServer:
         except httpx.RequestError as e:
             self.logger.error(f"Error connecting to agent registry at {registry_url}: {e}")
 
-    async def startup(self):
-        self.server_state.start_time = time.time()
+    # ------------------------------------------------------------------
+    # Startup phases
+    #
+    # Each phase owns its own failure handling so a problem is attributed to
+    # the subsystem that caused it. Only the agent and the database are
+    # *fatal* — everything else degrades to a reduced feature set rather than
+    # marking the whole server unready.
+    # ------------------------------------------------------------------
+
+    def _use_slim_startup(self) -> bool:
+        """Whether to skip warm-up that only pays off on long-lived servers.
+
+        On AgentCore the container boots per session, so startup work is
+        per-user cold-start latency. Any agent can request the same via
+        SLIM_STARTUP=true or AGENT_SERVER_PROFILE=lite. The judge still
+        initializes lazily on first use when monitoring is on.
+        """
+        return (
+            is_agentcore_runtime()
+            or self.settings.slim_startup
+        )
+
+    async def _startup_agent(self) -> bool:
+        """Initialize the agent. Fatal: nothing else runs if this fails."""
         try:
             await self.agent.initialize()
             self.logger.info(f"Agent '{self.agent_name}' initialized successfully")
-            await self.db_logger.initialize()
-            
-            # Register health check functions
-            self.health_check_collector.register_component_check(
-                "database",
-                create_database_health_check(self.db_logger)
-            )
-            
-            # On AgentCore the container boots per session, so startup work is
-            # per-user cold-start latency: skip warm-up steps that only pay off
-            # on long-lived servers (judge pre-init makes a model call; the
-            # judge still lazily initializes on first use if monitoring is on).
-            # Any agent can request the same via SLIM_STARTUP=true or
-            # AGENT_SERVER_PROFILE=lite.
-            slim_startup = (
-                is_agentcore_runtime()
-                or env_flag("SLIM_STARTUP")
-                or self._is_lite_profile()
-            )
-            if slim_startup:
-                self.logger.info(
-                    "Slim startup enabled "
-                    "(skipping judge pre-init, circuit breakers and registry "
-                    "self-registration)"
-                )
-
-            # Pre-initialize LLM judge service to eliminate first-request latency
-            if self.llm_judge_enabled and not slim_startup:
-                try:
-                    await self.llm_judge_service.initialize_judge_agent()
-                    self.logger.info("LLM Judge service pre-initialized")
-
-                    # Register LLM judge health check
-                    self.health_check_collector.register_component_check(
-                        "llm_judge",
-                        create_llm_judge_health_check(self.llm_judge_service)
-                    )
-                except Exception as e:
-                    self.logger.warning(f"Failed to pre-initialize judge service: {e}; will initialize on first request")
-
-            if not slim_startup:
-                # Initialize Phase 4 robustness features (circuit breakers and retry policies)
-                # These protect a shared long-lived process; in a single-session
-                # microVM they only add boot time.
-                # Register circuit breakers for common services
-                await self.circuit_breaker_registry.register(
-                    "llm_service",
-                    failure_threshold=5,
-                    success_threshold=2,
-                    timeout=60,
-                )
-                await self.circuit_breaker_registry.register(
-                    "external_api",
-                    failure_threshold=5,
-                    success_threshold=2,
-                    timeout=60,
-                )
-
-                # Register retry policies for common services
-                self.retry_registry.register_policy(
-                    "llm_service",
-                    create_http_retry_config("llm_service", self.logger)
-                )
-                self.retry_registry.register_policy(
-                    "external_api",
-                    create_http_retry_config("external_api", self.logger)
-                )
-
-                self.logger.info("Phase 4 robustness features initialized (circuit breakers, retry policies, caching, versioning)")
-            
-            # Build the persistent A2A task store now that the DB backend is up.
-            if (
-                _A2A_TASK_STORE_AVAILABLE
-                and self._a2a_task_store_proxy is not None
-                and "a2a" in self.allowed_modes
-            ):
-                try:
-                    self._a2a_task_store = await build_task_store_from_env(
-                        self.db_logger, self.logger,
-                    )
-                    self._a2a_task_store_proxy.bind(self._a2a_task_store)
-                    # Expose the real task store on app.state so admin
-                    # endpoints can introspect it.
-                    self.app.state.task_store = self._a2a_task_store
-                except Exception:
-                    self.logger.error(
-                        "Failed to initialise A2A task store; "
-                        "falling back to in-memory store.",
-                        exc_info=True,
-                    )
-                    try:
-                        from a2a.server.tasks import InMemoryTaskStore
-                        self._a2a_task_store = InMemoryTaskStore()
-                        self._a2a_task_store_proxy.bind(self._a2a_task_store)
-                        self.app.state.task_store = self._a2a_task_store
-                    except Exception:
-                        self.logger.error(
-                            "InMemoryTaskStore fallback also failed", exc_info=True,
-                        )
-            # Initialise APScheduler now so jobs can run as soon as the
-            # server accepts requests (no race with first /schedule call).
-            if os.environ.get("ENABLE_SCHEDULER", "true").lower() != "false":
-                try:
-                    from apscheduler.schedulers.asyncio import AsyncIOScheduler
-                    self.scheduler = AsyncIOScheduler()
-                    self.scheduler.start()
-                    self.app.state.scheduler = self.scheduler
-                    self.logger.info("Scheduler started")
-                except ImportError:
-                    self.logger.warning(
-                        "APScheduler not installed; /schedule endpoints will return 503."
-                    )
-                    self.app.state.scheduler = None
-                except Exception:
-                    self.logger.error(
-                        "Failed to start APScheduler; /schedule endpoints will return 503.",
-                        exc_info=True,
-                    )
-                    self.app.state.scheduler = None
-            else:
-                self.logger.info(
-                    "Scheduler disabled via ENABLE_SCHEDULER=false"
-                )
-                self.app.state.scheduler = None
-            # Startup self-registration targets a localhost registry and runs
-            # per-session on AgentCore — registration happens at deploy time
-            # there instead (CI posts the data-plane endpoint to the registry).
-            if not slim_startup:
-                await self._register_with_registry()
+            return True
         except Exception:
             self.logger.error(
                 "Failed to initialize agent during startup", exc_info=True
             )
             self.server_state.is_agent_ready = False
+            return False
+
+    async def _startup_database(self) -> bool:
+        """Bring up interaction logging. Fatal: later phases depend on it."""
+        try:
+            await self.db_logger.initialize()
+            self.health_check_collector.register_component_check(
+                "database", create_database_health_check(self.db_logger),
+            )
+            return True
+        except Exception:
+            self.logger.error(
+                "Failed to initialize database logging during startup",
+                exc_info=True,
+            )
+            self.server_state.is_agent_ready = False
+            return False
+
+    async def _startup_judge(self) -> None:
+        """Pre-initialize the LLM judge to keep it off the first request."""
+        try:
+            await self.llm_judge_service.initialize_judge_agent()
+            self.logger.info("LLM Judge service pre-initialized")
+            self.health_check_collector.register_component_check(
+                "llm_judge", create_llm_judge_health_check(self.llm_judge_service),
+            )
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to pre-initialize judge service: {e}; "
+                "will initialize on first request"
+            )
+
+    async def _startup_resilience(self) -> None:
+        """Register circuit breakers and retry policies.
+
+        These protect a shared long-lived process; in a single-session microVM
+        they only add boot time.
+        """
+        try:
+            for service in ("llm_service", "external_api"):
+                await self.circuit_breaker_registry.register(
+                    service,
+                    failure_threshold=5,
+                    success_threshold=2,
+                    timeout=60,
+                )
+                self.retry_registry.register_policy(
+                    service, create_http_retry_config(service, self.logger),
+                )
+            self.logger.info(
+                "Phase 4 robustness features initialized "
+                "(circuit breakers, retry policies, caching, versioning)"
+            )
+        except Exception:
+            self.logger.error(
+                "Failed to register circuit breakers/retry policies; "
+                "calls proceed without them.",
+                exc_info=True,
+            )
+
+    async def _startup_task_store(self) -> None:
+        """Build the persistent A2A task store now that the DB backend is up."""
+        if not (
+            _A2A_TASK_STORE_AVAILABLE
+            and self._a2a_task_store_proxy is not None
+            and "a2a" in self.allowed_modes
+        ):
+            return
+        try:
+            self._a2a_task_store = await build_task_store_from_env(
+                self.db_logger, self.logger,
+            )
+        except Exception:
+            self.logger.error(
+                "Failed to initialise A2A task store; "
+                "falling back to in-memory store.",
+                exc_info=True,
+            )
+            try:
+                from a2a.server.tasks import InMemoryTaskStore
+                self._a2a_task_store = InMemoryTaskStore()
+            except Exception:
+                self.logger.error(
+                    "InMemoryTaskStore fallback also failed", exc_info=True,
+                )
+                return
+        self._a2a_task_store_proxy.bind(self._a2a_task_store)
+        # Expose the real task store on app.state so admin endpoints can
+        # introspect it.
+        self.app.state.task_store = self._a2a_task_store
+
+    async def _startup_scheduler(self) -> None:
+        """Start APScheduler so jobs can run as soon as requests are accepted."""
+        self.app.state.scheduler = None
+        if not self.settings.scheduler_enabled:
+            self.logger.info("Scheduler disabled via ENABLE_SCHEDULER=false")
+            return
+        try:
+            from apscheduler.schedulers.asyncio import AsyncIOScheduler
+            self.scheduler = AsyncIOScheduler()
+            self.scheduler.start()
+            self.app.state.scheduler = self.scheduler
+            self.logger.info("Scheduler started")
+        except ImportError:
+            self.logger.warning(
+                "APScheduler not installed; /schedule endpoints will return 503."
+            )
+        except Exception:
+            self.logger.error(
+                "Failed to start APScheduler; /schedule endpoints will return 503.",
+                exc_info=True,
+            )
+
+    async def _startup_registry(self) -> None:
+        """Self-register with a local agent registry.
+
+        Targets a localhost registry and would run per-session on AgentCore —
+        registration happens at deploy time there instead (CI posts the
+        data-plane endpoint to the registry).
+        """
+        try:
+            await self._register_with_registry()
+        except Exception:
+            self.logger.error(
+                "Agent registry self-registration failed; the server is "
+                "serving normally but is not discoverable via the registry.",
+                exc_info=True,
+            )
+
+    async def startup(self):
+        self.server_state.start_time = time.time()
+
+        slim_startup = self._use_slim_startup()
+        if slim_startup:
+            self.logger.info(
+                "Slim startup enabled "
+                "(skipping judge pre-init, circuit breakers and registry "
+                "self-registration)"
+            )
+
+        if not await self._startup_agent():
+            return
+        if not await self._startup_database():
+            return
+
+        if self.llm_judge_enabled and not slim_startup:
+            await self._startup_judge()
+        if not slim_startup:
+            await self._startup_resilience()
+
+        await self._startup_task_store()
+        await self._startup_scheduler()
+
+        if not slim_startup:
+            await self._startup_registry()
 
     async def shutdown(self):
         self.logger.info("Shutting down agent server.")

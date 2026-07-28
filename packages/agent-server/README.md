@@ -155,7 +155,7 @@ startup numbers (≈12s → ≈2.7s on the bundled example).
 |---|---|---|
 | `PORT` | `8000` (CLI `--port`) | Listen port; the env var wins over the CLI argument. |
 | `AGENT_AUTH_ENABLED` | `true` | Master switch — set `false` to disable authentication entirely. |
-| `FORCE_AUTH` | `false` | When `false`, requests from IPs in `TRUSTED_CIDRS` may bypass auth. Set `true` to require auth everywhere. |
+| `FORCE_AUTH` | `true` | Auth is required by default. Set `false` to let requests from localhost or `TRUSTED_CIDRS` bypass authentication (development only). |
 | `TRUSTED_CIDRS` | `127.0.0.0/8,::1/128` | Comma-separated CIDRs allowed to bypass auth when `FORCE_AUTH=false`. |
 | `ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated CORS allowlist. Setting it to `*` forces `allow_credentials=False`. |
 | `DEBUG_MODE` | (unset) | Set `true` to expose `/check-env` and `/debug/env` (still auth-gated). |
