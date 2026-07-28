@@ -13,6 +13,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sympy import false
 
 try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -559,7 +560,7 @@ class AgentHTTPServer:
             # per-user cold-start latency: skip warm-up steps that only pay off
             # on long-lived servers (judge pre-init makes a model call; the
             # judge still lazily initializes on first use if monitoring is on).
-            slim_startup = is_agentcore_runtime()
+            slim_startup = is_agentcore_runtime() or os.environ.get('SLIM_STARTUP', false)
             if slim_startup:
                 self.logger.info(
                     "AgentCore deployment detected: using slim startup "

@@ -73,7 +73,7 @@ class ObservabilityConfig:
     def __init__(self):
         """Initialize config from environment variables or defaults."""
         # OpenTelemetry
-        self.ENABLE_TRACING = os.environ.get('OTEL_ENABLED', 'true').lower() == 'true'
+        self.ENABLE_TRACING = os.environ.get('OTEL_ENABLED', 'false').lower() == 'true'
 
         # Jaeger configuration - supports both UDP (agent) and gRPC (endpoint)
         self.JAEGER_ENDPOINT = os.environ.get('OTEL_EXPORTER_JAEGER_ENDPOINT', None)
@@ -84,7 +84,7 @@ class ObservabilityConfig:
         self.SERVICE_VERSION = os.environ.get('OTEL_SERVICE_VERSION', '3.0.0')
 
         # Prometheus
-        self.ENABLE_METRICS = os.environ.get('PROMETHEUS_ENABLED', 'true').lower() == 'true'
+        self.ENABLE_METRICS = os.environ.get('PROMETHEUS_ENABLED', 'false').lower() == 'true'
         self.METRICS_PORT = int(os.environ.get('PROMETHEUS_PORT', '8001'))
         
         # Structured logging
