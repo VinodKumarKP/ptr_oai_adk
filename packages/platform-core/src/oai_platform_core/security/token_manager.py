@@ -51,6 +51,7 @@ import json
 import logging
 import os
 import secrets
+import socket
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -315,6 +316,17 @@ class TokenManager:
                 import redis as _redis_lib
 
                 timeout = float(os.environ.get("REDIS_CONNECT_TIMEOUT", "2"))
+
+                # Check reachability with a plain socket before building the
+                # client. "Is anything listening?" is a yes/no question, and
+                # redis-py answers it by *retrying with backoff*: a refused
+                # connection there costs seconds (measured 1.7s-11.9s) instead
+                # of milliseconds, which is pure dead time at every startup on
+                # hosts that have no Redis. The client below is still created
+                # with redis-py's normal retry behaviour for real traffic.
+                with socket.create_connection((host, port), timeout=timeout):
+                    pass
+
                 client = _redis_lib.Redis(
                     host=host,
                     port=port,

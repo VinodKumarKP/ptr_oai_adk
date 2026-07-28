@@ -144,10 +144,10 @@ all defaults are unchanged from previous releases:
 | `ALWAYS_ACTIVE_MODES` | `health,agent,chat,logs,a2a,monitoring,token,readme` | Comma-separated surfaces to enable; overrides the profile. Dropping `monitoring` also disables quality evaluation. |
 | `LLM_JUDGE_ENABLED` | on when `monitoring` is active | `false` skips quality evaluation — **removes one extra LLM call per interaction**. |
 | `SLIM_STARTUP` | `false` | Skip warm-up that only pays off on long-lived servers (judge pre-init, circuit breakers, registry self-registration). |
-| `TOKEN_CACHE_BACKEND` | `auto` | `diskcache` skips the Redis probe (**saves several seconds of startup** with no Redis running); `redis` requires Redis and fails loudly. |
+| `TOKEN_CACHE_BACKEND` | `auto` | `auto` probes Redis (~5ms) then falls back to DiskCache; `diskcache` skips the probe; `redis` requires Redis and fails loudly. |
 
 See **[docs/PERFORMANCE_TUNING.md](docs/PERFORMANCE_TUNING.md)** for measured
-startup numbers (≈12s → ≈2.7s on the bundled example).
+startup numbers (≈2.7s on the bundled example).
 
 **Core settings:**
 
@@ -191,7 +191,7 @@ startup numbers (≈12s → ≈2.7s on the bundled example).
 *   `DB_POOL_MIN_SIZE` (default `5`) / `DB_POOL_MAX_SIZE` (default `20`): asyncpg pool sizing.
 
 **Token store (Redis / DiskCache):**
-*   `TOKEN_CACHE_BACKEND` (default `auto`): `auto` probes Redis then falls back to DiskCache; `diskcache` skips the probe; `redis` requires Redis.
+*   `TOKEN_CACHE_BACKEND` (default `auto`): `auto` probes Redis with a fast socket check then falls back to DiskCache; `diskcache` skips the probe; `redis` requires Redis.
 *   `REDIS_HOST` (default `localhost`), `REDIS_PORT` (default `6379`), `REDIS_CONNECT_TIMEOUT` (default `2`).
 
 **AG-UI gateway:**
