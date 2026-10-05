@@ -26,7 +26,7 @@ dependencies = [
     "uvicorn[standard]",
     "pydantic",
     "httpx",
-    "fastmcp==2.14.1",
+    "fastmcp==4.0.11",
     "public-ip",
     "requests",
     "oai-platform-core[redislite]",
