@@ -3,7 +3,7 @@ import argparse
 import os
 import asyncio
 import threading
-import httpx
+import httpx2
 from abc import ABC
 from typing import Literal, List, Optional
 from urllib.parse import urlparse
@@ -157,13 +157,13 @@ class BaseMCPServer(ABC):
         }
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx2.AsyncClient() as client:
                 response = await client.post(registry_url, json=server_info)
                 if response.status_code == 200:
                     self.logger.info(f"Successfully registered server '{self.server_name}' with registry at {registry_base_url}")
                 else:
                     self.logger.error(f"Failed to register server using {registry_url}. Status: {response.status_code}, Response: {response.text}")
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             self.logger.error(f"Error connecting to MCP registry at {registry_url}: {e}")
         except Exception as e1:
             self.logger.error(f"Unexpected error during registration with MCP registry at {registry_url}: {e1}")
@@ -176,13 +176,13 @@ class BaseMCPServer(ABC):
 
         registry_url = f"{registry_base_url}/deregister"
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx2.AsyncClient() as client:
                 response = await client.post(registry_url, json={"name": self.server_name})
                 if response.status_code == 200:
                     self.logger.info(f"Successfully deregistered server '{self.server_name}' from registry.")
                 else:
                     self.logger.error(f"Failed to deregister server. Status: {response.status_code}, Response: {response.text}")
-        except httpx.RequestError as e:
+        except httpx2.RequestError as e:
             self.logger.error(f"Error connecting to MCP registry at {registry_url}: {e}")
 
     def run(self, transport: Literal["stdio", "streamable-http", "sse"] = "stdio", port: int = None):
