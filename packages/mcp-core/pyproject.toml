@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "fastmcp==2.14.1",
+    "fastmcp==4.0.11",
     "nest-asyncio",
     "ruamel.yaml",
     "requests",
