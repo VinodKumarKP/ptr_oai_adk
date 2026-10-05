@@ -14,7 +14,7 @@ FROM python:3.13-slim
 # Pin the ADK repo ref so base image builds are deterministic.
 # Override at build time to upgrade: --build-arg ADK_VERSION=main
 ARG ADK_VERSION=main
-ARG ADK_REPO=https://github.com/Capgemini-Innersource/ptr_oai_agent_development_kit.git
+ARG ADK_REPO=https://github.com/VinodKumarKP/ptr_oai_adk.git
 
 # ── System dependencies ──────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -34,8 +34,8 @@ RUN --mount=type=secret,id=github_token \
     TOKEN=$(cat /run/secrets/github_token 2>/dev/null || true) && \
     if [ -n "$TOKEN" ]; then \
         git config --system \
-            url."https://oauth2:${TOKEN}@github.com/Capgemini-Innersource".insteadOf \
-            "https://github.com/Capgemini-Innersource"; \
+            url."https://oauth2:${TOKEN}@github.com/VinodKumarKP".insteadOf \
+            "https://github.com/VinodKumarKP"; \
     fi
 
 # ── Common OAI packages ──────────────────────────────────────
