@@ -29,7 +29,7 @@ dependencies = [
     "asyncpg",
     "aiosqlite",
     "oai-agent-core",
-    "a2a-sdk[http-server]==1.0.2",
+    "a2a-sdk[http-server]==1.2.2",
     "slowapi>=0.1.9",
     "python-json-logger>=2.0",
     "PyJWT==2.11.0",
@@ -42,7 +42,7 @@ oai-agent-server = "oai_agent_server.cli:main"
 [project.optional-dependencies]
 sqlite = ["aiosqlite"]
 postgres = ["asyncpg"]
-a2a = ["a2a-sdk[http-server]==1.0.2"]
+a2a = ["a2a-sdk[http-server]==1.2.2"]
 # AG-UI gateway (/agui): serves the AG-UI protocol in front of the A2A endpoint.
 agui = ["ag-ui-protocol>=0.1.19"]
 scheduler = ["apscheduler"]
@@ -59,7 +59,7 @@ observability = [
 all = [
     "aiosqlite",
     "asyncpg",
-    "a2a-sdk[http-server]==1.0.2",
+    "a2a-sdk[http-server]==1.2.0",
     "apscheduler",
     "opentelemetry-sdk==1.42.1",
     "opentelemetry-exporter-otlp==1.42.1",
